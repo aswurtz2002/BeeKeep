@@ -1,0 +1,26 @@
+# Local Android build and machine-specific files
+.gradle/
+build/
+local.properties
+*.iml
+.idea/
+.kotlin/
+.tools/
+.buildstamp
+
+# Build outputs
+*.apk
+*.aab
+*.ap_
+*.dex
+
+# Signing keys — never commit
+*.keystore
+*.jks
+*.pem
+*.key
+
+# Misc
+.cxx/
+captures/
+.cxx
