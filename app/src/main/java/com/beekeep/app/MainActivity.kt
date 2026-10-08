@@ -47,6 +47,7 @@ import androidx.compose.material.icons.rounded.CameraAlt
 import androidx.compose.material.icons.rounded.CalendarMonth
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.GpsFixed
+import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.Home
 import androidx.compose.material.icons.rounded.LocationOn
 import androidx.compose.material.icons.rounded.Mic
@@ -205,7 +206,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-enum class Screen { HOME, HIVES, SCAN, CALENDAR, MORE, INSIGHTS, TAG_MANAGER }
+enum class Screen { HOME, HIVES, SCAN, CALENDAR, MORE, INSIGHTS, TAG_MANAGER, COLONY_HISTORY }
 
 enum class HiveLogType { FEED, TREAT, HARVEST }
 
@@ -227,10 +228,13 @@ fun BeeKeepApp(
     var addHive by rememberSaveable { mutableStateOf(false) }
     var logType by rememberSaveable { mutableStateOf<HiveLogType?>(null) }
     var addApiary by rememberSaveable { mutableStateOf(false) }
+    var unassignedTagUid by rememberSaveable { mutableStateOf<String?>(null) }
+    var pendingTagUid by rememberSaveable { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
     val snackbarHostState = androidx.compose.material3.SnackbarHostState()
 
     val hives by vm.hives.collectAsStateWithLifecycle()
+    val deadHives by vm.deadHives.collectAsStateWithLifecycle()
     val apiaries by vm.apiaries.collectAsStateWithLifecycle()
     val tasks by vm.tasks.collectAsStateWithLifecycle()
     val selected by vm.selected.collectAsStateWithLifecycle()
@@ -248,24 +252,44 @@ fun BeeKeepApp(
     androidx.compose.runtime.LaunchedEffect(ready, incomingNfc?.uid) {
         val result = incomingNfc ?: return@LaunchedEffect
         if (!ready) return@LaunchedEffect
-        val matched = vm.openHiveByTag(result.uid)
-        if (matched) {
+        val payloadHiveId = BeeKeepNfcPayload.hiveId(result.text)
+        val resolvedId = vm.findHiveByTag(result.uid)?.id
+            ?: payloadHiveId?.takeIf { id -> hives.any { it.id == id } }
+        if (resolvedId != null) {
+            vm.openHive(resolvedId)
             selectedHiveOpen = true
             screen = Screen.HOME
             scope.launch { snackbarHostState.showSnackbar("Hive tag ${result.uid} recognized") }
         } else {
-            val payloadHiveId = BeeKeepNfcPayload.hiveId(result.text)
-            if (payloadHiveId != null && hives.any { it.id == payloadHiveId }) {
-                vm.openHive(payloadHiveId)
-                selectedHiveOpen = true
-                screen = Screen.HOME
-                scope.launch { snackbarHostState.showSnackbar("Hive tag recognized") }
-            } else {
-                screen = Screen.SCAN
-                scope.launch { snackbarHostState.showSnackbar("Unassigned BeeKeep tag • ${result.uid}") }
-            }
+            screen = Screen.SCAN
+            unassignedTagUid = result.uid
         }
         (activity as? MainActivity)?.pendingNfcResult?.value = null
+    }
+
+    unassignedTagUid?.let { uid ->
+        AlertDialog(
+            onDismissRequest = { unassignedTagUid = null },
+            title = { Text("Unassigned NFC tag", fontWeight = FontWeight.ExtraBold) },
+            text = { Text("Tag $uid is not assigned to a colony. What would you like to do with it?") },
+            confirmButton = {
+                TextButton(onClick = {
+                    unassignedTagUid = null
+                    pendingTagUid = uid
+                    screen = Screen.TAG_MANAGER
+                }) { Text("ASSIGN TO EXISTING HIVE", fontWeight = FontWeight.ExtraBold) }
+            },
+            dismissButton = {
+                Row {
+                    TextButton(onClick = {
+                        unassignedTagUid = null
+                        pendingTagUid = uid
+                        addHive = true
+                    }) { Text("CREATE NEW HIVE") }
+                    TextButton(onClick = { unassignedTagUid = null }) { Text("CANCEL") }
+                }
+            }
+        )
     }
 
     if (!ready) {
@@ -280,9 +304,9 @@ fun BeeKeepApp(
 
     if (addHive) {
         AddHiveScreen(apiaries, { addHive = false }) { number, apiary, queen, strength ->
-            vm.createHive(number, apiary, queen, strength) { success, error ->
+            vm.createHive(number, apiary, queen, strength, tagUid = pendingTagUid) { success, error ->
                 scope.launch { snackbarHostState.showSnackbar(error ?: "Hive ${number.trim()} created") }
-                if (success) addHive = false
+                if (success) { addHive = false; pendingTagUid = null }
             }
         }
         return
@@ -362,7 +386,7 @@ fun BeeKeepApp(
             onFeed = { logType = HiveLogType.FEED },
             onTreat = { logType = HiveLogType.TREAT },
             onHarvest = { logType = HiveLogType.HARVEST },
-            onTag = { uid -> vm.assignTag(uid) },
+            onTag = { uid, onResult -> vm.assignTag(uid, onResult) },
             onClearTag = { vm.clearTag() },
             onVerifyTag = {
                 nfc.startRead(activity) { result ->
@@ -388,7 +412,23 @@ fun BeeKeepApp(
                     scope.launch { snackbarHostState.showSnackbar(if (success) "Added to calendar" else (error ?: "Could not add task")) }
                 }
             },
-            onEditQueen = { status, mark, origin, age, temperament -> vm.updateQueenProfile(status, mark, origin, age, temperament) }
+            onEditQueen = { status, mark, origin, age, temperament -> vm.updateQueenProfile(status, mark, origin, age, temperament) },
+            onMarkDead = {
+                vm.markHiveDead(hiveForDetail.id) { success, error ->
+                    scope.launch { snackbarHostState.showSnackbar(error ?: "Hive ${hiveForDetail.number} marked dead. History preserved.") }
+                }
+            },
+            onRestore = {
+                vm.restoreHive(hiveForDetail.id) { success, error ->
+                    scope.launch { snackbarHostState.showSnackbar(error ?: "Hive ${hiveForDetail.number} restored to active.") }
+                }
+            },
+            onDelete = {
+                vm.deleteHivePermanently(hiveForDetail.id) { success, error ->
+                    if (success) { selectedHiveOpen = false; vm.clearHive() }
+                    scope.launch { snackbarHostState.showSnackbar(error ?: "Hive ${hiveForDetail.number} permanently deleted.") }
+                }
+            }
         )
         return
     }
@@ -400,20 +440,17 @@ fun BeeKeepApp(
                 nfc.startRead(activity) { result ->
                     when (result) {
                         is NfcResult.Read -> {
-                            val matched = vm.openHiveByTag(result.uid)
-                            if (matched) {
-                                selectedHiveOpen = true
-                                screen = Screen.HOME
-                                scope.launch { snackbarHostState.showSnackbar("Hive tag recognized") }
-                            } else {
+                            scope.launch {
                                 val payloadId = BeeKeepNfcPayload.hiveId(result.text)
-                                if (payloadId != null && hives.any { it.id == payloadId }) {
-                                    vm.openHive(payloadId)
+                                val resolvedId = vm.findHiveByTag(result.uid)?.id
+                                    ?: payloadId?.takeIf { id -> hives.any { it.id == id } }
+                                if (resolvedId != null) {
+                                    vm.openHive(resolvedId)
                                     selectedHiveOpen = true
                                     screen = Screen.HOME
-                                    scope.launch { snackbarHostState.showSnackbar("Hive tag recognized") }
+                                    snackbarHostState.showSnackbar("Hive tag recognized")
                                 } else {
-                                    scope.launch { snackbarHostState.showSnackbar("Unassigned NFC tag • ${result.uid}") }
+                                    unassignedTagUid = result.uid
                                 }
                             }
                         }
@@ -464,15 +501,23 @@ fun BeeKeepApp(
                 onComplete = { vm.completeTask(it) },
                 onBuildSeasonalPlan = { ids, horizon -> vm.buildSeasonalPlan(ids, horizon) }
             )
-            Screen.MORE -> MoreScreen(darkMode, onDarkModeChange, apiaries, onAddApiary = { addApiary = true }, onInsights = { screen = Screen.INSIGHTS }, onTagManager = { screen = Screen.TAG_MANAGER }, activity, cloud)
+            Screen.MORE -> MoreScreen(darkMode, onDarkModeChange, apiaries, onAddApiary = { addApiary = true }, onInsights = { screen = Screen.INSIGHTS }, onTagManager = { screen = Screen.TAG_MANAGER }, onColonyHistory = { screen = Screen.COLONY_HISTORY }, deadCount = deadHives.size, activity, cloud)
             Screen.TAG_MANAGER -> TagManagementScreen(
                 hives = hives,
                 nfc = nfc,
                 activity = activity,
+                pendingUid = pendingTagUid,
+                onPendingUidConsumed = { pendingTagUid = null },
                 onBack = { screen = Screen.MORE },
                 onOpenHive = { vm.openHive(it); selectedHiveOpen = true; screen = Screen.HOME },
-                onAssignTag = { hiveId, uid, onResult -> vm.assignTagToHive(hiveId, uid, onResult) },
+                onAssignTag = { hiveId, uid, reassign, onResult -> vm.assignTagToHive(hiveId, uid, reassign, onResult) },
                 onClearTag = { hiveId -> vm.clearTagForHive(hiveId) }
+            )
+            Screen.COLONY_HISTORY -> ColonyHistoryScreen(
+                deadHives = deadHives,
+                padding = padding,
+                onBack = { screen = Screen.MORE },
+                onOpenHive = { vm.openHive(it); selectedHiveOpen = true }
             )
             Screen.SCAN, Screen.INSIGHTS -> Unit
         }
@@ -610,6 +655,44 @@ private fun HiveRow(hive: Hive, supporting: String? = null, onClick: () -> Unit)
             Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text("${String.format(Locale.US, "%.1f", hive.mitePercent)}%", fontWeight = FontWeight.ExtraBold, color = if (attention) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary)
                 Icon(Icons.Rounded.ChevronRight, "Open hive", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+    }
+}
+
+@Composable
+private fun ColonyHistoryScreen(deadHives: List<Hive>, padding: androidx.compose.foundation.layout.PaddingValues, onBack: () -> Unit, onOpenHive: (Long) -> Unit) {
+    BackHandler { onBack() }
+    Column(Modifier.fillMaxSize().padding(padding).padding(horizontal = 16.dp)) {
+        Row(Modifier.fillMaxWidth().padding(top = 14.dp, bottom = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onBack) { Icon(Icons.Rounded.ArrowBack, "Back") }
+            Column(Modifier.weight(1f)) {
+                Text("Colony history", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.ExtraBold)
+                Text("${deadHives.size} dead ${if (deadHives.size == 1) "colony" else "colonies"}", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+        if (deadHives.isEmpty()) {
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                EmptyState("No dead colonies", "When a colony dies, mark it dead to keep its history here and release its NFC tag.", null, null)
+            }
+        } else {
+            LazyColumn(contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                items(deadHives, key = { it.id }) { hive ->
+                    Card(onClick = { onOpenHive(hive.id) }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(18.dp)) {
+                        Row(Modifier.fillMaxWidth().padding(15.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                                Text("Hive ${hive.number}", fontWeight = FontWeight.ExtraBold, style = MaterialTheme.typography.titleMedium)
+                                Text(hive.apiary, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(
+                                    "Dead: ${hive.deadAt?.let { DateFormat.getDateInstance(DateFormat.MEDIUM).format(Date(it)) } ?: "date unknown"}",
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                            }
+                            Icon(Icons.Rounded.ChevronRight, "Open colony history", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                }
             }
         }
     }
@@ -1016,14 +1099,19 @@ private fun HiveDetailScreen(
     onFeed: () -> Unit,
     onTreat: () -> Unit,
     onHarvest: () -> Unit,
-    onTag: (String) -> Unit,
+    onTag: (String, (Boolean, String?) -> Unit) -> Unit,
     onClearTag: () -> Unit,
     onVerifyTag: () -> Unit,
     onScheduleRecommendation: (SmartRecommendation) -> Unit,
-    onEditQueen: (String, String, String, Int?, Int) -> Unit
+    onEditQueen: (String, String, String, Int?, Int) -> Unit,
+    onMarkDead: () -> Unit,
+    onRestore: () -> Unit,
+    onDelete: () -> Unit
 ) {
     var writeStatus by rememberSaveable { mutableStateOf("") }
     var editQueen by rememberSaveable { mutableStateOf(false) }
+    var confirmDead by rememberSaveable { mutableStateOf(false) }
+    var confirmDelete by rememberSaveable { mutableStateOf(false) }
     BackHandler { onBack() }
     val openTasks = tasks.filter { !it.completed && it.hiveId == hive.id }.sortedBy { it.dueAt }
     val recent = inspections.take(6).reversed()
@@ -1041,6 +1129,25 @@ private fun HiveDetailScreen(
         return
     }
 
+    if (confirmDead) {
+        AlertDialog(
+            onDismissRequest = { confirmDead = false },
+            title = { Text("Mark colony dead?", fontWeight = FontWeight.ExtraBold) },
+            text = { Text("Hive ${hive.number} will move to colony history. All inspections, treatments, feedings, harvests and photos stay attached. Its NFC tag is released for reuse.") },
+            confirmButton = { TextButton(onClick = { confirmDead = false; onMarkDead() }) { Text("MARK DEAD", fontWeight = FontWeight.ExtraBold, color = MaterialTheme.colorScheme.error) } },
+            dismissButton = { TextButton(onClick = { confirmDead = false }) { Text("CANCEL") } }
+        )
+    }
+    if (confirmDelete) {
+        AlertDialog(
+            onDismissRequest = { confirmDelete = false },
+            title = { Text("Delete Hive ${hive.number} permanently?", fontWeight = FontWeight.ExtraBold) },
+            text = { Text("This removes the hive and all of its associated history. This cannot be undone. To preserve history, mark the colony dead instead.") },
+            confirmButton = { TextButton(onClick = { confirmDelete = false; onDelete() }) { Text("DELETE PERMANENTLY", fontWeight = FontWeight.ExtraBold, color = MaterialTheme.colorScheme.error) } },
+            dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("CANCEL") } }
+        )
+    }
+
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(18.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
@@ -1052,6 +1159,18 @@ private fun HiveDetailScreen(
                 Text(hive.apiary, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             HiveStatusPill(hive)
+        }
+
+        if (hive.isDead) {
+            Card(shape = RoundedCornerShape(18.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)) {
+                Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("Colony marked dead", fontWeight = FontWeight.ExtraBold, color = MaterialTheme.colorScheme.onErrorContainer)
+                    Text(
+                        "Died ${hive.deadAt?.let { DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT).format(Date(it)) } ?: "on an unknown date"}. History is preserved below and the NFC tag was released.",
+                        color = MaterialTheme.colorScheme.onErrorContainer
+                    )
+                }
+            }
         }
 
         Card(shape = RoundedCornerShape(22.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
@@ -1079,17 +1198,19 @@ private fun HiveDetailScreen(
         CompactHiveHealthTrendCard(hive, inspections)
         AdvancedAnalyticsCard(hives = listOf(hive), inspections = inspections, harvests = harvests)
 
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(onInspect, Modifier.weight(1f).height(54.dp), shape = RoundedCornerShape(16.dp)) {
-                Icon(Icons.Rounded.TaskAlt, null)
-                Spacer(Modifier.width(6.dp))
-                Text("QUICK INSPECT")
+        if (!hive.isDead) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onInspect, Modifier.weight(1f).height(54.dp), shape = RoundedCornerShape(16.dp)) {
+                    Icon(Icons.Rounded.TaskAlt, null)
+                    Spacer(Modifier.width(6.dp))
+                    Text("QUICK INSPECT")
+                }
+                OutlinedButton(onFeed, Modifier.weight(1f).height(54.dp), shape = RoundedCornerShape(16.dp)) { Text("FEED") }
             }
-            OutlinedButton(onFeed, Modifier.weight(1f).height(54.dp), shape = RoundedCornerShape(16.dp)) { Text("FEED") }
-        }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(onTreat, Modifier.weight(1f).height(54.dp), shape = RoundedCornerShape(16.dp)) { Text("TREAT") }
-            OutlinedButton(onHarvest, Modifier.weight(1f).height(54.dp), shape = RoundedCornerShape(16.dp)) { Text("HARVEST") }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onTreat, Modifier.weight(1f).height(54.dp), shape = RoundedCornerShape(16.dp)) { Text("TREAT") }
+                OutlinedButton(onHarvest, Modifier.weight(1f).height(54.dp), shape = RoundedCornerShape(16.dp)) { Text("HARVEST") }
+            }
         }
 
         Card(shape = RoundedCornerShape(18.dp)) {
@@ -1152,42 +1273,67 @@ private fun HiveDetailScreen(
         Card(shape = RoundedCornerShape(18.dp)) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
                 Text("NFC hive tag", fontWeight = FontWeight.Bold)
-                Text(hive.tagUid ?: "Not assigned", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (hive.isDead) {
+                    Text("Released", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("The physical tag was released when the colony died and can be assigned to another hive.", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+                } else {
+                    Text(hive.tagUid ?: "Not assigned", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(
+                        if (hive.tagUid == null) "Attach a durable NFC tag to this hive, then assign it here." else "This phone can verify the physical tag before you start an inspection.",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(
+                            onClick = onVerifyTag,
+                            enabled = hive.tagUid != null,
+                            modifier = Modifier.weight(1f).height(52.dp)
+                        ) {
+                            Icon(Icons.Rounded.Nfc, null); Spacer(Modifier.width(5.dp)); Text("VERIFY")
+                        }
+                        OutlinedButton(
+                            onClick = {
+                                nfc.startWrite(
+                                    activity = activity,
+                                    text = BeeKeepNfcPayload.forHive(hive.id),
+                                    allowOverwriteOtherHive = hive.tagUid != null,
+                                    onResult = { result ->
+                                        when (result) {
+                                            is NfcResult.Written -> onTag(result.uid) { success, error ->
+                                                writeStatus = if (success) "Tag written • ${result.uid}" else (error ?: "Could not assign the tag.")
+                                            }
+                                            is NfcResult.Error -> writeStatus = result.message
+                                            is NfcResult.Read -> Unit
+                                        }
+                                    }
+                                )
+                            },
+                            modifier = Modifier.weight(1f).height(52.dp)
+                        ) { Text(if (hive.tagUid == null) "WRITE TAG" else "REPLACE") }
+                    }
+                    if (hive.tagUid != null) {
+                        TextButton(onClick = onClearTag, modifier = Modifier.fillMaxWidth()) { Text("REMOVE TAG") }
+                    }
+                    if (writeStatus.isNotBlank()) Text(writeStatus, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        }
+
+        Card(shape = RoundedCornerShape(18.dp)) {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
+                Text("Colony lifecycle", fontWeight = FontWeight.Bold)
                 Text(
-                    if (hive.tagUid == null) "Attach a durable NFC tag to this hive, then assign it here." else "This phone can verify the physical tag before you start an inspection.",
+                    if (hive.isDead) "This colony is dead. Restore it if it was marked dead by mistake, or delete the hive record permanently."
+                    else "Mark the colony dead when it fails — history is kept and the NFC tag is released. Deleting a hive removes everything permanently.",
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     style = MaterialTheme.typography.bodySmall
                 )
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton(
-                        onClick = onVerifyTag,
-                        enabled = hive.tagUid != null,
-                        modifier = Modifier.weight(1f).height(52.dp)
-                    ) {
-                        Icon(Icons.Rounded.Nfc, null); Spacer(Modifier.width(5.dp)); Text("VERIFY")
-                    }
-                    OutlinedButton(
-                        onClick = {
-                            nfc.startWrite(
-                                activity = activity,
-                                text = BeeKeepNfcPayload.forHive(hive.id),
-                                allowOverwriteOtherHive = hive.tagUid != null,
-                                onResult = { result ->
-                                    when (result) {
-                                        is NfcResult.Written -> { onTag(result.uid); writeStatus = "Tag written • ${result.uid}" }
-                                        is NfcResult.Error -> writeStatus = result.message
-                                        is NfcResult.Read -> Unit
-                                    }
-                                }
-                            )
-                        },
-                        modifier = Modifier.weight(1f).height(52.dp)
-                    ) { Text(if (hive.tagUid == null) "WRITE TAG" else "REPLACE") }
+                if (hive.isDead) {
+                    OutlinedButton(onClick = onRestore, modifier = Modifier.fillMaxWidth().height(52.dp)) { Text("RESTORE COLONY", fontWeight = FontWeight.Bold) }
+                } else {
+                    OutlinedButton(onClick = { confirmDead = true }, modifier = Modifier.fillMaxWidth().height(52.dp)) { Text("MARK COLONY DEAD", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.error) }
                 }
-                if (hive.tagUid != null) {
-                    TextButton(onClick = onClearTag, modifier = Modifier.fillMaxWidth()) { Text("REMOVE TAG") }
-                }
-                if (writeStatus.isNotBlank()) Text(writeStatus, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                TextButton(onClick = { confirmDelete = true }, modifier = Modifier.fillMaxWidth()) { Text("DELETE HIVE PERMANENTLY", color = MaterialTheme.colorScheme.error) }
             }
         }
 
@@ -1200,6 +1346,12 @@ private fun HiveDetailScreen(
 
 @Composable
 private fun HiveStatusPill(hive: Hive) {
+    if (hive.isDead) {
+        Card(shape = RoundedCornerShape(50), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)) {
+            Text("DEAD", modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp), fontWeight = FontWeight.ExtraBold, color = MaterialTheme.colorScheme.onErrorContainer)
+        }
+        return
+    }
     val flagged = hive.queenStatus == "Queenless" || hive.mitePercent >= 3.0
     Card(shape = RoundedCornerShape(50), colors = CardDefaults.cardColors(containerColor = if (flagged) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.secondaryContainer)) {
         Text(if (flagged) "CHECK" else "OK", modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp), fontWeight = FontWeight.ExtraBold, color = if (flagged) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onSecondaryContainer)
@@ -1905,16 +2057,38 @@ private fun TagManagementScreen(
     hives: List<Hive>,
     nfc: NfcController,
     activity: ComponentActivity,
+    pendingUid: String?,
+    onPendingUidConsumed: () -> Unit,
     onBack: () -> Unit,
     onOpenHive: (Long) -> Unit,
-    onAssignTag: (Long, String, (Boolean, String?) -> Unit) -> Unit,
+    onAssignTag: (Long, String, Boolean, (Boolean, String?) -> Unit) -> Unit,
     onClearTag: (Long) -> Unit
 ) {
     val context = LocalContext.current
     var status by rememberSaveable { mutableStateOf("") }
     var assigningHiveId by rememberSaveable { mutableStateOf<Long?>(null) }
+    var reassignPrompt by rememberSaveable { mutableStateOf<Pair<Long, String>?>(null) }
     BackHandler { onBack() }
     val assigned = hives.count { !it.tagUid.isNullOrBlank() }
+
+    reassignPrompt?.let { (targetHiveId, tagUid) ->
+        AlertDialog(
+            onDismissRequest = { reassignPrompt = null },
+            title = { Text("Tag already assigned", fontWeight = FontWeight.ExtraBold) },
+            text = { Text("This NFC tag is assigned to another hive. Reassigning will remove it from that hive and attach it to the selected one.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    onAssignTag(targetHiveId, tagUid, true) { success, error ->
+                        status = if (success) "Tag $tagUid reassigned" else (error ?: "Could not reassign tag.")
+                        if (success && pendingUid != null) onPendingUidConsumed()
+                    }
+                    reassignPrompt = null
+                }) { Text("REASSIGN", fontWeight = FontWeight.ExtraBold) }
+            },
+            dismissButton = { TextButton(onClick = { reassignPrompt = null }) { Text("CANCEL") } }
+        )
+    }
+
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             IconButton(onBack) { Icon(Icons.Rounded.ArrowBack, "Back") }
@@ -1928,7 +2102,18 @@ private fun TagManagementScreen(
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("How BeeKeep tags work", fontWeight = FontWeight.Bold)
                 Text("Each physical tag has a unique UID. BeeKeep stores that UID with the hive and writes a small BeeKeep NDEF payload to the tag. Your hive history stays in BeeKeep, not on the tag.", color = MaterialTheme.colorScheme.onPrimaryContainer)
+                Text("Tags are reusable: when a colony dies its tag is released and can be assigned to another hive. Scanning always opens the colony the tag is currently assigned to.", color = MaterialTheme.colorScheme.onPrimaryContainer, style = MaterialTheme.typography.bodySmall)
                 Text("Use durable, weather-resistant NFC tags on the hive lid or another protected surface.", color = MaterialTheme.colorScheme.onPrimaryContainer, style = MaterialTheme.typography.bodySmall)
+            }
+        }
+
+        if (pendingUid != null) {
+            Card(shape = RoundedCornerShape(18.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("Tag ready to assign", fontWeight = FontWeight.ExtraBold)
+                    Text("Tag $pendingUid is not linked to a colony. Tap ASSIGN on the hive it belongs to.", color = MaterialTheme.colorScheme.onSecondaryContainer)
+                    TextButton(onClick = onPendingUidConsumed) { Text("CANCEL PENDING ASSIGNMENT") }
+                }
             }
         }
 
@@ -1980,6 +2165,19 @@ private fun TagManagementScreen(
                         OutlinedButton(onClick = { onOpenHive(hive.id) }, modifier = Modifier.weight(1f)) { Text("OPEN") }
                         OutlinedButton(
                             onClick = {
+                                if (pendingUid != null) {
+                                    onAssignTag(hive.id, pendingUid, false) { success, error ->
+                                        if (success) {
+                                            verifyText = "Assigned $pendingUid"
+                                            onPendingUidConsumed()
+                                        } else if (error?.contains("already assigned") == true) {
+                                            reassignPrompt = hive.id to pendingUid
+                                        } else {
+                                            verifyText = error ?: "Could not assign tag."
+                                        }
+                                    }
+                                    return@OutlinedButton
+                                }
                                 assigningHiveId = hive.id
                                 nfc.startRead(activity) { result ->
                                     when (result) {
@@ -1989,8 +2187,14 @@ private fun TagManagementScreen(
                                                 verifyText = "Tag payload belongs to another hive. Use REPLACE/WRITE on the destination hive."
                                                 assigningHiveId = null
                                             } else {
-                                                onAssignTag(hive.id, result.uid) { success, error ->
-                                                    verifyText = if (success) "Assigned ${result.uid}" else (error ?: "Could not assign tag.")
+                                                onAssignTag(hive.id, result.uid, false) { success, error ->
+                                                    if (success) {
+                                                        verifyText = "Assigned ${result.uid}"
+                                                    } else if (error?.contains("already assigned") == true) {
+                                                        reassignPrompt = hive.id to result.uid
+                                                    } else {
+                                                        verifyText = error ?: "Could not assign tag."
+                                                    }
                                                     assigningHiveId = null
                                                 }
                                             }
@@ -2037,6 +2241,8 @@ private fun MoreScreen(
     onAddApiary: () -> Unit,
     onInsights: () -> Unit,
     onTagManager: () -> Unit,
+    onColonyHistory: () -> Unit,
+    deadCount: Int,
     activity: ComponentActivity,
     cloud: SupabaseGateway
 ) {
@@ -2068,6 +2274,16 @@ private fun MoreScreen(
                     Text("Scan, verify, assign, replace or remove hive tags", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 Icon(Icons.Rounded.Nfc, "Open NFC tag management", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(30.dp))
+            }
+        }
+
+        Card(onClick = onColonyHistory, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(18.dp)) {
+            Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    Text("Colony history", fontWeight = FontWeight.ExtraBold, style = MaterialTheme.typography.titleMedium)
+                    Text(if (deadCount == 0) "Dead colonies are archived here with their full history" else "$deadCount dead ${if (deadCount == 1) "colony" else "colonies"} preserved", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Icon(Icons.Rounded.History, "Open colony history", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(30.dp))
             }
         }
 

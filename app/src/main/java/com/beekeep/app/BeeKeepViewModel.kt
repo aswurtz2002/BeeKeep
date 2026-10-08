@@ -21,6 +21,8 @@ class BeeKeepViewModel(
 ) : ViewModel() {
     private val _hives = MutableStateFlow<List<Hive>>(emptyList())
     val hives: StateFlow<List<Hive>> = _hives
+    private val _deadHives = MutableStateFlow<List<Hive>>(emptyList())
+    val deadHives: StateFlow<List<Hive>> = _deadHives
     private val _apiaries = MutableStateFlow<List<Apiary>>(emptyList())
     val apiaries: StateFlow<List<Apiary>> = _apiaries
     private val _tasks = MutableStateFlow<List<Task>>(emptyList())
@@ -58,6 +60,7 @@ class BeeKeepViewModel(
             repo.initialize()
             _ready.value = true
             launch { repo.observeHives().collect { _hives.value = it } }
+            launch { repo.observeDeadHives().collect { _deadHives.value = it } }
             launch { repo.observeApiaries().collect { _apiaries.value = it } }
             launch { repo.observeTasks().collect { tasks ->
                 _tasks.value = tasks
@@ -88,14 +91,11 @@ class BeeKeepViewModel(
         }
     }
 
-    fun openHiveByTag(tag: String): Boolean {
-        val match = _hives.value.firstOrNull { it.tagUid.equals(tag, ignoreCase = true) }
-        return if (match != null) { openHive(match.id); true } else false
-    }
+    suspend fun findHiveByTag(tag: String): Hive? = repo.findHiveByNfc(tag)
 
     fun clearHive() { detailJob?.cancel(); _selected.value = null; _photos.value = emptyList() }
 
-    fun createHive(number: String, apiary: String, queen: String, strength: Int, onResult: (Boolean, String?) -> Unit = { _, _ -> }) {
+    fun createHive(number: String, apiary: String, queen: String, strength: Int, tagUid: String? = null, onResult: (Boolean, String?) -> Unit = { _, _ -> }) {
         val clean = number.trim(); if (clean.isBlank()) { onResult(false, "Enter a hive number."); return }
         val cleanApiary = apiary.trim().ifBlank { "Unassigned Yard" }
         viewModelScope.launch {
@@ -105,25 +105,58 @@ class BeeKeepViewModel(
                 return@launch
             }
             runCatching {
-                repo.saveHive(Hive(IdGenerator.nextLong(), clean, cleanApiary, queen, "", "", null, 3, strength.coerceIn(0, 10), 0.0, null))
+                val hiveId = IdGenerator.nextLong()
+                repo.saveHive(Hive(hiveId, clean, cleanApiary, queen, "", "", null, 3, strength.coerceIn(0, 10), 0.0, null))
+                hiveId
+            }.onSuccess { hiveId ->
+                val tagError = tagUid?.takeIf { it.isNotBlank() }?.let { tag ->
+                    runCatching { repo.assignNfcTag(hiveId, tag) }.exceptionOrNull()?.message?.let { "Hive created. $it" }
+                }
+                onResult(true, tagError)
+            }.onFailure { onResult(false, it.message ?: "Could not create the hive.") }
+        }
+    }
+
+    fun markHiveDead(hiveId: Long, onResult: (Boolean, String?) -> Unit = { _, _ -> }) {
+        viewModelScope.launch {
+            runCatching {
+                repo.markHiveDead(hiveId)
+                if (_selected.value?.id == hiveId) _selected.value = repo.getHive(hiveId)
             }.onSuccess { onResult(true, null) }
-                .onFailure { onResult(false, it.message ?: "Could not create the hive.") }
+                .onFailure { onResult(false, it.message ?: "Could not mark the colony dead.") }
+        }
+    }
+
+    fun restoreHive(hiveId: Long, onResult: (Boolean, String?) -> Unit = { _, _ -> }) {
+        viewModelScope.launch {
+            runCatching {
+                repo.restoreHive(hiveId)
+                if (_selected.value?.id == hiveId) _selected.value = repo.getHive(hiveId)
+            }.onSuccess { onResult(true, null) }
+                .onFailure { onResult(false, it.message ?: "Could not restore the colony.") }
+        }
+    }
+
+    fun deleteHivePermanently(hiveId: Long, onResult: (Boolean, String?) -> Unit = { _, _ -> }) {
+        viewModelScope.launch {
+            runCatching {
+                repo.deleteHivePermanently(hiveId)
+                if (_selected.value?.id == hiveId) clearHive()
+            }.onSuccess { onResult(true, null) }
+                .onFailure { onResult(false, it.message ?: "Could not delete the hive.") }
         }
     }
 
     fun assignTag(uid: String, onResult: (Boolean, String?) -> Unit = { _, _ -> }) {
-        _selected.value?.id?.let { assignTagToHive(it, uid, onResult) } ?: onResult(false, "No hive is selected.")
+        _selected.value?.id?.let { assignTagToHive(it, uid, onResult = onResult) } ?: onResult(false, "No hive is selected.")
     }
 
-    fun assignTagToHive(hiveId: Long, uid: String, onResult: (Boolean, String?) -> Unit = { _, _ -> }) {
+    fun assignTagToHive(hiveId: Long, uid: String, reassign: Boolean = false, onResult: (Boolean, String?) -> Unit = { _, _ -> }) {
         val normalized = uid.trim().uppercase()
         if (normalized.isBlank()) { onResult(false, "The NFC tag has no readable UID."); return }
         viewModelScope.launch {
             runCatching {
-                val hive = repo.getHive(hiveId) ?: throw IllegalArgumentException("Hive not found.")
-                val owner = repo.findHiveByTag(normalized)
-                if (owner != null && owner.id != hiveId) throw IllegalArgumentException("That NFC tag is already assigned to Hive ${owner.number}.")
-                repo.saveHive(hive.copy(tagUid = normalized))
+                repo.assignNfcTag(hiveId, normalized, reassign)
                 if (_selected.value?.id == hiveId) _selected.value = repo.getHive(hiveId)
             }.onSuccess { onResult(true, null) }
                 .onFailure { onResult(false, it.message ?: "Could not assign the NFC tag.") }
@@ -137,8 +170,7 @@ class BeeKeepViewModel(
 
     fun clearTagForHive(hiveId: Long) {
         viewModelScope.launch {
-            val hive = repo.getHive(hiveId) ?: return@launch
-            repo.saveHive(hive.copy(tagUid = null))
+            repo.unassignNfcTag(hiveId)
             if (_selected.value?.id == hiveId) _selected.value = repo.getHive(hiveId)
         }
     }

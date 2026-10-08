@@ -19,6 +19,7 @@ class LocalHiveRepository(context: Context) {
     }
 
     fun observeHives(): Flow<List<Hive>> = db.hives().observeAll().map { it.map(::toHive) }
+    fun observeDeadHives(): Flow<List<Hive>> = db.hives().observeDead().map { it.map(::toHive) }
     fun observeApiaries(): Flow<List<Apiary>> = db.apiaries().observeAll().map { it.map(::toApiary) }
     fun observeInspections(hiveId: Long): Flow<List<Inspection>> = db.inspections().observeForHive(hiveId).map { it.map(::toInspection) }
     fun observeAllInspections(): Flow<List<Inspection>> = db.inspections().observeAll().map { it.map(::toInspection) }
@@ -33,7 +34,11 @@ class LocalHiveRepository(context: Context) {
     fun observePhotos(hiveId: Long): Flow<List<PhotoEntity>> = db.photos().observeForHive(hiveId)
 
     suspend fun getHive(id: Long): Hive? = withContext(Dispatchers.IO) { db.hives().get(id)?.let(::toHive) }
-    suspend fun findHiveByTag(tag: String): Hive? = withContext(Dispatchers.IO) { db.hives().byTag(tag.trim())?.let(::toHive) }
+    suspend fun findHiveByNfc(tag: String): Hive? = withContext(Dispatchers.IO) {
+        val uid = tag.trim()
+        db.nfcTagAssignments().activeByTag(uid)?.let { db.hives().get(it.hiveId) }?.let(::toHive)
+            ?: db.hives().byTag(uid)?.let(::toHive)
+    }
     suspend fun findHiveByNumberAndApiary(number: String, apiary: String): Hive? = withContext(Dispatchers.IO) {
         db.hives().byNumberAndApiary(number.trim(), apiary.trim()).let { it?.let(::toHive) }
     }
@@ -41,12 +46,16 @@ class LocalHiveRepository(context: Context) {
     private suspend fun seedIfEmpty() = withContext(Dispatchers.IO) {
         db.withTransaction {
             if (db.hives().countAll() == 0) {
+                val now = System.currentTimeMillis()
                 val home = ApiaryEntity(100L, "Home Yard", notes = "Main apiary", forageNotes = "Willow + clover", waterNotes = "Stock tank")
                 val out = ApiaryEntity(101L, "Out Yard A", forageNotes = "Canola", waterNotes = "Natural slough")
                 db.apiaries().upsert(home); db.apiaries().upsert(out)
-                db.hives().upsert(HiveEntity(1, "01", "Home Yard", 100, "Laying", queenMarkColor = "White", queenOrigin = "Graft", queenAgeMonths = 18, queenTemperament = 2, strength = 8, mitePercent = .8, tagUid = "BEEKEEP-HIVE-01"))
-                db.hives().upsert(HiveEntity(2, "02", "Home Yard", 100, "Spotted", queenMarkColor = "Yellow", queenOrigin = "Package", queenAgeMonths = 9, queenTemperament = 3, strength = 7, mitePercent = 1.2, tagUid = "BEEKEEP-HIVE-02"))
-                db.hives().upsert(HiveEntity(3, "03", "Out Yard A", 101, "Laying", queenMarkColor = "Red", queenOrigin = "Swarm", queenAgeMonths = 24, queenTemperament = 4, strength = 6, mitePercent = 2.3, tagUid = "BEEKEEP-HIVE-03"))
+                db.hives().upsert(HiveEntity(1, "01", "Home Yard", 100, "Laying", queenMarkColor = "White", queenOrigin = "Graft", queenAgeMonths = 18, queenTemperament = 2, strength = 8, mitePercent = .8, tagUid = "BEEKEEP-HIVE-01", statusChangedAt = now))
+                db.hives().upsert(HiveEntity(2, "02", "Home Yard", 100, "Spotted", queenMarkColor = "Yellow", queenOrigin = "Package", queenAgeMonths = 9, queenTemperament = 3, strength = 7, mitePercent = 1.2, tagUid = "BEEKEEP-HIVE-02", statusChangedAt = now))
+                db.hives().upsert(HiveEntity(3, "03", "Out Yard A", 101, "Laying", queenMarkColor = "Red", queenOrigin = "Swarm", queenAgeMonths = 24, queenTemperament = 4, strength = 6, mitePercent = 2.3, tagUid = "BEEKEEP-HIVE-03", statusChangedAt = now))
+                db.nfcTagAssignments().upsert(NfcTagAssignmentEntity(1, "BEEKEEP-HIVE-01", 1, now))
+                db.nfcTagAssignments().upsert(NfcTagAssignmentEntity(2, "BEEKEEP-HIVE-02", 2, now))
+                db.nfcTagAssignments().upsert(NfcTagAssignmentEntity(3, "BEEKEEP-HIVE-03", 3, now))
             }
         }
     }
@@ -58,6 +67,7 @@ class LocalHiveRepository(context: Context) {
         val cleanApiary = h.apiary.trim()
         val resolvedApiaryId = cleanApiary.takeIf { it.isNotBlank() }?.let { db.apiaries().byName(it)?.id }
         val cleanTag = h.tagUid?.trim()?.takeIf { it.isNotBlank() }
+        val now = System.currentTimeMillis()
         val entity = HiveEntity(
             id = h.id,
             number = h.number.trim(),
@@ -70,9 +80,14 @@ class LocalHiveRepository(context: Context) {
             queenTemperament = h.queenTemperament.coerceIn(1, 5),
             strength = h.strength.coerceIn(0, 10),
             mitePercent = h.mitePercent.coerceAtLeast(0.0),
-            tagUid = cleanTag,
-            updatedAt = System.currentTimeMillis(),
-            deleted = false
+            // tag_uid is a cache owned by the NFC assignment ledger; ordinary
+            // hive saves must not resurrect lifecycle or tombstone state.
+            tagUid = existing?.tagUid ?: cleanTag,
+            updatedAt = now,
+            deleted = existing?.deleted ?: false,
+            status = existing?.status ?: h.status,
+            deadAt = existing?.deadAt ?: h.deadAt,
+            statusChangedAt = existing?.statusChangedAt ?: now
         )
         db.hives().upsert(entity)
         enqueue("hive", h.id, "upsert", hivePayload(entity))
@@ -84,6 +99,105 @@ class LocalHiveRepository(context: Context) {
             db.events().upsert(event)
             enqueue("event", event.id, "upsert", eventPayload(event))
         }
+        }
+    }
+
+    suspend fun markHiveDead(hiveId: Long) = withContext(Dispatchers.IO) {
+        db.withTransaction {
+            val hive = db.hives().get(hiveId) ?: throw IllegalArgumentException("Hive not found.")
+            if (hive.status == HiveStatus.DEAD) return@withTransaction
+            val now = System.currentTimeMillis()
+            val dead = hive.copy(status = HiveStatus.DEAD, deadAt = now, statusChangedAt = now, tagUid = null, updatedAt = now)
+            db.hives().upsert(dead)
+            enqueue("hive", hiveId, "upsert", hivePayload(dead))
+            db.nfcTagAssignments().activeForHive(hiveId)?.let { assignment ->
+                val closed = assignment.copy(unassignedAt = now)
+                db.nfcTagAssignments().upsert(closed)
+                enqueue("nfc_assignment", closed.id, "upsert", nfcAssignmentPayload(closed))
+            }
+            val event = ActivityEventEntity(IdGenerator.nextLong(), hiveId, now, "lifecycle", "Colony marked dead", "History preserved. NFC tag released.")
+            db.events().upsert(event)
+            enqueue("event", event.id, "upsert", eventPayload(event))
+        }
+    }
+
+    suspend fun restoreHive(hiveId: Long) = withContext(Dispatchers.IO) {
+        db.withTransaction {
+            val hive = db.hives().get(hiveId) ?: throw IllegalArgumentException("Hive not found.")
+            if (hive.status == HiveStatus.ACTIVE) return@withTransaction
+            val now = System.currentTimeMillis()
+            val restored = hive.copy(status = HiveStatus.ACTIVE, deadAt = null, statusChangedAt = now, updatedAt = now)
+            db.hives().upsert(restored)
+            enqueue("hive", hiveId, "upsert", hivePayload(restored))
+            val event = ActivityEventEntity(IdGenerator.nextLong(), hiveId, now, "lifecycle", "Colony restored", "Marked active again.")
+            db.events().upsert(event)
+            enqueue("event", event.id, "upsert", eventPayload(event))
+        }
+    }
+
+    suspend fun deleteHivePermanently(hiveId: Long) = withContext(Dispatchers.IO) {
+        db.withTransaction {
+            db.hives().get(hiveId) ?: throw IllegalArgumentException("Hive not found.")
+            permanentlyDeleteHiveLocal(hiveId)
+            enqueue("hive", hiveId, "delete", JSONObject().put("id", hiveId).toString())
+        }
+    }
+
+    private suspend fun permanentlyDeleteHiveLocal(hiveId: Long) {
+        db.photos().listForHive(hiveId).forEach { runCatching { java.io.File(it.localPath).delete() } }
+        db.events().deleteForHive(hiveId)
+        db.tasks().deleteForHive(hiveId)
+        // inspections, feedings, treatments, harvests, photos and NFC assignments cascade.
+        db.hives().hardDelete(hiveId)
+    }
+
+    suspend fun assignNfcTag(hiveId: Long, uid: String, reassign: Boolean = false) = withContext(Dispatchers.IO) {
+        val normalized = uid.trim().uppercase()
+        require(normalized.isNotBlank()) { "The NFC tag has no readable UID." }
+        db.withTransaction {
+            val hive = db.hives().get(hiveId) ?: throw IllegalArgumentException("Hive not found.")
+            require(hive.status == HiveStatus.ACTIVE) { "Cannot assign an NFC tag to a ${hive.status.lowercase()} colony." }
+            val now = System.currentTimeMillis()
+            db.nfcTagAssignments().activeByTag(normalized)?.let { owner ->
+                if (owner.hiveId == hiveId) return@withTransaction
+                if (!reassign) {
+                    val ownerHive = db.hives().get(owner.hiveId)
+                    throw IllegalArgumentException("This NFC tag is already assigned to Hive ${ownerHive?.number ?: owner.hiveId}.")
+                }
+                val closed = owner.copy(unassignedAt = now)
+                db.nfcTagAssignments().upsert(closed)
+                enqueue("nfc_assignment", closed.id, "upsert", nfcAssignmentPayload(closed))
+                db.hives().refreshTagCache(owner.hiveId)
+                val stealEvent = ActivityEventEntity(IdGenerator.nextLong(), owner.hiveId, now, "tag", "NFC tag removed", "Tag $normalized reassigned to Hive ${hive.number}")
+                db.events().upsert(stealEvent)
+                enqueue("event", stealEvent.id, "upsert", eventPayload(stealEvent))
+            }
+            db.nfcTagAssignments().activeForHive(hiveId)?.takeIf { !it.tagUid.equals(normalized, ignoreCase = true) }?.let { existing ->
+                val closed = existing.copy(unassignedAt = now)
+                db.nfcTagAssignments().upsert(closed)
+                enqueue("nfc_assignment", closed.id, "upsert", nfcAssignmentPayload(closed))
+            }
+            val assignment = NfcTagAssignmentEntity(IdGenerator.nextLong(), normalized, hiveId, now)
+            db.nfcTagAssignments().upsert(assignment)
+            db.hives().refreshTagCache(hiveId)
+            enqueue("nfc_assignment", assignment.id, "upsert", nfcAssignmentPayload(assignment))
+            val event = ActivityEventEntity(IdGenerator.nextLong(), hiveId, now, "tag", "NFC tag assigned", "Tag $normalized")
+            db.events().upsert(event)
+            enqueue("event", event.id, "upsert", eventPayload(event))
+        }
+    }
+
+    suspend fun unassignNfcTag(hiveId: Long) = withContext(Dispatchers.IO) {
+        db.withTransaction {
+            val assignment = db.nfcTagAssignments().activeForHive(hiveId) ?: return@withTransaction
+            val now = System.currentTimeMillis()
+            val closed = assignment.copy(unassignedAt = now)
+            db.nfcTagAssignments().upsert(closed)
+            db.hives().refreshTagCache(hiveId)
+            enqueue("nfc_assignment", closed.id, "upsert", nfcAssignmentPayload(closed))
+            val event = ActivityEventEntity(IdGenerator.nextLong(), hiveId, now, "tag", "NFC tag removed", "Tag ${assignment.tagUid} unassigned")
+            db.events().upsert(event)
+            enqueue("event", event.id, "upsert", eventPayload(event))
         }
     }
 
@@ -224,7 +338,8 @@ class LocalHiveRepository(context: Context) {
                     if (doc.updated_at > it.updatedAt) db.apiaries().upsert(it.copy(deleted = true, updatedAt = doc.updated_at))
                 }
                 "hive" -> db.hives().get(doc.entity_id)?.let {
-                    if (doc.updated_at > it.updatedAt) db.hives().upsert(it.copy(deleted = true, updatedAt = doc.updated_at))
+                    // A remote permanent delete only wins over genuinely newer local edits.
+                    if (doc.updated_at > it.updatedAt) db.withTransaction { permanentlyDeleteHiveLocal(doc.entity_id) }
                 }
                 "task" -> db.tasks().get(doc.entity_id)?.let {
                     if (doc.updated_at > it.updatedAt) db.tasks().upsert(it.copy(completed = true, updatedAt = doc.updated_at))
@@ -254,6 +369,11 @@ class LocalHiveRepository(context: Context) {
                 val existing = db.hives().get(doc.entity_id)
                 val incomingUpdatedAt = json.optLong("updated_at", doc.updated_at)
                 if (existing != null && existing.updatedAt >= incomingUpdatedAt) return@withContext
+                val incomingStatusChangedAt = json.optLong("status_changed_at", 0L)
+                // Lifecycle (ACTIVE/DEAD) resolves by status_changed_at so a stale
+                // offline save can merge field edits without resurrecting the colony.
+                val lifecycleWins = existing == null || incomingStatusChangedAt > existing.statusChangedAt
+                val status = if (lifecycleWins) json.optString("status", HiveStatus.ACTIVE) else existing.status
                 db.hives().upsert(HiveEntity(
                     id = json.optLong("id", doc.entity_id), number = json.optString("number").trim(),
                     apiaryName = json.optString("apiary").trim().ifBlank { "Unassigned Yard" }, apiaryId = json.longOrNull("apiary_id")?.takeIf { db.apiaries().get(it) != null },
@@ -261,37 +381,76 @@ class LocalHiveRepository(context: Context) {
                     queenMarkColor = json.optString("queen_mark_color"), queenOrigin = json.optString("queen_origin"),
                     queenAgeMonths = json.intOrNull("queen_age_months"), queenTemperament = json.optInt("queen_temperament", 3).coerceIn(1, 5),
                     strength = json.optInt("strength", 0).coerceIn(0, 10), mitePercent = json.optDouble("mite_percent", 0.0).coerceAtLeast(0.0),
-                    tagUid = json.stringOrNull("tag_uid"), updatedAt = incomingUpdatedAt,
-                    deleted = json.optBoolean("deleted", false)
+                    tagUid = existing?.tagUid, updatedAt = incomingUpdatedAt,
+                    deleted = existing?.deleted ?: json.optBoolean("deleted", false),
+                    status = status,
+                    deadAt = if (lifecycleWins) json.longOrNull("dead_at") else existing.deadAt,
+                    statusChangedAt = if (lifecycleWins) incomingStatusChangedAt else existing.statusChangedAt
                 ))
+                // Older BeeKeep builds stored the tag on the hive document. Adopt it
+                // into the assignment ledger so mixed-version fleets still resolve scans.
+                val remoteTag = json.stringOrNull("tag_uid")
+                if (remoteTag != null && status == HiveStatus.ACTIVE) {
+                    val localActive = db.nfcTagAssignments().activeForHive(doc.entity_id)
+                    if (localActive == null || !localActive.tagUid.equals(remoteTag, ignoreCase = true)) {
+                        applyAssignment(NfcTagAssignmentEntity(IdGenerator.nextLong(), remoteTag, doc.entity_id, incomingUpdatedAt))
+                    }
+                }
+                db.hives().refreshTagCache(doc.entity_id)
             }
-            "inspection" -> db.inspections().upsert(InspectionEntity(
+            "nfc_assignment" -> {
+                val incoming = NfcTagAssignmentEntity(
+                    id = json.optLong("id", doc.entity_id),
+                    tagUid = json.optString("tag_uid"),
+                    hiveId = json.optLong("hive_id"),
+                    assignedAt = json.optLong("assigned_at", doc.updated_at),
+                    unassignedAt = json.longOrNull("unassigned_at")
+                )
+                if (incoming.tagUid.isNotBlank() && db.hives().exists(incoming.hiveId)) applyAssignment(incoming)
+            }
+            "inspection" -> if (db.hives().exists(json.optLong("hive_id"))) db.inspections().upsert(InspectionEntity(
                 id=json.optLong("id",doc.entity_id), hiveId=json.optLong("hive_id"), createdAt=json.optLong("created_at",doc.updated_at),
                 strength=json.optInt("strength").coerceIn(0, 10), queenStatus=json.optString("queen_status"), miteCount=json.optInt("mite_count").coerceAtLeast(0), sampleSize=json.optInt("sample_size",1).coerceAtLeast(1),
                 notes=json.optString("notes"), photoPath=json.stringOrNull("photo_path"), latitude=json.doubleOrNull("latitude"), longitude=json.doubleOrNull("longitude"),
                 emergencyCells=json.optInt("emergency_cells").coerceAtLeast(0), supercedureCells=json.optInt("supercedure_cells").coerceAtLeast(0), swarmCells=json.optInt("swarm_cells").coerceAtLeast(0), eggs=json.optInt("eggs").coerceAtLeast(0), openBrood=json.optInt("open_brood").coerceAtLeast(0), cappedBrood=json.optInt("capped_brood").coerceAtLeast(0), honeyStores=json.optInt("honey_stores").coerceAtLeast(0), pollen=json.optInt("pollen").coerceAtLeast(0), emptyDrawnComb=json.optInt("empty_drawn_comb").coerceAtLeast(0), diseaseFlags=json.optString("disease_flags"), updatedAt=json.optLong("updated_at",doc.updated_at)
-            ))
-            "feeding" -> db.feedings().upsert(FeedingEntity(json.optLong("id",doc.entity_id),json.optLong("hive_id"),json.optLong("created_at",doc.updated_at),json.optString("feed_type"),json.optString("ratio"),json.optDouble("amount").coerceAtLeast(0.0),json.optString("unit"),json.optString("notes")))
-            "treatment" -> db.treatments().upsert(TreatmentEntity(json.optLong("id",doc.entity_id),json.optLong("hive_id"),json.optLong("created_at",doc.updated_at),json.optString("treatment_type"),json.optString("product"),json.longOrNull("inserted_at"),json.longOrNull("removal_at"),json.longOrNull("withdrawal_until"),json.optString("notes")))
-            "harvest" -> db.harvests().upsert(HarvestEntity(json.optLong("id",doc.entity_id),json.optLong("hive_id"),json.optLong("created_at",doc.updated_at),json.optInt("supers_pulled").coerceAtLeast(0),json.optDouble("wet_honey_weight").coerceAtLeast(0.0),json.optDouble("dry_honey_weight").coerceAtLeast(0.0),json.optString("weight_unit","lb"),json.optDouble("wax_weight").coerceAtLeast(0.0),json.optDouble("propolis_weight").coerceAtLeast(0.0),json.optString("notes")))
+            )) else Unit
+            "feeding" -> if (db.hives().exists(json.optLong("hive_id"))) db.feedings().upsert(FeedingEntity(json.optLong("id",doc.entity_id),json.optLong("hive_id"),json.optLong("created_at",doc.updated_at),json.optString("feed_type"),json.optString("ratio"),json.optDouble("amount").coerceAtLeast(0.0),json.optString("unit"),json.optString("notes"))) else Unit
+            "treatment" -> if (db.hives().exists(json.optLong("hive_id"))) db.treatments().upsert(TreatmentEntity(json.optLong("id",doc.entity_id),json.optLong("hive_id"),json.optLong("created_at",doc.updated_at),json.optString("treatment_type"),json.optString("product"),json.longOrNull("inserted_at"),json.longOrNull("removal_at"),json.longOrNull("withdrawal_until"),json.optString("notes"))) else Unit
+            "harvest" -> if (db.hives().exists(json.optLong("hive_id"))) db.harvests().upsert(HarvestEntity(json.optLong("id",doc.entity_id),json.optLong("hive_id"),json.optLong("created_at",doc.updated_at),json.optInt("supers_pulled").coerceAtLeast(0),json.optDouble("wet_honey_weight").coerceAtLeast(0.0),json.optDouble("dry_honey_weight").coerceAtLeast(0.0),json.optString("weight_unit","lb"),json.optDouble("wax_weight").coerceAtLeast(0.0),json.optDouble("propolis_weight").coerceAtLeast(0.0),json.optString("notes"))) else Unit
             "task" -> {
+                val taskHiveId = json.longOrNull("hive_id")
+                if (taskHiveId != null && !db.hives().exists(taskHiveId)) return@withContext
                 val existing = db.tasks().get(doc.entity_id)
                 val incomingUpdatedAt = json.optLong("updated_at", doc.updated_at)
                 if (existing != null && existing.updatedAt >= incomingUpdatedAt) return@withContext
-                db.tasks().upsert(TaskEntity(json.optLong("id",doc.entity_id),json.longOrNull("hive_id"),json.optString("title"),json.optLong("due_at"),json.optBoolean("completed"),json.optString("kind","manual"),json.optBoolean("reminder_enabled",true),incomingUpdatedAt))
+                db.tasks().upsert(TaskEntity(json.optLong("id",doc.entity_id),taskHiveId,json.optString("title"),json.optLong("due_at"),json.optBoolean("completed"),json.optString("kind","manual"),json.optBoolean("reminder_enabled",true),incomingUpdatedAt))
             }
-            "event" -> db.events().upsert(ActivityEventEntity(json.optLong("id",doc.entity_id),json.optLong("hive_id"),json.optLong("created_at",doc.updated_at),json.optString("type"),json.optString("title"),json.optString("detail")))
+            "event" -> if (db.hives().exists(json.optLong("hive_id"))) db.events().upsert(ActivityEventEntity(json.optLong("id",doc.entity_id),json.optLong("hive_id"),json.optLong("created_at",doc.updated_at),json.optString("type"),json.optString("title"),json.optString("detail"))) else Unit
+        }
+    }
+
+    private suspend fun applyAssignment(incoming: NfcTagAssignmentEntity) {
+        db.withTransaction {
+            val merge = NfcAssignmentResolver.merge(
+                tagConflict = db.nfcTagAssignments().activeByTag(incoming.tagUid),
+                hiveConflict = db.nfcTagAssignments().activeForHive(incoming.hiveId),
+                incoming = incoming
+            )
+            merge.toClose.forEach { db.nfcTagAssignments().upsert(it) }
+            db.nfcTagAssignments().upsert(merge.incoming)
+            (merge.toClose.map { it.hiveId } + merge.incoming.hiveId).distinct().forEach { db.hives().refreshTagCache(it) }
         }
     }
 
     private suspend fun enqueue(type: String, entityId: Long, operation: String, payload: String) {
-        if (type in setOf("hive", "apiary", "task")) {
+        if (type in setOf("hive", "apiary", "task", "nfc_assignment")) {
             db.outbox().deletePendingForEntity(type, entityId)
         }
         db.outbox().enqueue(SyncOutboxEntity(IdGenerator.nextLong(), type, entityId, operation, payload))
     }
 
-    private fun hivePayload(e: HiveEntity) = JSONObject().put("id",e.id).put("number",e.number).put("apiary",e.apiaryName).put("apiary_id",e.apiaryId).put("queen_status",e.queenStatus).put("queen_mark_color",e.queenMarkColor).put("queen_origin",e.queenOrigin).put("queen_age_months",e.queenAgeMonths).put("queen_temperament",e.queenTemperament).put("strength",e.strength).put("mite_percent",e.mitePercent).put("tag_uid",e.tagUid).put("updated_at",e.updatedAt).put("deleted",e.deleted).toString()
+    private fun hivePayload(e: HiveEntity) = JSONObject().put("id",e.id).put("number",e.number).put("apiary",e.apiaryName).put("apiary_id",e.apiaryId).put("queen_status",e.queenStatus).put("queen_mark_color",e.queenMarkColor).put("queen_origin",e.queenOrigin).put("queen_age_months",e.queenAgeMonths).put("queen_temperament",e.queenTemperament).put("strength",e.strength).put("mite_percent",e.mitePercent).put("tag_uid",e.tagUid).put("updated_at",e.updatedAt).put("deleted",e.deleted).put("status",e.status).put("dead_at",e.deadAt).put("status_changed_at",e.statusChangedAt).toString()
+    private fun nfcAssignmentPayload(e: NfcTagAssignmentEntity) = JSONObject().put("id",e.id).put("tag_uid",e.tagUid).put("hive_id",e.hiveId).put("assigned_at",e.assignedAt).put("unassigned_at",e.unassignedAt).put("updated_at",maxOf(e.assignedAt, e.unassignedAt ?: 0L)).toString()
     private fun apiaryPayload(e: ApiaryEntity) = JSONObject().put("id",e.id).put("name",e.name).put("notes",e.notes).put("latitude",e.latitude).put("longitude",e.longitude).put("forage_notes",e.forageNotes).put("water_notes",e.waterNotes).put("updated_at",e.updatedAt).put("deleted",e.deleted).toString()
     private fun inspectionPayload(e: InspectionEntity) = JSONObject().put("id",e.id).put("hive_id",e.hiveId).put("created_at",e.createdAt).put("strength",e.strength).put("queen_status",e.queenStatus).put("mite_count",e.miteCount).put("sample_size",e.sampleSize).put("notes",e.notes)
         // Local device paths are never valid on another device. Photos sync separately.
@@ -307,7 +466,7 @@ class LocalHiveRepository(context: Context) {
     private fun JSONObject.intOrNull(key: String): Int? = if (has(key) && !isNull(key)) optInt(key) else null
     private fun JSONObject.stringOrNull(key: String): String? = if (has(key) && !isNull(key)) optString(key) else null
 
-    private fun toHive(e: HiveEntity) = Hive(e.id, e.number, e.apiaryName, e.queenStatus, e.queenMarkColor, e.queenOrigin, e.queenAgeMonths, e.queenTemperament, e.strength, e.mitePercent, e.tagUid)
+    private fun toHive(e: HiveEntity) = Hive(e.id, e.number, e.apiaryName, e.queenStatus, e.queenMarkColor, e.queenOrigin, e.queenAgeMonths, e.queenTemperament, e.strength, e.mitePercent, e.tagUid, e.status, e.deadAt)
     private fun toInspection(e: InspectionEntity) = Inspection(e.id, e.hiveId, e.createdAt, e.strength, e.queenStatus, e.miteCount, e.sampleSize, e.notes, e.photoPath, e.latitude, e.longitude, e.emergencyCells, e.supercedureCells, e.swarmCells, e.eggs, e.openBrood, e.cappedBrood, e.honeyStores, e.pollen, e.emptyDrawnComb, e.diseaseFlags)
     private fun toFeeding(e: FeedingEntity) = Feeding(e.id, e.hiveId, e.createdAt, e.feedType, e.ratio, e.amount, e.unit, e.notes)
     private fun toTreatment(e: TreatmentEntity) = Treatment(e.id, e.hiveId, e.createdAt, e.treatmentType, e.product, e.insertedAt, e.removalAt, e.withdrawalUntil, e.notes)

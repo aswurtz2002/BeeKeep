@@ -8,8 +8,8 @@ import androidx.room.Room
 import androidx.room.RoomDatabase
 
 @Database(
-    entities = [ApiaryEntity::class, HiveEntity::class, InspectionEntity::class, FeedingEntity::class, TreatmentEntity::class, HarvestEntity::class, ActivityEventEntity::class, SyncOutboxEntity::class, TaskEntity::class, PhotoEntity::class],
-    version = 7,
+    entities = [ApiaryEntity::class, HiveEntity::class, InspectionEntity::class, FeedingEntity::class, TreatmentEntity::class, HarvestEntity::class, ActivityEventEntity::class, SyncOutboxEntity::class, TaskEntity::class, PhotoEntity::class, NfcTagAssignmentEntity::class],
+    version = 8,
     exportSchema = false
 )
 abstract class BeeKeepRoomDb : RoomDatabase() {
@@ -23,6 +23,7 @@ abstract class BeeKeepRoomDb : RoomDatabase() {
     abstract fun outbox(): OutboxDao
     abstract fun tasks(): TaskDao
     abstract fun photos(): PhotoDao
+    abstract fun nfcTagAssignments(): NfcTagAssignmentDao
 
     companion object {
         val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -113,10 +114,36 @@ abstract class BeeKeepRoomDb : RoomDatabase() {
             }
         }
 
+        val MIGRATION_7_8 = object : Migration(7, 8) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE hives ADD COLUMN status TEXT NOT NULL DEFAULT 'ACTIVE'")
+                db.execSQL("ALTER TABLE hives ADD COLUMN dead_at INTEGER")
+                db.execSQL("ALTER TABLE hives ADD COLUMN status_changed_at INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("UPDATE hives SET status_changed_at = updated_at WHERE status_changed_at = 0")
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS nfc_tag_assignments (
+                        id INTEGER NOT NULL PRIMARY KEY,
+                        tag_uid TEXT NOT NULL,
+                        hive_id INTEGER NOT NULL,
+                        assigned_at INTEGER NOT NULL,
+                        unassigned_at INTEGER,
+                        FOREIGN KEY(hive_id) REFERENCES hives(id) ON DELETE CASCADE
+                    )
+                """.trimIndent())
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_nfc_tag_assignments_hive_id ON nfc_tag_assignments(hive_id)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_nfc_tag_assignments_tag_uid ON nfc_tag_assignments(tag_uid)")
+                // Existing tag assignments move into the new ledger; hives.tag_uid stays as the cached current tag.
+                db.execSQL("""
+                    INSERT INTO nfc_tag_assignments (id, tag_uid, hive_id, assigned_at)
+                    SELECT id, tag_uid, id, updated_at FROM hives WHERE tag_uid IS NOT NULL
+                """.trimIndent())
+            }
+        }
+
         @Volatile private var INSTANCE: BeeKeepRoomDb? = null
         fun get(context: Context): BeeKeepRoomDb = INSTANCE ?: synchronized(this) {
             INSTANCE ?: Room.databaseBuilder(context.applicationContext, BeeKeepRoomDb::class.java, "beekeep_room.db")
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8)
                 .setJournalMode(RoomDatabase.JournalMode.WRITE_AHEAD_LOGGING)
                 .fallbackToDestructiveMigrationOnDowngrade(true)
                 .build()

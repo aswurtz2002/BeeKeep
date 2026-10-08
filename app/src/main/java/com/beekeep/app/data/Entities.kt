@@ -19,6 +19,13 @@ data class ApiaryEntity(
     @ColumnInfo(name = "deleted") val deleted: Boolean = false
 )
 
+object HiveStatus {
+    const val ACTIVE = "ACTIVE"
+    const val DEAD = "DEAD"
+    const val SOLD = "SOLD"
+    const val REMOVED = "REMOVED"
+}
+
 @Entity(
     tableName = "hives",
     foreignKeys = [ForeignKey(entity = ApiaryEntity::class, parentColumns = ["id"], childColumns = ["apiary_id"], onDelete = ForeignKey.SET_NULL)],
@@ -38,8 +45,28 @@ data class HiveEntity(
     val mitePercent: Double,
     @ColumnInfo(name = "tag_uid") val tagUid: String? = null,
     @ColumnInfo(name = "updated_at") val updatedAt: Long = System.currentTimeMillis(),
-    @ColumnInfo(name = "deleted") val deleted: Boolean = false
+    @ColumnInfo(name = "deleted") val deleted: Boolean = false,
+    @ColumnInfo(name = "status", defaultValue = "ACTIVE") val status: String = HiveStatus.ACTIVE,
+    @ColumnInfo(name = "dead_at") val deadAt: Long? = null,
+    // Lifecycle fields merge across devices by this timestamp, not updated_at,
+    // so a stale offline edit cannot resurrect a dead colony.
+    @ColumnInfo(name = "status_changed_at", defaultValue = "0") val statusChangedAt: Long = 0L
 )
+
+@Entity(
+    tableName = "nfc_tag_assignments",
+    foreignKeys = [ForeignKey(entity = HiveEntity::class, parentColumns = ["id"], childColumns = ["hive_id"], onDelete = ForeignKey.CASCADE)],
+    indices = [Index("hive_id"), Index("tag_uid")]
+)
+data class NfcTagAssignmentEntity(
+    @PrimaryKey val id: Long,
+    @ColumnInfo(name = "tag_uid") val tagUid: String,
+    @ColumnInfo(name = "hive_id") val hiveId: Long,
+    @ColumnInfo(name = "assigned_at") val assignedAt: Long,
+    @ColumnInfo(name = "unassigned_at") val unassignedAt: Long? = null
+) {
+    val isActive: Boolean get() = unassignedAt == null
+}
 
 @Entity(
     tableName = "inspections",
@@ -188,8 +215,12 @@ data class Hive(
     val queenTemperament: Int,
     val strength: Int,
     val mitePercent: Double,
-    val tagUid: String?
-)
+    val tagUid: String?,
+    val status: String = HiveStatus.ACTIVE,
+    val deadAt: Long? = null
+) {
+    val isDead: Boolean get() = status != HiveStatus.ACTIVE
+}
 
 data class Inspection(
     val id: Long,

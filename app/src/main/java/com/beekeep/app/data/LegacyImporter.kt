@@ -25,7 +25,9 @@ object LegacyImporter {
                     if (source.hasTable("hives")) {
                         source.rawQuery("SELECT id,number,apiary,queen_status,strength,mite_percent,tag_uid FROM hives", null).use { c ->
                             while (c.moveToNext()) {
-                                db.hives().upsert(HiveEntity(c.getLong(0), c.getString(1), c.getString(2), null, c.getString(3), strength = c.getInt(4), mitePercent = c.getDouble(5), tagUid = c.getString(6)))
+                                val hive = HiveEntity(c.getLong(0), c.getString(1), c.getString(2), null, c.getString(3), strength = c.getInt(4), mitePercent = c.getDouble(5), tagUid = c.getString(6))
+                                db.hives().upsert(hive)
+                                hive.tagUid?.let { db.nfcTagAssignments().upsert(NfcTagAssignmentEntity(hive.id, it, hive.id, System.currentTimeMillis())) }
                             }
                         }
                     }

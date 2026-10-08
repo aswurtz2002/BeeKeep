@@ -20,18 +20,38 @@ interface ApiaryDao {
 
 @Dao
 interface HiveDao {
-    @Query("SELECT * FROM hives WHERE deleted = 0 ORDER BY CAST(number AS INTEGER), number")
+    @Query("SELECT * FROM hives WHERE deleted = 0 AND status = 'ACTIVE' ORDER BY CAST(number AS INTEGER), number")
     fun observeAll(): Flow<List<HiveEntity>>
+    @Query("SELECT * FROM hives WHERE deleted = 0 AND status != 'ACTIVE' ORDER BY dead_at DESC")
+    fun observeDead(): Flow<List<HiveEntity>>
     @Query("SELECT * FROM hives WHERE id = :id AND deleted = 0")
     suspend fun get(id: Long): HiveEntity?
     @Query("SELECT * FROM hives WHERE tag_uid = :tag COLLATE NOCASE AND deleted = 0 LIMIT 1")
     suspend fun byTag(tag: String): HiveEntity?
-    @Query("SELECT * FROM hives WHERE number = :number COLLATE NOCASE AND apiary = :apiary AND deleted = 0 LIMIT 1")
+    @Query("SELECT * FROM hives WHERE number = :number COLLATE NOCASE AND apiary = :apiary AND deleted = 0 AND status = 'ACTIVE' LIMIT 1")
     suspend fun byNumberAndApiary(number: String, apiary: String): HiveEntity?
     @Query("SELECT COUNT(*) FROM hives")
     suspend fun countAll(): Int
+    @Query("SELECT EXISTS(SELECT 1 FROM hives WHERE id = :id)")
+    suspend fun exists(id: Long): Boolean
+    @Query("DELETE FROM hives WHERE id = :id")
+    suspend fun hardDelete(id: Long)
+    @Query("UPDATE hives SET tag_uid = (SELECT tag_uid FROM nfc_tag_assignments WHERE hive_id = :hiveId AND unassigned_at IS NULL LIMIT 1) WHERE id = :hiveId")
+    suspend fun refreshTagCache(hiveId: Long)
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(entity: HiveEntity)
+}
+
+@Dao
+interface NfcTagAssignmentDao {
+    @Query("SELECT * FROM nfc_tag_assignments WHERE tag_uid = :uid COLLATE NOCASE AND unassigned_at IS NULL LIMIT 1")
+    suspend fun activeByTag(uid: String): NfcTagAssignmentEntity?
+    @Query("SELECT * FROM nfc_tag_assignments WHERE hive_id = :hiveId AND unassigned_at IS NULL LIMIT 1")
+    suspend fun activeForHive(hiveId: Long): NfcTagAssignmentEntity?
+    @Query("SELECT * FROM nfc_tag_assignments WHERE id = :id")
+    suspend fun get(id: Long): NfcTagAssignmentEntity?
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsert(entity: NfcTagAssignmentEntity)
 }
 
 @Dao
@@ -80,6 +100,8 @@ interface HarvestDao {
 interface EventDao {
     @Query("SELECT * FROM activity_events WHERE hive_id = :hiveId ORDER BY created_at DESC")
     fun observeForHive(hiveId: Long): Flow<List<ActivityEventEntity>>
+    @Query("DELETE FROM activity_events WHERE hive_id = :hiveId")
+    suspend fun deleteForHive(hiveId: Long)
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(entity: ActivityEventEntity)
 }
@@ -113,6 +135,8 @@ interface TaskDao {
     suspend fun pendingAfter(now: Long): List<TaskEntity>
     @Query("UPDATE tasks SET completed = 1, updated_at = :updatedAt WHERE id = :id")
     suspend fun complete(id: Long, updatedAt: Long)
+    @Query("DELETE FROM tasks WHERE hive_id = :hiveId")
+    suspend fun deleteForHive(hiveId: Long)
 }
 
 
@@ -128,4 +152,6 @@ interface PhotoDao {
     suspend fun markUploaded(id: Long, cloudPath: String)
     @Query("UPDATE inspection_photos SET sync_state = 'failed', last_error = :error WHERE id = :id")
     suspend fun markError(id: Long, error: String)
+    @Query("SELECT * FROM inspection_photos WHERE hive_id = :hiveId")
+    suspend fun listForHive(hiveId: Long): List<PhotoEntity>
 }
