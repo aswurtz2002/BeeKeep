@@ -4,8 +4,6 @@ import android.Manifest
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.content.ActivityNotFoundException
-import android.net.Uri
 import android.graphics.Bitmap
 import android.os.Bundle
 import android.provider.Settings
@@ -206,7 +204,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-enum class Screen { HOME, HIVES, SCAN, CALENDAR, MORE, INSIGHTS, TAG_MANAGER, COLONY_HISTORY }
+enum class Screen { HOME, APIARIES, APIARY_HIVES, SCAN, CALENDAR, MORE, INSIGHTS, TAG_MANAGER, COLONY_HISTORY }
 
 enum class HiveLogType { FEED, TREAT, HARVEST }
 
@@ -224,6 +222,7 @@ fun BeeKeepApp(
 ) {
     var screen by rememberSaveable { mutableStateOf(Screen.HOME) }
     var selectedHiveOpen by rememberSaveable { mutableStateOf(false) }
+    var selectedApiaryName by rememberSaveable { mutableStateOf<String?>(null) }
     var inspecting by rememberSaveable { mutableStateOf(false) }
     var addHive by rememberSaveable { mutableStateOf(false) }
     var logType by rememberSaveable { mutableStateOf<HiveLogType?>(null) }
@@ -303,7 +302,7 @@ fun BeeKeepApp(
     }
 
     if (addHive) {
-        AddHiveScreen(apiaries, { addHive = false }) { number, apiary, queen, strength ->
+        AddHiveScreen(apiaries, selectedApiaryName, { addHive = false }) { number, apiary, queen, strength ->
             vm.createHive(number, apiary, queen, strength, tagUid = pendingTagUid) { success, error ->
                 scope.launch { snackbarHostState.showSnackbar(error ?: "Hive ${number.trim()} created") }
                 if (success) { addHive = false; pendingTagUid = null }
@@ -370,7 +369,19 @@ fun BeeKeepApp(
         return
     }
     if (selectedHiveOpen) {
-        val hiveForDetail = selected ?: run { selectedHiveOpen = false; return }
+        val hiveForDetail = selected
+        if (hiveForDetail == null) {
+            Box(
+                Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    "Loading hive…",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            return
+        }
         HiveDetailScreen(
             hive = hiveForDetail,
             inspections = inspections,
@@ -462,6 +473,22 @@ fun BeeKeepApp(
         )
         return
     }
+    if (screen == Screen.APIARY_HIVES) {
+        val apiaryName = selectedApiaryName
+        if (apiaryName == null) {
+            screen = Screen.APIARIES
+            return
+        }
+        ApiaryHivesScreen(
+            apiaryName = apiaryName,
+            hives = hives.filter { it.apiary.equals(apiaryName, ignoreCase = true) },
+            padding = androidx.compose.foundation.layout.PaddingValues(),
+            onBack = { selectedApiaryName = null; screen = Screen.APIARIES },
+            onAddHive = { addHive = true },
+            onOpenHive = { vm.openHive(it); selectedHiveOpen = true }
+        )
+        return
+    }
     if (screen == Screen.INSIGHTS) {
         InsightsScreen(
             hives = hives,
@@ -481,7 +508,7 @@ fun BeeKeepApp(
         bottomBar = {
             NavigationBar(tonalElevation = 3.dp) {
                 NavItem("Home", Icons.Rounded.Home, screen == Screen.HOME) { screen = Screen.HOME }
-                NavItem("Hives", Icons.Rounded.Yard, screen == Screen.HIVES) { screen = Screen.HIVES }
+                NavItem("Apiaries", Icons.Rounded.Yard, screen == Screen.APIARIES || screen == Screen.APIARY_HIVES) { selectedApiaryName = null; screen = Screen.APIARIES }
                 NavItem("Scan", Icons.Rounded.Nfc, screen == Screen.SCAN) { screen = Screen.SCAN }
                 NavItem("Calendar", Icons.Rounded.CalendarMonth, screen == Screen.CALENDAR) { screen = Screen.CALENDAR }
                 NavItem("More", Icons.Rounded.Settings, screen == Screen.MORE) { screen = Screen.MORE }
@@ -489,8 +516,8 @@ fun BeeKeepApp(
         }
     ) { padding ->
         when (screen) {
-            Screen.HOME -> HomeScreen(hives, tasks, padding, onScan = { screen = Screen.SCAN }, onAdd = { addHive = true }, onOpenHive = { vm.openHive(it); selectedHiveOpen = true })
-            Screen.HIVES -> HivesScreen(hives, padding, onAdd = { addHive = true }, onOpenHive = { vm.openHive(it); selectedHiveOpen = true })
+            Screen.HOME -> HomeScreen(hives, tasks, padding, onScan = { screen = Screen.SCAN })
+            Screen.APIARIES -> ApiariesScreen(apiaries, hives, padding, onAddApiary = { addApiary = true }, onOpenApiary = { selectedApiaryName = it; screen = Screen.APIARY_HIVES })
             Screen.CALENDAR -> CalendarScreen(
                 tasks = tasks,
                 hives = hives,
@@ -501,7 +528,7 @@ fun BeeKeepApp(
                 onComplete = { vm.completeTask(it) },
                 onBuildSeasonalPlan = { ids, horizon -> vm.buildSeasonalPlan(ids, horizon) }
             )
-            Screen.MORE -> MoreScreen(darkMode, onDarkModeChange, apiaries, onAddApiary = { addApiary = true }, onInsights = { screen = Screen.INSIGHTS }, onTagManager = { screen = Screen.TAG_MANAGER }, onColonyHistory = { screen = Screen.COLONY_HISTORY }, deadCount = deadHives.size, activity, cloud)
+            Screen.MORE -> MoreScreen(darkMode, onDarkModeChange, onInsights = { screen = Screen.INSIGHTS }, onTagManager = { screen = Screen.TAG_MANAGER }, onColonyHistory = { screen = Screen.COLONY_HISTORY }, deadCount = deadHives.size, activity, cloud)
             Screen.TAG_MANAGER -> TagManagementScreen(
                 hives = hives,
                 nfc = nfc,
@@ -519,7 +546,7 @@ fun BeeKeepApp(
                 onBack = { screen = Screen.MORE },
                 onOpenHive = { vm.openHive(it); selectedHiveOpen = true }
             )
-            Screen.SCAN, Screen.INSIGHTS -> Unit
+            Screen.SCAN, Screen.INSIGHTS, Screen.APIARY_HIVES -> Unit
         }
     }
 }
@@ -549,14 +576,11 @@ private fun HomeScreen(
     hives: List<Hive>,
     tasks: List<Task>,
     padding: androidx.compose.foundation.layout.PaddingValues,
-    onScan: () -> Unit,
-    onAdd: () -> Unit,
-    onOpenHive: (Long) -> Unit
+    onScan: () -> Unit
 ) {
     val now = System.currentTimeMillis()
     val due = tasks.count { !it.completed && it.dueAt <= now + 24 * 60 * 60 * 1000 }
     val flagged = hives.count { it.mitePercent >= 3.0 || it.queenStatus == "Queenless" }
-    val sortedPriority = hives.filter { it.mitePercent >= 3.0 || it.queenStatus == "Queenless" }.take(4)
     LazyColumn(
         Modifier.fillMaxSize().padding(padding).padding(horizontal = 16.dp),
         contentPadding = androidx.compose.foundation.layout.PaddingValues(top = 16.dp, bottom = 28.dp),
@@ -565,7 +589,7 @@ private fun HomeScreen(
         item {
             Text("Good field day", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
             Text("BeeKeep", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.ExtraBold)
-            Text("Your apiary at a glance", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("Your operation at a glance", color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         item {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -590,52 +614,126 @@ private fun HomeScreen(
             }
         }
         item {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                OutlinedButton(onClick = onAdd, modifier = Modifier.weight(1f).height(54.dp), shape = RoundedCornerShape(16.dp)) {
-                    Icon(Icons.Rounded.Add, null); Spacer(Modifier.width(6.dp)); Text("ADD HIVE", fontWeight = FontWeight.Bold)
+            Card(shape = RoundedCornerShape(20.dp)) {
+                Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("Hive lists are organized by apiary", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.ExtraBold)
+                    Text("Open Apiaries to choose a yard, then see only the hives belonging to that apiary.", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
-        }
-        if (sortedPriority.isNotEmpty()) {
-            item { Text("Needs attention", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.ExtraBold) }
-            items(sortedPriority, key = { it.id }) { hive -> HiveRow(hive, "Review soon") { onOpenHive(hive.id) } }
-        }
-        item { Text("Hives", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.ExtraBold) }
-        if (hives.isEmpty()) {
-            item { EmptyState("No hives yet", "Add your first hive to start building its history.", "ADD HIVE", onAdd) }
-        } else {
-            items(hives.take(5), key = { it.id }) { hive -> HiveRow(hive) { onOpenHive(hive.id) } }
         }
     }
 }
 
 @Composable
-private fun HivesScreen(hives: List<Hive>, padding: androidx.compose.foundation.layout.PaddingValues, onAdd: () -> Unit, onOpenHive: (Long) -> Unit) {
+private fun ApiariesScreen(
+    apiaries: List<Apiary>,
+    hives: List<Hive>,
+    padding: androidx.compose.foundation.layout.PaddingValues,
+    onAddApiary: () -> Unit,
+    onOpenApiary: (String) -> Unit
+) {
     var query by rememberSaveable { mutableStateOf("") }
-    val filtered = hives.filter { it.number.contains(query, true) || it.apiary.contains(query, true) }
+    val filtered = apiaries.filter { it.name.contains(query, ignoreCase = true) }
+
     Column(Modifier.fillMaxSize().padding(padding).padding(horizontal = 16.dp)) {
         Row(Modifier.fillMaxWidth().padding(top = 14.dp, bottom = 10.dp), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
-                Text("Hives", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.ExtraBold)
-                Text("${filtered.size} shown", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("Apiaries", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.ExtraBold)
+                Text("${filtered.size} ${if (filtered.size == 1) "apiary" else "apiaries"}", color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            IconButton(onClick = onAdd, modifier = Modifier.size(52.dp)) { Icon(Icons.Rounded.Add, "Add hive") }
+            IconButton(onClick = onAddApiary, modifier = Modifier.size(52.dp)) { Icon(Icons.Rounded.Add, "Add apiary") }
         }
         OutlinedTextField(
             value = query,
             onValueChange = { query = it },
             modifier = Modifier.fillMaxWidth(),
-            label = { Text("Search hive or apiary") },
+            label = { Text("Search apiaries") },
             leadingIcon = { Icon(Icons.Rounded.Search, null) },
             singleLine = true,
             shape = RoundedCornerShape(16.dp)
         )
         Spacer(Modifier.height(10.dp))
         if (filtered.isEmpty()) {
-            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { EmptyState("No matching hives", "Try a different hive number or apiary name.", null, null) }
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                EmptyState(
+                    if (apiaries.isEmpty()) "No apiaries yet" else "No matching apiaries",
+                    if (apiaries.isEmpty()) "Create an apiary first, then add hives inside it." else "Try a different apiary name.",
+                    if (apiaries.isEmpty()) "ADD APIARY" else null,
+                    if (apiaries.isEmpty()) onAddApiary else null
+                )
+            }
         } else {
             LazyColumn(contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                items(filtered, key = { it.id }) { HiveRow(it) { onOpenHive(it.id) } }
+                items(filtered, key = { it.id }) { apiary ->
+                    val count = hives.count { it.apiary.equals(apiary.name, ignoreCase = true) }
+                    Card(onClick = { onOpenApiary(apiary.name) }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(20.dp)) {
+                        Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Surface(shape = RoundedCornerShape(15.dp), color = MaterialTheme.colorScheme.primaryContainer, modifier = Modifier.size(52.dp)) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(Icons.Rounded.Yard, "Apiary", tint = MaterialTheme.colorScheme.onPrimaryContainer)
+                                }
+                            }
+                            Spacer(Modifier.width(12.dp))
+                            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                                Text(apiary.name, fontWeight = FontWeight.ExtraBold, style = MaterialTheme.typography.titleMedium)
+                                Text("$count ${if (count == 1) "hive" else "hives"}", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                apiary.notes.takeIf { it.isNotBlank() }?.let { Text(it, maxLines = 2, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall) }
+                            }
+                            Icon(Icons.Rounded.ChevronRight, "Open apiary", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ApiaryHivesScreen(
+    apiaryName: String,
+    hives: List<Hive>,
+    padding: androidx.compose.foundation.layout.PaddingValues,
+    onBack: () -> Unit,
+    onAddHive: () -> Unit,
+    onOpenHive: (Long) -> Unit
+) {
+    BackHandler { onBack() }
+    var query by rememberSaveable(apiaryName) { mutableStateOf("") }
+    val filtered = hives.filter { it.number.contains(query, ignoreCase = true) }
+
+    Column(Modifier.fillMaxSize().padding(padding).padding(horizontal = 16.dp)) {
+        Row(Modifier.fillMaxWidth().padding(top = 10.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onBack) { Icon(Icons.Rounded.ArrowBack, "Back to apiaries") }
+            Column(Modifier.weight(1f)) {
+                Text(apiaryName, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.ExtraBold)
+                Text("${hives.size} ${if (hives.size == 1) "hive" else "hives"}", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            IconButton(onClick = onAddHive, modifier = Modifier.size(52.dp)) { Icon(Icons.Rounded.Add, "Add hive") }
+        }
+        OutlinedTextField(
+            value = query,
+            onValueChange = { query = it },
+            modifier = Modifier.fillMaxWidth(),
+            label = { Text("Search hive number") },
+            leadingIcon = { Icon(Icons.Rounded.Search, null) },
+            singleLine = true,
+            shape = RoundedCornerShape(16.dp)
+        )
+        Spacer(Modifier.height(10.dp))
+        if (filtered.isEmpty()) {
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                EmptyState(
+                    if (hives.isEmpty()) "No hives in this apiary" else "No matching hives",
+                    if (hives.isEmpty()) "Add a hive to $apiaryName to start its record." else "Try a different hive number.",
+                    if (hives.isEmpty()) "ADD HIVE" else null,
+                    if (hives.isEmpty()) onAddHive else null
+                )
+            }
+        } else {
+            LazyColumn(contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                items(filtered, key = { it.id }) { hive ->
+                    HiveRow(hive) { onOpenHive(hive.id) }
+                }
             }
         }
     }
@@ -1987,7 +2085,7 @@ private fun rememberPhotoBitmap(path: String?, maxDimension: Int): Bitmap? {
 @Composable private fun Counter(label:String,value:Int,range:IntRange,onChange:(Int)->Unit){Card(shape=RoundedCornerShape(16.dp)){Row(Modifier.fillMaxWidth().padding(10.dp),horizontalArrangement=Arrangement.SpaceBetween,verticalAlignment=Alignment.CenterVertically){Column(Modifier.weight(1f)){Text(label,fontWeight=FontWeight.Bold)};IconButton({onChange((value-1).coerceIn(range))}){Text("−",style=MaterialTheme.typography.headlineMedium)};Text(value.toString(),style=MaterialTheme.typography.headlineSmall,fontWeight=FontWeight.ExtraBold);IconButton({onChange((value+1).coerceIn(range))}){Text("+",style=MaterialTheme.typography.headlineMedium)}}}}
 @Composable private fun NumberField(label:String,value:Int,mod:Modifier,onChange:(Int)->Unit){OutlinedTextField(value.toString(),{it.filter(Char::isDigit).toIntOrNull()?.let(onChange)},mod,label={Text(label)},keyboardOptions=KeyboardOptions(keyboardType=KeyboardType.Number),singleLine=true)}
 
-@Composable private fun AddHiveScreen(apiaries:List<Apiary>,onBack:()->Unit,onCreate:(String,String,String,Int)->Unit){BackHandler{onBack()};var number by rememberSaveable{mutableStateOf("")};var apiary by rememberSaveable{mutableStateOf(apiaries.firstOrNull()?.name?:"Home Yard")};var queen by rememberSaveable{mutableStateOf("Laying")};var strength by rememberSaveable{mutableIntStateOf(5)};Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(18.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){Row(verticalAlignment=Alignment.CenterVertically){IconButton(onBack){Icon(Icons.Rounded.ArrowBack,"Back")};Text("Add Hive",style=MaterialTheme.typography.headlineSmall,fontWeight=FontWeight.ExtraBold)};OutlinedTextField(number,{number=it},Modifier.fillMaxWidth(),label={Text("Hive number")},singleLine=true);OutlinedTextField(apiary,{apiary=it},Modifier.fillMaxWidth(),label={Text("Apiary / Yard")},singleLine=true);Text("Queen status",fontWeight=FontWeight.Bold);Row(Modifier.horizontalScroll(rememberScrollState()),horizontalArrangement=Arrangement.spacedBy(6.dp)){for(status in listOf("Laying","Spotted","Unspotted","Queenless","Virgin")){FilterChip(queen==status,{queen=status},{Text(status)})}};Counter("Starting strength",strength,0..10){strength=it};Button({onCreate(number,apiary,queen,strength)},Modifier.fillMaxWidth().height(60.dp),enabled=number.isNotBlank(),shape=RoundedCornerShape(18.dp)){Text("CREATE HIVE",fontWeight=FontWeight.ExtraBold)}}}
+@Composable private fun AddHiveScreen(apiaries:List<Apiary>, initialApiary: String?, onBack:()->Unit, onCreate:(String,String,String,Int)->Unit){BackHandler{onBack()};var number by rememberSaveable{mutableStateOf("")};var apiary by rememberSaveable(initialApiary) { mutableStateOf(initialApiary ?: apiaries.firstOrNull()?.name ?: "Home Yard") };var queen by rememberSaveable{mutableStateOf("Laying")};var strength by rememberSaveable{mutableIntStateOf(5)};Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(18.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){Row(verticalAlignment=Alignment.CenterVertically){IconButton(onBack){Icon(Icons.Rounded.ArrowBack,"Back")};Text("Add Hive",style=MaterialTheme.typography.headlineSmall,fontWeight=FontWeight.ExtraBold)};OutlinedTextField(number,{number=it},Modifier.fillMaxWidth(),label={Text("Hive number")},singleLine=true);OutlinedTextField(apiary,{ if (initialApiary == null) apiary=it },Modifier.fillMaxWidth(),label={Text("Apiary / Yard")},singleLine=true,readOnly=initialApiary != null);Text("Queen status",fontWeight=FontWeight.Bold);Row(Modifier.horizontalScroll(rememberScrollState()),horizontalArrangement=Arrangement.spacedBy(6.dp)){for(status in listOf("Laying","Spotted","Unspotted","Queenless","Virgin")){FilterChip(queen==status,{queen=status},{Text(status)})}};Counter("Starting strength",strength,0..10){strength=it};Button({onCreate(number,apiary,queen,strength)},Modifier.fillMaxWidth().height(60.dp),enabled=number.isNotBlank(),shape=RoundedCornerShape(18.dp)){Text("CREATE HIVE",fontWeight=FontWeight.ExtraBold)}}}
 
 @Composable
 private fun AddApiaryScreen(
@@ -2237,8 +2335,6 @@ private fun TagManagementScreen(
 private fun MoreScreen(
     darkMode: Boolean,
     onDarkModeChange: (Boolean) -> Unit,
-    apiaries: List<Apiary>,
-    onAddApiary: () -> Unit,
     onInsights: () -> Unit,
     onTagManager: () -> Unit,
     onColonyHistory: () -> Unit,
@@ -2416,25 +2512,6 @@ private fun MoreScreen(
             }
         }
 
-        Text("Apiaries", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-        for (apiary in apiaries) {
-            Card(shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(14.dp)) {
-                    Text(apiary.name, fontWeight = FontWeight.Bold)
-                    if (apiary.latitude != null && apiary.longitude != null) {
-                        Text("GPS ${"%.5f".format(apiary.latitude)}, ${"%.5f".format(apiary.longitude)}", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        OutlinedButton({
-                            runCatching {
-                                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("geo:${apiary.latitude},${apiary.longitude}?q=${apiary.latitude},${apiary.longitude}(${Uri.encode(apiary.name)})")))
-                            }.onFailure {
-                                if (it is ActivityNotFoundException) android.widget.Toast.makeText(context, "No map app is installed.", android.widget.Toast.LENGTH_SHORT).show()
-                            }
-                        }) { Text("OPEN IN MAPS") }
-                    }
-                }
-            }
-        }
-        OutlinedButton(onAddApiary, Modifier.fillMaxWidth().height(54.dp)) { Icon(Icons.Rounded.Add, null); Spacer(Modifier.width(5.dp)); Text("ADD APIARY") }
         Card(shape = RoundedCornerShape(18.dp)) {
             Column(Modifier.padding(16.dp)) {
                 Text("Native Android • Kotlin + Compose", fontWeight = FontWeight.Bold)
