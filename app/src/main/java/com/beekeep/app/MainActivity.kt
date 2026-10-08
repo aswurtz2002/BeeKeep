@@ -20,6 +20,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -64,6 +65,7 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -1160,15 +1162,23 @@ private fun HealthTrendGraph(points: List<HealthPoint>, range: HealthAnalytics.R
 }
 
 @Composable
+private fun CompactStatItem(label: String, value: String, modifier: Modifier = Modifier) {
+    Column(modifier = modifier, horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(value, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.ExtraBold)
+        Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f))
+    }
+}
+
+@Composable
 private fun CompactHiveHealthTrendCard(hive: Hive, inspections: List<Inspection>) {
     val range = HealthAnalytics.Range.NINETY
     val points = HealthAnalytics.hivePoints(hive, inspections, range)
     val summary = HealthAnalytics.summary(points)
-    Card(shape = RoundedCornerShape(18.dp)) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
-            Text("Health trend • 90D", fontWeight = FontWeight.Bold)
+    Card(shape = RoundedCornerShape(14.dp)) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text("Health trend • 90D", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleSmall)
             if (points.isEmpty()) {
-                Text("Complete inspections to build a health trend.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("Complete inspections to build a health trend.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             } else {
                 HealthTrendGraph(points, range)
                 Text(
@@ -1247,43 +1257,91 @@ private fun HiveDetailScreen(
     }
 
     Column(
-        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(18.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 14.dp, vertical = 10.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             IconButton(onBack) { Icon(Icons.Rounded.ArrowBack, "Back") }
             Column(Modifier.weight(1f)) {
-                Text("Hive ${hive.number}", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.ExtraBold)
-                Text(hive.apiary, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("Hive ${hive.number}", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.ExtraBold)
+                Text(hive.apiary, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
             }
             HiveStatusPill(hive)
         }
 
         if (hive.isDead) {
-            Card(shape = RoundedCornerShape(18.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)) {
-                Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text("Colony marked dead", fontWeight = FontWeight.ExtraBold, color = MaterialTheme.colorScheme.onErrorContainer)
+            Card(shape = RoundedCornerShape(12.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)) {
+                Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("Colony marked dead", fontWeight = FontWeight.ExtraBold, color = MaterialTheme.colorScheme.onErrorContainer, style = MaterialTheme.typography.labelLarge)
                     Text(
                         "Died ${hive.deadAt?.let { DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT).format(Date(it)) } ?: "on an unknown date"}. History is preserved below and the NFC tag was released.",
-                        color = MaterialTheme.colorScheme.onErrorContainer
+                        color = MaterialTheme.colorScheme.onErrorContainer,
+                        style = MaterialTheme.typography.bodySmall
                     )
                 }
             }
         }
 
-        Card(shape = RoundedCornerShape(22.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
-            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text("Hive overview", fontWeight = FontWeight.Bold)
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    MetricCard("Strength", "${hive.strength}/10", Modifier.weight(1f))
-                    MetricCard("Mites", "${String.format(Locale.US, "%.2f", hive.mitePercent)}%", Modifier.weight(1f))
-                    MetricCard("Inspections", inspections.size.toString(), Modifier.weight(1f))
+        if (!hive.isDead) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Button(
+                    onClick = onInspect,
+                    modifier = Modifier.weight(1.3f).height(42.dp),
+                    shape = RoundedCornerShape(10.dp),
+                    contentPadding = PaddingValues(horizontal = 6.dp)
+                ) {
+                    Icon(Icons.Rounded.TaskAlt, null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("INSPECT", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+                }
+                OutlinedButton(
+                    onClick = onFeed,
+                    modifier = Modifier.weight(1f).height(42.dp),
+                    shape = RoundedCornerShape(10.dp),
+                    contentPadding = PaddingValues(0.dp)
+                ) { Text("FEED", style = MaterialTheme.typography.labelMedium) }
+                OutlinedButton(
+                    onClick = onTreat,
+                    modifier = Modifier.weight(1f).height(42.dp),
+                    shape = RoundedCornerShape(10.dp),
+                    contentPadding = PaddingValues(0.dp)
+                ) { Text("TREAT", style = MaterialTheme.typography.labelMedium) }
+                OutlinedButton(
+                    onClick = onHarvest,
+                    modifier = Modifier.weight(1f).height(42.dp),
+                    shape = RoundedCornerShape(10.dp),
+                    contentPadding = PaddingValues(0.dp)
+                ) { Text("HARVEST", style = MaterialTheme.typography.labelMedium) }
+            }
+        }
+
+        Card(shape = RoundedCornerShape(14.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
+            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    CompactStatItem("Strength", "${hive.strength}/10", Modifier.weight(1f))
+                    CompactStatItem("Mites", "${String.format(Locale.US, "%.2f", hive.mitePercent)}%", Modifier.weight(1f))
+                    CompactStatItem("Inspections", inspections.size.toString(), Modifier.weight(1f))
                 }
                 if (openTasks.isNotEmpty()) {
-                    Text("Next task • ${openTasks.first().title}", fontWeight = FontWeight.SemiBold)
-                    Text(DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT).format(Date(openTasks.first().dueAt)), color = MaterialTheme.colorScheme.onPrimaryContainer)
-                } else {
-                    Text(if (inspections.isEmpty()) "No inspections recorded yet." else "No open tasks for this hive.", color = MaterialTheme.colorScheme.onPrimaryContainer)
+                    HorizontalDivider(color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.15f))
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            "Next task: ${openTasks.first().title}",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer,
+                            maxLines = 1
+                        )
+                        Text(
+                            DateFormat.getDateInstance(DateFormat.SHORT).format(Date(openTasks.first().dueAt)),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
+                        )
+                    }
                 }
             }
         }
@@ -1296,98 +1354,93 @@ private fun HiveDetailScreen(
         CompactHiveHealthTrendCard(hive, inspections)
         AdvancedAnalyticsCard(hives = listOf(hive), inspections = inspections, harvests = harvests)
 
-        if (!hive.isDead) {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onInspect, Modifier.weight(1f).height(54.dp), shape = RoundedCornerShape(16.dp)) {
-                    Icon(Icons.Rounded.TaskAlt, null)
-                    Spacer(Modifier.width(6.dp))
-                    Text("QUICK INSPECT")
-                }
-                OutlinedButton(onFeed, Modifier.weight(1f).height(54.dp), shape = RoundedCornerShape(16.dp)) { Text("FEED") }
-            }
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(onTreat, Modifier.weight(1f).height(54.dp), shape = RoundedCornerShape(16.dp)) { Text("TREAT") }
-                OutlinedButton(onHarvest, Modifier.weight(1f).height(54.dp), shape = RoundedCornerShape(16.dp)) { Text("HARVEST") }
-            }
-        }
-
-        Card(shape = RoundedCornerShape(18.dp)) {
-            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text("Queen profile", fontWeight = FontWeight.Bold)
-                        Text("${hive.queenStatus} • ${hive.queenMarkColor.ifBlank { "No mark" }}", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Text("${hive.queenOrigin.ifBlank { "Origin not set" }} • ${hive.queenAgeMonths?.let { "$it months" } ?: "Age not set"}", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Text("Temperament ${hive.queenTemperament}/5", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Card(shape = RoundedCornerShape(14.dp)) {
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text("Queen profile", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleSmall)
+                        Text("• ${hive.queenStatus}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold)
                     }
-                    OutlinedButton({ editQueen = true }) { Text("EDIT") }
+                    Text(
+                        "${hive.queenMarkColor.ifBlank { "No mark" }} • ${hive.queenOrigin.ifBlank { "Origin n/a" }} • ${hive.queenAgeMonths?.let { "${it}mo" } ?: "Age n/a"} • Temp ${hive.queenTemperament}/5",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                OutlinedButton(
+                    onClick = { editQueen = true },
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
+                    modifier = Modifier.height(32.dp),
+                    shape = RoundedCornerShape(8.dp)
+                ) {
+                    Text("EDIT", style = MaterialTheme.typography.labelSmall)
                 }
             }
         }
 
-        Card(shape = RoundedCornerShape(18.dp)) {
-            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text("Strength & mite trend", fontWeight = FontWeight.Bold)
+        Card(shape = RoundedCornerShape(14.dp)) {
+            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Strength & mite trend", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleSmall)
                 if (recent.isEmpty()) {
-                    Text("Complete a few inspections to see trends.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("Complete a few inspections to see trends.", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
                 } else {
-                    Row(Modifier.fillMaxWidth().height(120.dp), verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(Modifier.fillMaxWidth().height(80.dp), verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         recent.forEach { item ->
-                            val height = (24 + item.strength.coerceIn(0, 10) * 8).dp
+                            val height = (16 + item.strength.coerceIn(0, 10) * 5).dp
                             Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Bottom) {
                                 Text("${item.strength}", style = MaterialTheme.typography.labelSmall)
-                                Box(Modifier.width(24.dp).height(height).background(MaterialTheme.colorScheme.primary, RoundedCornerShape(10.dp)))
+                                Box(Modifier.width(20.dp).height(height).background(MaterialTheme.colorScheme.primary, RoundedCornerShape(6.dp)))
                                 Text(DateFormat.getDateInstance(DateFormat.SHORT).format(Date(item.createdAt)), style = MaterialTheme.typography.labelSmall)
                             }
                         }
                     }
                     val latestMite = recent.last().mitePercent
-                    Text("Latest mite rate ${String.format(Locale.US, "%.2f", latestMite)}%", color = if (latestMite >= 3.0) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("Latest mite rate ${String.format(Locale.US, "%.2f", latestMite)}%", style = MaterialTheme.typography.bodySmall, color = if (latestMite >= 3.0) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
         }
 
         if (photoInspections.isNotEmpty()) {
-            Text("Recent photos", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+            Text("Recent photos", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
             Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 photoInspections.forEach { inspection ->
                     rememberPhotoBitmap(inspection.photoPath, 480)?.let { bitmap ->
-                        Image(bitmap.asImageBitmap(), "Inspection photo", Modifier.size(120.dp).clip(RoundedCornerShape(14.dp)))
+                        Image(bitmap.asImageBitmap(), "Inspection photo", Modifier.size(90.dp).clip(RoundedCornerShape(10.dp)))
                     }
                 }
             }
         }
 
-        Card(shape = RoundedCornerShape(18.dp)) {
-            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("Records", fontWeight = FontWeight.Bold)
-                Text("Feedings: ${feedings.size} • Treatments: ${treatments.size} • Harvests: ${harvests.size}", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                feedings.firstOrNull()?.let { Text("Last feed: ${it.amount} ${it.unit} • ${it.feedType}") }
-                treatments.firstOrNull()?.let { Text("Last treatment: ${it.product}") }
-                harvests.firstOrNull()?.let { Text("Last dry harvest: ${it.dryHoneyWeight} ${it.weightUnit}") }
+        Card(shape = RoundedCornerShape(14.dp)) {
+            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text("Records", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleSmall)
+                Text("Feedings: ${feedings.size} • Treatments: ${treatments.size} • Harvests: ${harvests.size}", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+                feedings.firstOrNull()?.let { Text("Last feed: ${it.amount} ${it.unit} • ${it.feedType}", style = MaterialTheme.typography.bodySmall) }
+                treatments.firstOrNull()?.let { Text("Last treatment: ${it.product}", style = MaterialTheme.typography.bodySmall) }
+                harvests.firstOrNull()?.let { Text("Last dry harvest: ${it.dryHoneyWeight} ${it.weightUnit}", style = MaterialTheme.typography.bodySmall) }
             }
         }
 
-        Card(shape = RoundedCornerShape(18.dp)) {
-            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
-                Text("NFC hive tag", fontWeight = FontWeight.Bold)
+        Card(shape = RoundedCornerShape(14.dp)) {
+            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("NFC hive tag", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleSmall)
                 if (hive.isDead) {
-                    Text("Released", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text("The physical tag was released when the colony died and can be assigned to another hive.", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+                    Text("Released", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+                    Text("The physical tag was released when the colony died.", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
                 } else {
-                    Text(hive.tagUid ?: "Not assigned", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text(
-                        if (hive.tagUid == null) "Attach a durable NFC tag to this hive, then assign it here." else "This phone can verify the physical tag before you start an inspection.",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        style = MaterialTheme.typography.bodySmall
-                    )
+                    Text(hive.tagUid ?: "Not assigned", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         OutlinedButton(
                             onClick = onVerifyTag,
                             enabled = hive.tagUid != null,
-                            modifier = Modifier.weight(1f).height(52.dp)
+                            modifier = Modifier.weight(1f).height(42.dp),
+                            shape = RoundedCornerShape(10.dp)
                         ) {
-                            Icon(Icons.Rounded.Nfc, null); Spacer(Modifier.width(5.dp)); Text("VERIFY")
+                            Icon(Icons.Rounded.Nfc, null, modifier = Modifier.size(16.dp)); Spacer(Modifier.width(5.dp)); Text("VERIFY", style = MaterialTheme.typography.labelMedium)
                         }
                         OutlinedButton(
                             onClick = {
@@ -1398,7 +1451,7 @@ private fun HiveDetailScreen(
                                     onResult = { result ->
                                         when (result) {
                                             is NfcResult.Written -> onTag(result.uid) { success, error ->
-                                                writeStatus = if (success) "Tag written • ${result.uid}" else (error ?: "Could not assign the tag.")
+                                                writeStatus = if (success) "Tag written • ${result.uid}" else (error ?: "Could not assign tag.")
                                             }
                                             is NfcResult.Error -> writeStatus = result.message
                                             is NfcResult.Read -> Unit
@@ -1406,37 +1459,32 @@ private fun HiveDetailScreen(
                                     }
                                 )
                             },
-                            modifier = Modifier.weight(1f).height(52.dp)
-                        ) { Text(if (hive.tagUid == null) "WRITE TAG" else "REPLACE") }
+                            modifier = Modifier.weight(1f).height(42.dp),
+                            shape = RoundedCornerShape(10.dp)
+                        ) { Text(if (hive.tagUid == null) "WRITE TAG" else "REPLACE", style = MaterialTheme.typography.labelMedium) }
                     }
                     if (hive.tagUid != null) {
-                        TextButton(onClick = onClearTag, modifier = Modifier.fillMaxWidth()) { Text("REMOVE TAG") }
+                        TextButton(onClick = onClearTag, modifier = Modifier.fillMaxWidth().height(36.dp)) { Text("REMOVE TAG", style = MaterialTheme.typography.labelSmall) }
                     }
-                    if (writeStatus.isNotBlank()) Text(writeStatus, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    if (writeStatus.isNotBlank()) Text(writeStatus, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
                 }
             }
         }
 
-        Card(shape = RoundedCornerShape(18.dp)) {
-            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
-                Text("Colony lifecycle", fontWeight = FontWeight.Bold)
-                Text(
-                    if (hive.isDead) "This colony is dead. Restore it if it was marked dead by mistake, or delete the hive record permanently."
-                    else "Mark the colony dead when it fails — history is kept and the NFC tag is released. Deleting a hive removes everything permanently.",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    style = MaterialTheme.typography.bodySmall
-                )
+        Card(shape = RoundedCornerShape(14.dp)) {
+            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Colony lifecycle", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleSmall)
                 if (hive.isDead) {
-                    OutlinedButton(onClick = onRestore, modifier = Modifier.fillMaxWidth().height(52.dp)) { Text("RESTORE COLONY", fontWeight = FontWeight.Bold) }
+                    OutlinedButton(onClick = onRestore, modifier = Modifier.fillMaxWidth().height(42.dp), shape = RoundedCornerShape(10.dp)) { Text("RESTORE COLONY", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelMedium) }
                 } else {
-                    OutlinedButton(onClick = { confirmDead = true }, modifier = Modifier.fillMaxWidth().height(52.dp)) { Text("MARK COLONY DEAD", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.error) }
+                    OutlinedButton(onClick = { confirmDead = true }, modifier = Modifier.fillMaxWidth().height(42.dp), shape = RoundedCornerShape(10.dp)) { Text("MARK COLONY DEAD", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelMedium) }
                 }
-                TextButton(onClick = { confirmDelete = true }, modifier = Modifier.fillMaxWidth()) { Text("DELETE HIVE PERMANENTLY", color = MaterialTheme.colorScheme.error) }
+                TextButton(onClick = { confirmDelete = true }, modifier = Modifier.fillMaxWidth().height(36.dp)) { Text("DELETE HIVE PERMANENTLY", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelSmall) }
             }
         }
 
-        Text("Recent activity", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-        if (events.isEmpty()) Text("No events yet.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text("Recent activity", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+        if (events.isEmpty()) Text("No events yet.", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
         for (event in events.take(15)) { EventCard(event) }
         inspections.firstOrNull()?.let { InspectionSnapshot(it) }
     }
@@ -1456,23 +1504,21 @@ private fun HiveStatusPill(hive: Hive) {
     }
 }
 
-
 @Composable
 private fun SmartHealthCard(score: Int, label: String) {
-    Card(shape = RoundedCornerShape(18.dp)) {
-        Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text("Hive health", fontWeight = FontWeight.ExtraBold, style = MaterialTheme.typography.titleMedium)
-                    Text(label, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    Card(shape = RoundedCornerShape(14.dp)) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("Hive health", fontWeight = FontWeight.ExtraBold, style = MaterialTheme.typography.titleSmall)
+                    Text("• $label", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                Text("$score/100", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.ExtraBold, color = MaterialTheme.colorScheme.primary)
+                Text("$score/100", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.ExtraBold, color = MaterialTheme.colorScheme.primary)
             }
-            androidx.compose.material3.LinearProgressIndicator(
-                progress = score / 100f,
-                modifier = Modifier.fillMaxWidth().height(10.dp),
+            LinearProgressIndicator(
+                progress = { score / 100f },
+                modifier = Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp)),
             )
-            Text("BeeKeep score based on recent strength, queen status, mite rate and inspection history.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
@@ -1482,28 +1528,33 @@ private fun SmartAssistantCard(
     recommendations: List<SmartRecommendation>,
     onSchedule: (SmartRecommendation) -> Unit
 ) {
-    Card(shape = RoundedCornerShape(18.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)) {
-        Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+    Card(shape = RoundedCornerShape(14.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text("What to check next", fontWeight = FontWeight.ExtraBold, style = MaterialTheme.typography.titleMedium)
-                    Text("Suggestions based on this hive's history", color = MaterialTheme.colorScheme.onSecondaryContainer, style = MaterialTheme.typography.bodySmall)
-                }
-                Icon(Icons.Rounded.TaskAlt, null, tint = MaterialTheme.colorScheme.primary)
+                Text("What to check next", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
+                Icon(Icons.Rounded.TaskAlt, null, modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.primary)
             }
             if (recommendations.isEmpty()) {
-                Text("No priority recommendations right now. A normal inspection is still a good idea when due.", color = MaterialTheme.colorScheme.onSecondaryContainer)
+                Text("No priority recommendations right now.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSecondaryContainer)
             } else {
-                for (recommendation in recommendations.take(4)) {
-                    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                            Column(Modifier.weight(1f)) {
-                                Text(recommendation.title, fontWeight = FontWeight.Bold)
-                                Text(recommendation.reason, color = MaterialTheme.colorScheme.onSecondaryContainer, style = MaterialTheme.typography.bodySmall)
-                            }
-                            TextButton(onClick = { onSchedule(recommendation) }) { Text("ADD TASK") }
+                for (recommendation in recommendations.take(3)) {
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column(Modifier.weight(1f).padding(end = 6.dp)) {
+                            Text(recommendation.title, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold, maxLines = 1)
+                            Text(recommendation.reason, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSecondaryContainer, maxLines = 1)
                         }
-                        Text("Next: ${recommendation.action}", style = MaterialTheme.typography.bodySmall)
+                        OutlinedButton(
+                            onClick = { onSchedule(recommendation) },
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
+                            modifier = Modifier.height(32.dp),
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Text("+ TASK", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                        }
                     }
                 }
             }
@@ -1516,9 +1567,9 @@ private fun SmartComparisonCard(comparison: InspectionComparison?) {
     if (comparison == null || comparison.previous == null) return
     fun signed(value: Int): String = if (value > 0) "+$value" else value.toString()
     fun signedDouble(value: Double): String = if (value > 0) "+${String.format(Locale.US, "%.2f", value)}%" else "${String.format(Locale.US, "%.2f", value)}%"
-    Card(shape = RoundedCornerShape(18.dp)) {
-        Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("Since your last inspection", fontWeight = FontWeight.ExtraBold, style = MaterialTheme.typography.titleMedium)
+    Card(shape = RoundedCornerShape(14.dp)) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text("Since last inspection", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleSmall)
             ComparisonRow("Strength", comparison.strengthDelta?.let(::signed) ?: "—")
             ComparisonRow("Mites", comparison.miteDelta?.let(::signedDouble) ?: "—")
             ComparisonRow("Honey stores", comparison.honeyDelta?.let(::signed) ?: "—")
