@@ -87,6 +87,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.lifecycle.Lifecycle
@@ -149,9 +150,80 @@ import kotlinx.coroutines.launch
 import java.text.DateFormat
 import java.util.Date
 import java.util.Locale
+import org.json.JSONObject
 
 private const val PREFS = "beekeep_prefs"
 private const val INSPECTION_NOTE_DRAFTS = "beekeep_inspection_note_drafts"
+private const val INSPECTION_FORM_DRAFTS = "beekeep_inspection_form_drafts"
+
+private data class InspectionFormDraft(
+    val strength: Int,
+    val queenStatus: String,
+    val miteCount: Int,
+    val sampleSize: Int,
+    val eggs: Int,
+    val openBrood: Int,
+    val cappedBrood: Int,
+    val honeyStores: Int,
+    val pollen: Int,
+    val emptyDrawnComb: Int,
+    val emergencyCells: Int,
+    val supercedureCells: Int,
+    val swarmCells: Int,
+    val diseaseFlags: String,
+    val updatedAt: Long
+)
+
+private fun readInspectionFormDraft(
+    prefs: android.content.SharedPreferences,
+    hiveId: Long
+): InspectionFormDraft? {
+    val raw = prefs.getString("hive_$hiveId", null) ?: return null
+    return runCatching {
+        val json = JSONObject(raw)
+        InspectionFormDraft(
+            strength = json.optInt("strength", 5),
+            queenStatus = json.optString("queenStatus", "Laying"),
+            miteCount = json.optInt("miteCount", 0),
+            sampleSize = json.optInt("sampleSize", 300).coerceAtLeast(1),
+            eggs = json.optInt("eggs", 0),
+            openBrood = json.optInt("openBrood", 0),
+            cappedBrood = json.optInt("cappedBrood", 0),
+            honeyStores = json.optInt("honeyStores", 0),
+            pollen = json.optInt("pollen", 0),
+            emptyDrawnComb = json.optInt("emptyDrawnComb", 0),
+            emergencyCells = json.optInt("emergencyCells", 0),
+            supercedureCells = json.optInt("supercedureCells", 0),
+            swarmCells = json.optInt("swarmCells", 0),
+            diseaseFlags = json.optString("diseaseFlags", ""),
+            updatedAt = json.optLong("updatedAt", 0L)
+        )
+    }.getOrNull()
+}
+
+private fun saveInspectionFormDraft(
+    prefs: android.content.SharedPreferences,
+    hiveId: Long,
+    draft: InspectionFormDraft
+) {
+    val json = JSONObject()
+        .put("strength", draft.strength.coerceIn(0, 10))
+        .put("queenStatus", draft.queenStatus)
+        .put("miteCount", draft.miteCount.coerceAtLeast(0))
+        .put("sampleSize", draft.sampleSize.coerceAtLeast(1))
+        .put("eggs", draft.eggs.coerceAtLeast(0))
+        .put("openBrood", draft.openBrood.coerceAtLeast(0))
+        .put("cappedBrood", draft.cappedBrood.coerceAtLeast(0))
+        .put("honeyStores", draft.honeyStores.coerceAtLeast(0))
+        .put("pollen", draft.pollen.coerceAtLeast(0))
+        .put("emptyDrawnComb", draft.emptyDrawnComb.coerceAtLeast(0))
+        .put("emergencyCells", draft.emergencyCells.coerceAtLeast(0))
+        .put("supercedureCells", draft.supercedureCells.coerceAtLeast(0))
+        .put("swarmCells", draft.swarmCells.coerceAtLeast(0))
+        .put("diseaseFlags", draft.diseaseFlags)
+        .put("updatedAt", System.currentTimeMillis())
+    prefs.edit { putString("hive_$hiveId", json.toString()) }
+}
 
 class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
     private val nfc = NfcController()
@@ -1428,8 +1500,14 @@ private fun InspectionScreen(
     val noteDraftPrefs = remember(context) {
         context.getSharedPreferences(INSPECTION_NOTE_DRAFTS, android.content.Context.MODE_PRIVATE)
     }
+    val formDraftPrefs = remember(context) {
+        context.getSharedPreferences(INSPECTION_FORM_DRAFTS, android.content.Context.MODE_PRIVATE)
+    }
     val noteDraftKey = remember(hive.id) { "hive_${hive.id}" }
     val lastInspection = remember(priorInspections) { priorInspections.maxByOrNull { it.createdAt } }
+    // Load unfinished field values for this specific hive; if none exist, use the last saved inspection.
+    val formDraft = remember(hive.id) { readInspectionFormDraft(formDraftPrefs, hive.id) }
+    val formStateKey = formDraft?.updatedAt ?: 0L
     val hasSavedNoteDraft = remember(hive.id) { noteDraftPrefs.contains(noteDraftKey) }
     val savedNoteDraft = remember(hive.id) { noteDraftPrefs.getString(noteDraftKey, "").orEmpty() }
     // A stored empty string means the beekeeper deliberately cleared the notes; don't restore older text.
@@ -1437,24 +1515,52 @@ private fun InspectionScreen(
         if (hasSavedNoteDraft) savedNoteDraft else lastInspection?.notes.orEmpty()
     }
 
-    var strength by rememberSaveable { mutableIntStateOf(hive.strength) }
-    var queen by rememberSaveable { mutableStateOf(hive.queenStatus) }
-    var mites by rememberSaveable { mutableIntStateOf(lastInspection?.miteCount ?: 0) }
-    var sample by rememberSaveable { mutableIntStateOf(lastInspection?.sampleSize ?: 300) }
+    var strength by rememberSaveable(hive.id, formStateKey, lastInspection?.id) {
+        mutableIntStateOf(formDraft?.strength ?: lastInspection?.strength ?: hive.strength)
+    }
+    var queen by rememberSaveable(hive.id, formStateKey, lastInspection?.id) {
+        mutableStateOf(formDraft?.queenStatus ?: lastInspection?.queenStatus ?: hive.queenStatus)
+    }
+    var mites by rememberSaveable(hive.id, formStateKey, lastInspection?.id) {
+        mutableIntStateOf(formDraft?.miteCount ?: lastInspection?.miteCount ?: 0)
+    }
+    var sample by rememberSaveable(hive.id, formStateKey, lastInspection?.id) {
+        mutableIntStateOf(formDraft?.sampleSize ?: lastInspection?.sampleSize ?: 300)
+    }
     var notes by rememberSaveable(hive.id) { mutableStateOf(startingNotes) }
     var noteSaveStatus by rememberSaveable(hive.id) {
         mutableStateOf(if (startingNotes.isBlank()) "" else if (hasSavedNoteDraft) "Auto-saved note restored" else "Saved notes loaded")
     }
-    var eggs by rememberSaveable { mutableIntStateOf(lastInspection?.eggs ?: 0) }
-    var openBrood by rememberSaveable { mutableIntStateOf(lastInspection?.openBrood ?: 0) }
-    var cappedBrood by rememberSaveable { mutableIntStateOf(lastInspection?.cappedBrood ?: 0) }
-    var honey by rememberSaveable { mutableIntStateOf(lastInspection?.honeyStores ?: 0) }
-    var pollen by rememberSaveable { mutableIntStateOf(lastInspection?.pollen ?: 0) }
-    var emptyComb by rememberSaveable { mutableIntStateOf(lastInspection?.emptyDrawnComb ?: 0) }
-    var emergency by rememberSaveable { mutableIntStateOf(0) }
-    var supercedure by rememberSaveable { mutableIntStateOf(0) }
-    var swarm by rememberSaveable { mutableIntStateOf(0) }
-    var diseasesCsv by rememberSaveable { mutableStateOf("") }
+    var eggs by rememberSaveable(hive.id, formStateKey, lastInspection?.id) {
+        mutableIntStateOf(formDraft?.eggs ?: lastInspection?.eggs ?: 0)
+    }
+    var openBrood by rememberSaveable(hive.id, formStateKey, lastInspection?.id) {
+        mutableIntStateOf(formDraft?.openBrood ?: lastInspection?.openBrood ?: 0)
+    }
+    var cappedBrood by rememberSaveable(hive.id, formStateKey, lastInspection?.id) {
+        mutableIntStateOf(formDraft?.cappedBrood ?: lastInspection?.cappedBrood ?: 0)
+    }
+    var honey by rememberSaveable(hive.id, formStateKey, lastInspection?.id) {
+        mutableIntStateOf(formDraft?.honeyStores ?: lastInspection?.honeyStores ?: 0)
+    }
+    var pollen by rememberSaveable(hive.id, formStateKey, lastInspection?.id) {
+        mutableIntStateOf(formDraft?.pollen ?: lastInspection?.pollen ?: 0)
+    }
+    var emptyComb by rememberSaveable(hive.id, formStateKey, lastInspection?.id) {
+        mutableIntStateOf(formDraft?.emptyDrawnComb ?: lastInspection?.emptyDrawnComb ?: 0)
+    }
+    var emergency by rememberSaveable(hive.id, formStateKey, lastInspection?.id) {
+        mutableIntStateOf(formDraft?.emergencyCells ?: lastInspection?.emergencyCells ?: 0)
+    }
+    var supercedure by rememberSaveable(hive.id, formStateKey, lastInspection?.id) {
+        mutableIntStateOf(formDraft?.supercedureCells ?: lastInspection?.supercedureCells ?: 0)
+    }
+    var swarm by rememberSaveable(hive.id, formStateKey, lastInspection?.id) {
+        mutableIntStateOf(formDraft?.swarmCells ?: lastInspection?.swarmCells ?: 0)
+    }
+    var diseasesCsv by rememberSaveable(hive.id, formStateKey, lastInspection?.id) {
+        mutableStateOf(formDraft?.diseaseFlags ?: lastInspection?.diseaseFlags.orEmpty())
+    }
     var photoPath by rememberSaveable { mutableStateOf<String?>(null) }
     var cameraOpen by rememberSaveable { mutableStateOf(false) }
     var lat by rememberSaveable { mutableStateOf<Double?>(null) }
@@ -1467,6 +1573,36 @@ private fun InspectionScreen(
     var photoProcessing by rememberSaveable { mutableStateOf(false) }
     var pendingPhotoPath by rememberSaveable { mutableStateOf<String?>(null) }
 
+    val currentFormDraft = InspectionFormDraft(
+        strength = strength,
+        queenStatus = queen,
+        miteCount = mites,
+        sampleSize = sample,
+        eggs = eggs,
+        openBrood = openBrood,
+        cappedBrood = cappedBrood,
+        honeyStores = honey,
+        pollen = pollen,
+        emptyDrawnComb = emptyComb,
+        emergencyCells = emergency,
+        supercedureCells = supercedure,
+        swarmCells = swarm,
+        diseaseFlags = diseasesCsv,
+        updatedAt = formStateKey
+    )
+    val latestFormDraft by rememberUpdatedState(currentFormDraft)
+
+    androidx.compose.runtime.LaunchedEffect(
+        hive.id, strength, queen, mites, sample, eggs, openBrood, cappedBrood,
+        honey, pollen, emptyComb, emergency, supercedure, swarm, diseasesCsv
+    ) {
+        saveInspectionFormDraft(formDraftPrefs, hive.id, currentFormDraft)
+    }
+    DisposableEffect(hive.id) {
+        onDispose {
+            saveInspectionFormDraft(formDraftPrefs, hive.id, latestFormDraft)
+        }
+    }
 
     val cameraPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) {
