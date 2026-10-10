@@ -12,6 +12,9 @@ import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.speech.tts.TextToSpeech
+import android.view.View
+import android.webkit.WebView
+import android.webkit.WebViewClient
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -45,6 +48,7 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.shape.CircleShape
@@ -61,6 +65,7 @@ import androidx.compose.material.icons.rounded.GpsFixed
 import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.Home
 import androidx.compose.material.icons.rounded.LocationOn
+import androidx.compose.material.icons.rounded.Map
 import androidx.compose.material.icons.rounded.Mic
 import androidx.compose.material.icons.rounded.Nfc
 import androidx.compose.material.icons.rounded.Search
@@ -163,6 +168,7 @@ import kotlinx.coroutines.launch
 import java.text.DateFormat
 import java.util.Date
 import java.util.Locale
+import org.json.JSONArray
 import org.json.JSONObject
 
 private const val PREFS = "beekeep_prefs"
@@ -381,6 +387,7 @@ enum class Screen {
     HOME,
     APIARIES,
     APIARY_HIVES,
+    MAP,
     SCAN,
     MORE,
     TAG_MANAGER,
@@ -411,6 +418,8 @@ fun BeeKeepApp(
     var screen by rememberSaveable { mutableStateOf(Screen.HOME) }
     var selectedHiveOpen by rememberSaveable { mutableStateOf(false) }
     var selectedApiaryName by rememberSaveable { mutableStateOf<String?>(null) }
+    var mapOrigin by rememberSaveable { mutableStateOf(Screen.HOME) }
+    var mapFocusApiaryId by rememberSaveable { mutableStateOf<Long?>(null) }
     var inspecting by rememberSaveable { mutableStateOf(false) }
     var addHive by rememberSaveable { mutableStateOf(false) }
     var logType by rememberSaveable { mutableStateOf<HiveLogType?>(null) }
@@ -843,14 +852,34 @@ fun BeeKeepApp(
             ) {
                 NavItem("Home", Icons.Rounded.Home, screen == Screen.HOME) { screen = Screen.HOME }
                 NavItem("Apiaries", Icons.Rounded.Yard, screen == Screen.APIARIES || screen == Screen.APIARY_HIVES) { selectedApiaryName = null; screen = Screen.APIARIES }
-                NavItem("Scan", Icons.Rounded.Nfc, screen == Screen.SCAN) { screen = Screen.SCAN }
+                NavItem("Map", Icons.Rounded.Map, screen == Screen.MAP) {
+                    mapOrigin = Screen.HOME
+                    mapFocusApiaryId = null
+                    screen = Screen.MAP
+                }
                 NavItem("More", Icons.Rounded.Settings, screen == Screen.MORE) { screen = Screen.MORE }
             }
         }
     ) { padding ->
         when (screen) {
             Screen.HOME -> HomeScreen(hives, apiaries, padding, onScan = { screen = Screen.SCAN })
-            Screen.APIARIES -> ApiariesScreen(apiaries, hives, padding, onAddApiary = { addApiary = true }, onEditApiary = { editingApiary = it }, onOpenApiary = { selectedApiaryName = it; screen = Screen.APIARY_HIVES })
+            Screen.APIARIES -> ApiariesScreen(
+                apiaries, hives, padding,
+                onAddApiary = { addApiary = true },
+                onEditApiary = { editingApiary = it },
+                onOpenMap = { apiary ->
+                    mapOrigin = Screen.APIARIES
+                    mapFocusApiaryId = apiary.id
+                    screen = Screen.MAP
+                },
+                onOpenApiary = { selectedApiaryName = it; screen = Screen.APIARY_HIVES }
+            )
+            Screen.MAP -> ApiaryMapScreen(
+                apiaries = apiaries,
+                padding = padding,
+                initialFocusApiaryId = mapFocusApiaryId,
+                onBack = { screen = mapOrigin; mapFocusApiaryId = null }
+            )
             Screen.MORE -> MoreScreen(padding, darkMode, onDarkModeChange, onTagManager = { screen = Screen.TAG_MANAGER }, onColonyHistory = { screen = Screen.COLONY_HISTORY }, deadCount = deadHives.size, activity, cloud)
             Screen.TAG_MANAGER -> TagManagementScreen(
                 padding = padding,
@@ -1233,9 +1262,9 @@ private fun ApiariesScreen(
     padding: androidx.compose.foundation.layout.PaddingValues,
     onAddApiary: () -> Unit,
     onEditApiary: (Apiary) -> Unit,
+    onOpenMap: (Apiary) -> Unit,
     onOpenApiary: (String) -> Unit
 ) {
-    val context = LocalContext.current
     var query by rememberSaveable { mutableStateOf("") }
     val filtered = apiaries.filter { it.name.contains(query, ignoreCase = true) }
 
@@ -1286,10 +1315,9 @@ private fun ApiariesScreen(
                             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                 IconButton(onClick = { onEditApiary(apiary) }) { Icon(Icons.Rounded.Edit, "Edit apiary ${apiary.name}") }
                                 if (apiary.latitude != null && apiary.longitude != null) {
-                                    IconButton(onClick = {
-                                        val uri = android.net.Uri.parse("geo:${apiary.latitude},${apiary.longitude}?q=${apiary.latitude},${apiary.longitude}(${android.net.Uri.encode(apiary.name)})")
-                                        runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, uri)) }
-                                    }) { Icon(Icons.Rounded.LocationOn, "Open apiary location in maps") }
+                                    IconButton(onClick = { onOpenMap(apiary) }) {
+                                        Icon(Icons.Rounded.LocationOn, "View ${apiary.name} on satellite map")
+                                    }
                                 } else {
                                     Icon(Icons.Rounded.ChevronRight, "Open apiary", tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(12.dp))
                                 }
@@ -1300,6 +1328,260 @@ private fun ApiariesScreen(
             }
         }
     }
+}
+
+
+@Composable
+private fun ApiaryMapScreen(
+    apiaries: List<Apiary>,
+    padding: PaddingValues,
+    initialFocusApiaryId: Long?,
+    onBack: () -> Unit
+) {
+    BackHandler { onBack() }
+    var focusedApiaryId by rememberSaveable(initialFocusApiaryId) {
+        mutableStateOf(initialFocusApiaryId)
+    }
+    val locatedApiaries = apiaries.filter { it.latitude != null && it.longitude != null }
+    val focusedId = focusedApiaryId?.takeIf { id -> locatedApiaries.any { it.id == id } }
+
+    Column(
+        Modifier.fillMaxSize().padding(padding).background(MaterialTheme.colorScheme.background)
+    ) {
+        Row(
+            Modifier.fillMaxWidth().padding(start = 8.dp, end = 16.dp, top = 10.dp, bottom = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            IconButton(onClick = onBack) { Icon(Icons.Rounded.ArrowBack, "Back") }
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text("Apiary Map", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.ExtraBold)
+                Text(
+                    "${locatedApiaries.size} of ${apiaries.size} apiaries have GPS pins",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            IconButton(onClick = { focusedApiaryId = null }) {
+                Icon(Icons.Rounded.GpsFixed, "Show all saved apiary locations")
+            }
+        }
+
+        ApiarySatelliteMap(
+            apiaries = locatedApiaries,
+            focusedApiaryId = focusedId,
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f)
+                .padding(horizontal = 12.dp)
+                .clip(RoundedCornerShape(22.dp))
+                .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(22.dp))
+        )
+
+        if (locatedApiaries.isEmpty()) {
+            Column(
+                Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 14.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                Text("No saved GPS pins yet", fontWeight = FontWeight.Bold)
+                Text(
+                    "Open an apiary, choose Edit, then capture its current GPS. Its satellite pin will appear here.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        } else {
+            Text(
+                "SAVED APIARY LOCATIONS",
+                modifier = Modifier.padding(start = 16.dp, top = 12.dp, bottom = 6.dp),
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.ExtraBold,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            LazyColumn(
+                Modifier.fillMaxWidth().heightIn(max = 174.dp),
+                contentPadding = PaddingValues(start = 12.dp, end = 12.dp, bottom = 10.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                items(locatedApiaries, key = { it.id }) { apiary ->
+                    val isFocused = focusedId == apiary.id
+                    Surface(
+                        modifier = Modifier.fillMaxWidth().clickable { focusedApiaryId = apiary.id },
+                        shape = RoundedCornerShape(14.dp),
+                        color = if (isFocused) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant
+                    ) {
+                        Row(
+                            Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 9.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Icon(
+                                Icons.Rounded.LocationOn,
+                                contentDescription = null,
+                                tint = if (isFocused) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.primary
+                            )
+                            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                Text(apiary.name, fontWeight = FontWeight.Bold, maxLines = 1)
+                                Text(
+                                    "${"%.5f".format(Locale.US, apiary.latitude)}, ${"%.5f".format(Locale.US, apiary.longitude)}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            if (isFocused) {
+                                Text("ON MAP", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.ExtraBold)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ApiarySatelliteMap(
+    apiaries: List<Apiary>,
+    focusedApiaryId: Long?,
+    modifier: Modifier = Modifier
+) {
+    val html = remember(apiaries, focusedApiaryId) {
+        createApiaryMapHtml(apiaries, focusedApiaryId)
+    }
+    AndroidView(
+        modifier = modifier,
+        factory = { context ->
+            WebView(context).apply {
+                settings.javaScriptEnabled = true
+                settings.domStorageEnabled = false
+                settings.allowFileAccess = false
+                settings.javaScriptCanOpenWindowsAutomatically = false
+                webViewClient = WebViewClient()
+                setBackgroundColor(android.graphics.Color.rgb(35, 38, 35))
+                isVerticalScrollBarEnabled = false
+                isHorizontalScrollBarEnabled = false
+                overScrollMode = View.OVER_SCROLL_NEVER
+                tag = html.hashCode()
+                loadDataWithBaseURL("https://beekeep.local/map/", html, "text/html", "UTF-8", null)
+            }
+        },
+        update = { webView ->
+            if (webView.tag != html.hashCode()) {
+                webView.tag = html.hashCode()
+                webView.loadDataWithBaseURL("https://beekeep.local/map/", html, "text/html", "UTF-8", null)
+            }
+        }
+    )
+}
+
+private fun createApiaryMapHtml(apiaries: List<Apiary>, focusedApiaryId: Long?): String {
+    val located = apiaries.filter { it.latitude != null && it.longitude != null }
+    val markers = JSONArray()
+    located.forEach { apiary ->
+        markers.put(
+            JSONObject()
+                .put("id", apiary.id.toString())
+                .put("name", apiary.name)
+                .put("lat", apiary.latitude)
+                .put("lon", apiary.longitude)
+        )
+    }
+    val focus = located.firstOrNull { it.id == focusedApiaryId }
+    val centerLat = focus?.latitude ?: if (located.isNotEmpty()) located.mapNotNull { it.latitude }.average() else 20.0
+    val centerLon = focus?.longitude ?: if (located.isNotEmpty()) located.mapNotNull { it.longitude }.average() else 0.0
+    val initialZoom = when {
+        focus != null -> 17
+        located.size == 1 -> 16
+        located.size > 1 -> 5
+        else -> 2
+    }
+    val focusIdJson = focusedApiaryId?.takeIf { id -> located.any { it.id == id } }
+        ?.let { JSONObject.quote(it.toString()) } ?: "null"
+
+    return """
+        <!doctype html>
+        <html>
+        <head>
+            <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+            <meta charset="utf-8">
+            <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+            <style>
+                html, body, #map { width: 100%; height: 100%; padding: 0; margin: 0; background: #232623; }
+                body { font-family: Arial, sans-serif; }
+                .leaflet-container { background: #232623; }
+                .leaflet-control-attribution { font-size: 9px !important; }
+                .bee-marker { background: transparent; border: 0; }
+                .marker-wrap { position: relative; width: 36px; height: 42px; }
+                .ping-ring { position: absolute; left: 5px; top: 2px; width: 26px; height: 26px; border: 2px solid #F59E0B; border-radius: 50%; box-sizing: border-box; animation: mapPing 1.8s ease-out infinite; }
+                .pin { position: absolute; left: 7px; top: 4px; width: 22px; height: 22px; border-radius: 50% 50% 50% 0; transform: rotate(-45deg); background: #F59E0B; border: 3px solid #fff; box-shadow: 0 2px 7px rgba(0,0,0,.65); box-sizing: border-box; }
+                .pin:after { content: ''; position: absolute; width: 7px; height: 7px; top: 4px; left: 4px; background: #fff; border-radius: 50%; }
+                @keyframes mapPing { 0% { transform: scale(.65); opacity: .95; } 100% { transform: scale(1.9); opacity: 0; } }
+                .map-error { display: flex; height: 100%; padding: 24px; box-sizing: border-box; align-items: center; justify-content: center; color: #fff; text-align: center; }
+            </style>
+        </head>
+        <body>
+            <div id="map"></div>
+            <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+            <script>
+                (function () {
+                    const apiaries = $markers;
+                    const focusedId = $focusIdJson;
+                    if (!window.L) {
+                        document.getElementById('map').innerHTML = '<div class="map-error">Satellite map could not load. Check your internet connection and try again.</div>';
+                        return;
+                    }
+                    const map = L.map('map', { zoomControl: true, attributionControl: true, preferCanvas: true })
+                        .setView([$centerLat, $centerLon], $initialZoom);
+                    L.tileLayer('https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+                        maxZoom: 19,
+                        attribution: 'Imagery © Esri, Maxar, Earthstar Geographics, USDA FSA, USGS, AEX, Getmapping, Aerogrid, IGN, IGP, swisstopo, and the GIS User Community'
+                    }).addTo(map);
+                    L.tileLayer('https://services.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}', {
+                        maxZoom: 19,
+                        opacity: 0.9,
+                        attribution: 'Labels © Esri'
+                    }).addTo(map);
+
+                    const markerIcon = L.divIcon({
+                        className: 'bee-marker',
+                        html: '<div class="marker-wrap"><div class="ping-ring"></div><div class="pin"></div></div>',
+                        iconSize: [36, 42],
+                        iconAnchor: [18, 38],
+                        popupAnchor: [0, -34]
+                    });
+                    const bounds = [];
+                    const markersById = {};
+                    apiaries.forEach(function (apiary) {
+                        const point = [Number(apiary.lat), Number(apiary.lon)];
+                        const marker = L.marker(point, { icon: markerIcon, title: apiary.name, alt: apiary.name }).addTo(map);
+                        const popup = document.createElement('div');
+                        const title = document.createElement('strong');
+                        title.textContent = apiary.name;
+                        popup.appendChild(title);
+                        const coordinates = document.createElement('div');
+                        coordinates.textContent = Number(apiary.lat).toFixed(5) + ', ' + Number(apiary.lon).toFixed(5);
+                        popup.appendChild(coordinates);
+                        marker.bindPopup(popup);
+                        markersById[String(apiary.id)] = marker;
+                        bounds.push(point);
+                    });
+
+                    const focused = focusedId === null ? null : apiaries.find(function (a) { return String(a.id) === String(focusedId); });
+                    if (focused) {
+                        map.setView([Number(focused.lat), Number(focused.lon)], 17);
+                        if (markersById[String(focused.id)]) markersById[String(focused.id)].openPopup();
+                    } else if (bounds.length === 1) {
+                        map.setView(bounds[0], 16);
+                    } else if (bounds.length > 1) {
+                        map.fitBounds(bounds, { padding: [34, 34], maxZoom: 15 });
+                    }
+
+                    window.addEventListener('resize', function () { setTimeout(function () { map.invalidateSize(); }, 150); });
+                    setTimeout(function () { map.invalidateSize(); }, 200);
+                })();
+            </script>
+        </body>
+        </html>
+    """.trimIndent()
 }
 
 @Composable
@@ -2705,6 +2987,25 @@ private fun AddApiaryScreen(
         },Modifier.fillMaxWidth().height(54.dp)){Icon(Icons.Rounded.LocationOn,null);Spacer(Modifier.width(6.dp));Text(if(lat==null)"CAPTURE CURRENT GPS" else "GPS CAPTURED")}
         if (lat != null && lon != null) {
             Text("Saved GPS: ${"%.5f".format(Locale.US, lat)}, ${"%.5f".format(Locale.US, lon)}", color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Bold)
+            Text("Satellite preview • drag to move, pinch to zoom", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            ApiarySatelliteMap(
+                apiaries = listOf(
+                    Apiary(
+                        id = existingApiary?.id ?: Long.MIN_VALUE,
+                        name = "Current apiary location",
+                        notes = notes,
+                        latitude = lat,
+                        longitude = lon,
+                        forageNotes = forage,
+                        waterNotes = water
+                    )
+                ),
+                focusedApiaryId = existingApiary?.id ?: Long.MIN_VALUE,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(260.dp)
+                    .clip(RoundedCornerShape(20.dp))
+            )
             TextButton(onClick = { lat = null; lon = null; gpsStatus = "GPS location removed" }) { Text("REMOVE GPS LOCATION") }
         }
         if(gpsStatus.isNotBlank()) Text(gpsStatus,color=if(gpsStatus.startsWith("Could") || gpsStatus.startsWith("Location permission denied"))MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,fontWeight=FontWeight.Bold)
