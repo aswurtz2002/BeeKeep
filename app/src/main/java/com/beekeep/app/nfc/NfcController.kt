@@ -431,7 +431,7 @@ class NfcController {
                         verification.connect()
                         val verifiedMessage = verification.ndefMessage
                         val confirmedPayload = verifiedMessage?.records?.asSequence()?.mapNotNull(::parseRecord)?.firstOrNull()
-                        confirmedPayload == text && verifiedMessage.records.any(::isBeeKeepAppRecord)
+                        verifiedMessage != null && confirmedPayload == text && verifiedMessage.records.any(::isBeeKeepAppRecord)
                     }.getOrDefault(false).also { runCatching { verification.close() } }
                 } ?: false
                 if (!verify) return NfcResult.Error("The tag was formatted, but BeeKeep could not verify both its payload and app-launch record. Try again.")
