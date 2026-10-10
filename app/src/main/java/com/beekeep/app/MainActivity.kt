@@ -6,6 +6,7 @@ import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.os.Bundle
 import android.speech.RecognizerIntent
+import android.speech.tts.TextToSpeech
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -149,9 +150,12 @@ import java.util.Locale
 
 private const val PREFS = "beekeep_prefs"
 
-class MainActivity : ComponentActivity() {
+class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
     private val nfc = NfcController()
     internal val pendingNfcResult = MutableStateFlow<NfcResult.Read?>(null)
+    private var speechEngine: TextToSpeech? = null
+    private var speechReady = false
+    private var pendingSpeech: String? = null
     private lateinit var photoStore: PhotoStore
     private lateinit var locationController: LocationController
     private lateinit var cloudGateway: SupabaseGateway
@@ -159,6 +163,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        speechEngine = TextToSpeech(this, this)
         nfc.attach(this)
         handleNfcIntent(intent)
         photoStore = PhotoStore(this)
@@ -193,7 +198,10 @@ class MainActivity : ComponentActivity() {
                     controller.isAppearanceLightNavigationBars = false
                 }
                 val incomingNfc by pendingNfcResult.collectAsStateWithLifecycle()
-                BeeKeepApp(vm, nfc, this, photoStore, locationController, cloud, darkMode, incomingNfc) { value ->
+                BeeKeepApp(
+                    vm, nfc, this, photoStore, locationController, cloud, darkMode, incomingNfc,
+                    onSpeakHiveNumber = ::speakHiveNumber
+                ) { value ->
                     darkMode = value
                     prefs.edit { putBoolean("dark_mode", value) }
                 }
@@ -201,6 +209,47 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+
+    override fun onInit(status: Int) {
+        if (status != TextToSpeech.SUCCESS) {
+            speechReady = false
+            pendingSpeech = null
+            return
+        }
+        val engine = speechEngine ?: return
+        val languageStatus = engine.setLanguage(Locale.getDefault())
+        speechReady = languageStatus != TextToSpeech.LANG_MISSING_DATA &&
+            languageStatus != TextToSpeech.LANG_NOT_SUPPORTED
+        if (!speechReady) {
+            pendingSpeech = null
+            return
+        }
+        pendingSpeech?.let { phrase ->
+            pendingSpeech = null
+            speakText(phrase)
+        }
+    }
+
+    internal fun speakHiveNumber(number: String) {
+        val hiveNumber = number.trim()
+        if (hiveNumber.isBlank()) return
+        speakText("Hive $hiveNumber")
+    }
+
+    private fun speakText(phrase: String) {
+        if (!speechReady) {
+            // Hold the newest announcement if NFC is scanned before TTS finishes
+            // initializing. This is particularly important for cold-start NFC taps.
+            pendingSpeech = phrase
+            return
+        }
+        speechEngine?.speak(
+            phrase,
+            TextToSpeech.QUEUE_FLUSH,
+            null,
+            "beekeep-hive-${System.currentTimeMillis()}"
+        )
+    }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
@@ -230,6 +279,10 @@ class MainActivity : ComponentActivity() {
     override fun onDestroy() {
         nfc.pause(this)
         if (::cloudGateway.isInitialized) cloudGateway.stopRealtime()
+        speechEngine?.stop()
+        speechEngine?.shutdown()
+        speechEngine = null
+        speechReady = false
         super.onDestroy()
     }
 }
@@ -256,6 +309,7 @@ fun BeeKeepApp(
     cloud: SupabaseGateway,
     darkMode: Boolean,
     incomingNfc: NfcResult.Read?,
+    onSpeakHiveNumber: (String) -> Unit,
     onDarkModeChange: (Boolean) -> Unit
 ) {
     var screen by rememberSaveable { mutableStateOf(Screen.HOME) }
@@ -295,17 +349,20 @@ fun BeeKeepApp(
         }
 
         val payloadHiveId = BeeKeepNfcPayload.hiveId(result.text)
-        val resolvedId = vm.findHiveByTag(result.uid)?.id
-            ?: payloadHiveId?.takeIf { id -> hives.any { it.id == id } }
-        if (resolvedId != null) {
+        val assignedHive = vm.findHiveByTag(result.uid)
+        val payloadHive = payloadHiveId?.let { id -> hives.firstOrNull { it.id == id } }
+        val resolvedHive = assignedHive ?: payloadHive
+        if (resolvedHive != null) {
+            // Announce every accepted tag read, even when this hive is already open.
+            onSpeakHiveNumber(resolvedHive.number)
             // A tag may be seen repeatedly while held near the phone. Do not
             // reload the same hive detail screen if it is already open.
-            val alreadyOpen = selectedHiveOpen && selected?.id == resolvedId
+            val alreadyOpen = selectedHiveOpen && selected?.id == resolvedHive.id
             if (!alreadyOpen) {
-                vm.openHive(resolvedId)
+                vm.openHive(resolvedHive.id)
                 selectedHiveOpen = true
                 screen = Screen.HOME
-                scope.launch { snackbarHostState.showSnackbar("Hive tag ${result.uid} recognized") }
+                scope.launch { snackbarHostState.showSnackbar("Hive ${resolvedHive.number} recognized") }
             }
         } else {
             screen = Screen.SCAN
@@ -491,13 +548,15 @@ fun BeeKeepApp(
                         is NfcResult.Read -> {
                             scope.launch {
                                 val payloadId = BeeKeepNfcPayload.hiveId(result.text)
-                                val resolvedId = vm.findHiveByTag(result.uid)?.id
-                                    ?: payloadId?.takeIf { id -> hives.any { it.id == id } }
-                                if (resolvedId != null) {
-                                    vm.openHive(resolvedId)
+                                val assignedHive = vm.findHiveByTag(result.uid)
+                                val payloadHive = payloadId?.let { id -> hives.firstOrNull { it.id == id } }
+                                val resolvedHive = assignedHive ?: payloadHive
+                                if (resolvedHive != null) {
+                                    onSpeakHiveNumber(resolvedHive.number)
+                                    vm.openHive(resolvedHive.id)
                                     selectedHiveOpen = true
                                     screen = Screen.HOME
-                                    snackbarHostState.showSnackbar("Hive tag recognized")
+                                    snackbarHostState.showSnackbar("Hive ${resolvedHive.number} recognized")
                                 } else {
                                     unassignedTagUid = result.uid
                                 }
