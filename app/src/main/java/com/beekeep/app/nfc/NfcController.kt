@@ -212,9 +212,9 @@ class NfcController {
     }
 
     /**
-     * Keep NDEF discovery enabled. This controller reads and writes NDEF records;
-     * FLAG_READER_SKIP_NDEF_CHECK prevents Android from enumerating the Ndef
-     * technology and disables NDEF-based app dispatch for the discovered tag.
+     * Foreground reader mode lets BeeKeep handle the tag while this activity is
+     * visible. Outside the foreground, Android uses the stored NDEF payload/AAR
+     * to route future taps back to BeeKeep.
      */
     private fun readerFlags(): Int =
         NfcAdapter.FLAG_READER_NFC_A or
@@ -395,12 +395,14 @@ class NfcController {
                         return NfcResult.Error("This tag is already assigned to another hive. Choose REPLACE to overwrite it.")
                     }
                     ndef.writeNdefMessage(message)
-                    val confirmed = ndef.ndefMessage?.records
+                    val verifiedMessage = ndef.ndefMessage
+                    val confirmed = verifiedMessage?.records
                         ?.asSequence()
                         ?.mapNotNull(::parseRecord)
                         ?.firstOrNull()
-                    if (confirmed != text) {
-                        return NfcResult.Error("The tag reported a write, but BeeKeep could not verify the data. Try again.")
+                    val hasLaunchRecord = verifiedMessage?.records?.any(::isBeeKeepAppRecord) == true
+                    if (confirmed != text || !hasLaunchRecord) {
+                        return NfcResult.Error("The tag reported a write, but BeeKeep could not verify both its payload and app-launch record. Try again.")
                     }
                     return NfcResult.Written(tagInfoAfterWrite(tag, id, text, ndef))
                 } finally {
@@ -427,10 +429,12 @@ class NfcController {
                 val verify = Ndef.get(tag)?.let { verification ->
                     runCatching {
                         verification.connect()
-                        verification.ndefMessage?.records?.asSequence()?.mapNotNull(::parseRecord)?.firstOrNull() == text
+                        val verifiedMessage = verification.ndefMessage
+                        val confirmedPayload = verifiedMessage?.records?.asSequence()?.mapNotNull(::parseRecord)?.firstOrNull()
+                        confirmedPayload == text && verifiedMessage.records.any(::isBeeKeepAppRecord)
                     }.getOrDefault(false).also { runCatching { verification.close() } }
                 } ?: false
-                if (!verify) return NfcResult.Error("The tag was formatted, but BeeKeep could not verify the payload. Try again.")
+                if (!verify) return NfcResult.Error("The tag was formatted, but BeeKeep could not verify both its payload and app-launch record. Try again.")
                 return NfcResult.Written(info)
             } finally {
                 runCatching { formattable.close() }
