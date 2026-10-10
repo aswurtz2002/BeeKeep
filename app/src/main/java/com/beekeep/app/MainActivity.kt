@@ -1781,7 +1781,10 @@ private fun InspectionScreen(
     }
 
     androidx.compose.runtime.LaunchedEffect(hive.id) {
-        // On entry, request permission once and immediately begin hands-free notes.
+        // NFC entry announces the hive number with text-to-speech. Let that finish
+        // before opening the microphone so the announcement is not dictated into notes.
+        delay(1_800L)
+        if (voiceListeningRequested) return@LaunchedEffect
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
             voiceStatus = "Starting hands-free dictation…"
             voiceListeningRequested = true
