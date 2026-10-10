@@ -66,6 +66,7 @@ import androidx.compose.material.icons.rounded.GpsFixed
 import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.Home
 import androidx.compose.material.icons.rounded.LocationOn
+import androidx.compose.material.icons.rounded.MyLocation
 import androidx.compose.material.icons.rounded.Map
 import androidx.compose.material.icons.rounded.Mic
 import androidx.compose.material.icons.rounded.Nfc
@@ -879,6 +880,7 @@ fun BeeKeepApp(
                 apiaries = apiaries,
                 padding = padding,
                 initialFocusApiaryId = mapFocusApiaryId,
+                locationController = locationController,
                 onBack = { screen = mapOrigin; mapFocusApiaryId = null }
             )
             Screen.MORE -> MoreScreen(padding, darkMode, onDarkModeChange, onTagManager = { screen = Screen.TAG_MANAGER }, onColonyHistory = { screen = Screen.COLONY_HISTORY }, deadCount = deadHives.size, activity, cloud)
@@ -1337,12 +1339,53 @@ private fun ApiaryMapScreen(
     apiaries: List<Apiary>,
     padding: PaddingValues,
     initialFocusApiaryId: Long?,
+    locationController: LocationController,
     onBack: () -> Unit
 ) {
     BackHandler { onBack() }
     var focusedApiaryId by rememberSaveable(initialFocusApiaryId) {
         mutableStateOf(initialFocusApiaryId)
     }
+    var currentLocation by remember { mutableStateOf<LocationController.Result?>(null) }
+    var locationMessage by remember { mutableStateOf<String?>(null) }
+
+    fun applyCurrentLocation(location: LocationController.Result?) {
+        if (location == null) {
+            currentLocation = null
+            locationMessage = "Couldn't get your location. Make sure Location is enabled and try again."
+        } else {
+            currentLocation = location
+            focusedApiaryId = null
+            locationMessage = null
+        }
+    }
+
+    val locationPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { result ->
+        val granted = result[Manifest.permission.ACCESS_FINE_LOCATION] == true ||
+            result[Manifest.permission.ACCESS_COARSE_LOCATION] == true
+        if (granted) {
+            locationController.current { location -> applyCurrentLocation(location) }
+        } else {
+            locationMessage = "Location permission is needed to show your current position."
+        }
+    }
+
+    fun showMyLocation() {
+        locationMessage = "Finding your location…"
+        if (locationController.hasPermission()) {
+            locationController.current { location -> applyCurrentLocation(location) }
+        } else {
+            locationPermissionLauncher.launch(
+                arrayOf(
+                    Manifest.permission.ACCESS_FINE_LOCATION,
+                    Manifest.permission.ACCESS_COARSE_LOCATION
+                )
+            )
+        }
+    }
+
     val locatedApiaries = apiaries.filter { it.latitude != null && it.longitude != null }
     val focusedId = focusedApiaryId?.takeIf { id -> locatedApiaries.any { it.id == id } }
 
@@ -1357,6 +1400,7 @@ private fun ApiaryMapScreen(
         ApiarySatelliteMap(
             apiaries = locatedApiaries,
             focusedApiaryId = focusedId,
+            currentLocation = currentLocation,
             modifier = Modifier
                 .fillMaxSize()
                 .padding(4.dp)
@@ -1395,9 +1439,54 @@ private fun ApiaryMapScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
-                IconButton(onClick = { focusedApiaryId = null }) {
+                IconButton(onClick = {
+                    focusedApiaryId = null
+                    currentLocation = null
+                    locationMessage = null
+                }) {
                     Icon(Icons.Rounded.GpsFixed, "Show all saved apiary locations")
                 }
+            }
+        }
+
+        Surface(
+            modifier = Modifier
+                .align(Alignment.CenterEnd)
+                .padding(end = 14.dp),
+            shape = CircleShape,
+            color = MaterialTheme.colorScheme.surface.copy(alpha = 0.97f),
+            tonalElevation = 5.dp,
+            shadowElevation = 4.dp,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+        ) {
+            IconButton(
+                onClick = { showMyLocation() },
+                modifier = Modifier.size(52.dp)
+            ) {
+                Icon(
+                    Icons.Rounded.MyLocation,
+                    contentDescription = "My location",
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(25.dp)
+                )
+            }
+        }
+
+        if (locationMessage != null) {
+            Surface(
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .padding(top = 150.dp, start = 16.dp, end = 16.dp),
+                shape = RoundedCornerShape(12.dp),
+                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.97f),
+                tonalElevation = 4.dp
+            ) {
+                Text(
+                    locationMessage.orEmpty(),
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
             }
         }
 
@@ -1441,7 +1530,11 @@ private fun ApiaryMapScreen(
                     Surface(
                         modifier = Modifier
                             .width(174.dp)
-                            .clickable { focusedApiaryId = apiary.id },
+                            .clickable {
+                                currentLocation = null
+                                locationMessage = null
+                                focusedApiaryId = apiary.id
+                            },
                         shape = RoundedCornerShape(14.dp),
                         color = if (isFocused) {
                             MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.97f)
@@ -1480,10 +1573,11 @@ private fun ApiaryMapScreen(
 private fun ApiarySatelliteMap(
     apiaries: List<Apiary>,
     focusedApiaryId: Long?,
+    currentLocation: LocationController.Result?,
     modifier: Modifier = Modifier
 ) {
-    val html = remember(apiaries, focusedApiaryId) {
-        createApiaryMapHtml(apiaries, focusedApiaryId)
+    val html = remember(apiaries, focusedApiaryId, currentLocation) {
+        createApiaryMapHtml(apiaries, focusedApiaryId, currentLocation)
     }
     AndroidView(
         modifier = modifier,
@@ -1525,7 +1619,11 @@ private fun ApiarySatelliteMap(
     )
 }
 
-private fun createApiaryMapHtml(apiaries: List<Apiary>, focusedApiaryId: Long?): String {
+private fun createApiaryMapHtml(
+    apiaries: List<Apiary>,
+    focusedApiaryId: Long?,
+    currentLocation: LocationController.Result?
+): String {
     val located = apiaries.filter { it.latitude != null && it.longitude != null }
     val markers = JSONArray()
     located.forEach { apiary ->
@@ -1538,14 +1636,25 @@ private fun createApiaryMapHtml(apiaries: List<Apiary>, focusedApiaryId: Long?):
         )
     }
     val focus = located.firstOrNull { it.id == focusedApiaryId }
-    val centerLat = focus?.latitude ?: if (located.isNotEmpty()) located.mapNotNull { it.latitude }.average() else 20.0
-    val centerLon = focus?.longitude ?: if (located.isNotEmpty()) located.mapNotNull { it.longitude }.average() else 0.0
+    val centerLat = currentLocation?.latitude
+        ?: focus?.latitude
+        ?: if (located.isNotEmpty()) located.mapNotNull { it.latitude }.average() else 20.0
+    val centerLon = currentLocation?.longitude
+        ?: focus?.longitude
+        ?: if (located.isNotEmpty()) located.mapNotNull { it.longitude }.average() else 0.0
     val initialZoom = when {
+        currentLocation != null -> 15
         focus != null -> 17
         located.size == 1 -> 16
         located.size > 1 -> 5
         else -> 2
     }
+    val currentLocationJson = currentLocation?.let { location ->
+        JSONObject()
+            .put("lat", location.latitude)
+            .put("lon", location.longitude)
+            .toString()
+    } ?: "null"
     val focusIdJson = focusedApiaryId?.takeIf { id -> located.any { it.id == id } }
         ?.let { JSONObject.quote(it.toString()) } ?: "null"
 
@@ -1624,6 +1733,7 @@ private fun createApiaryMapHtml(apiaries: List<Apiary>, focusedApiaryId: Long?):
                 (function () {
                     const apiaries = $markers;
                     const focusedId = $focusIdJson;
+                    const currentLocation = $currentLocationJson;
                     const errorPanel = document.getElementById('map-error');
                     let mapReady = false;
                     let tileErrors = 0;
@@ -1792,6 +1902,46 @@ private fun createApiaryMapHtml(apiaries: List<Apiary>, focusedApiaryId: Long?):
                                     }
                                 });
 
+                                // Show the device's current position as a blue dot, separate
+                                // from saved apiary pins.
+                                if (currentLocation &&
+                                    Number.isFinite(Number(currentLocation.lon)) &&
+                                    Number.isFinite(Number(currentLocation.lat))) {
+                                    const userPoint = [
+                                        Number(currentLocation.lon),
+                                        Number(currentLocation.lat)
+                                    ];
+                                    map.addSource('beekeep-current-location', {
+                                        type: 'geojson',
+                                        data: {
+                                            type: 'Feature',
+                                            properties: {},
+                                            geometry: { type: 'Point', coordinates: userPoint }
+                                        }
+                                    });
+                                    map.addLayer({
+                                        id: 'beekeep-current-location-halo',
+                                        type: 'circle',
+                                        source: 'beekeep-current-location',
+                                        paint: {
+                                            'circle-radius': 15,
+                                            'circle-color': '#2563EB',
+                                            'circle-opacity': 0.20
+                                        }
+                                    });
+                                    map.addLayer({
+                                        id: 'beekeep-current-location-dot',
+                                        type: 'circle',
+                                        source: 'beekeep-current-location',
+                                        paint: {
+                                            'circle-radius': 7,
+                                            'circle-color': '#2563EB',
+                                            'circle-stroke-color': '#FFFFFF',
+                                            'circle-stroke-width': 2.5
+                                        }
+                                    });
+                                }
+
                                 map.on('click', 'beekeep-apiary-pins', function (event) {
                                     const feature = event.features && event.features[0];
                                     if (!feature || !feature.geometry || feature.geometry.type !== 'Point') return;
@@ -1818,7 +1968,14 @@ private fun createApiaryMapHtml(apiaries: List<Apiary>, focusedApiaryId: Long?):
                                 const focused = focusedId === null ? null : apiaries.find(function (a) {
                                     return String(a.id) === String(focusedId);
                                 });
-                                if (focused && Number.isFinite(Number(focused.lon)) && Number.isFinite(Number(focused.lat))) {
+                                if (currentLocation &&
+                                    Number.isFinite(Number(currentLocation.lon)) &&
+                                    Number.isFinite(Number(currentLocation.lat))) {
+                                    map.jumpTo({
+                                        center: [Number(currentLocation.lon), Number(currentLocation.lat)],
+                                        zoom: 15
+                                    });
+                                } else if (focused && Number.isFinite(Number(focused.lon)) && Number.isFinite(Number(focused.lat))) {
                                     const focusedCoordinates = [Number(focused.lon), Number(focused.lat)];
                                     map.flyTo({
                                         center: focusedCoordinates,
