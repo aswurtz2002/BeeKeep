@@ -1818,7 +1818,7 @@ private fun InspectionScreen(
     val voiceLifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(voiceLifecycleOwner, speechRecognizer) {
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_PAUSE && voiceListeningRequested) {
+            if (event == Lifecycle.Event.ON_PAUSE && keepVoiceListening) {
                 voiceListeningRequested = false
                 voicePartialText = ""
                 voiceHandler.removeCallbacksAndMessages(null)
