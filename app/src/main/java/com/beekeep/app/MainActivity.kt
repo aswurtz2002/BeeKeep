@@ -410,6 +410,7 @@ fun BeeKeepApp(
     var unassignedTagUid by rememberSaveable { mutableStateOf<String?>(null) }
     var pendingTagUid by rememberSaveable { mutableStateOf<String?>(null) }
     var pendingInspectionHiveId by rememberSaveable { mutableStateOf<Long?>(null) }
+    var pendingAutoStartVoiceHiveId by rememberSaveable { mutableStateOf<Long?>(null) }
     var scanning by remember { mutableStateOf(false) }
     var pendingLocationHive by remember { mutableStateOf<Hive?>(null) }
     var pendingApiaryMove by remember { mutableStateOf<Pair<Hive, Apiary>?>(null) }
@@ -533,6 +534,8 @@ fun BeeKeepApp(
             onSpeakHiveNumber(resolvedHive.number)
             // Field NFC scans go directly to Inspect so the beekeeper can keep gloves on.
             val alreadyOpen = selectedHiveOpen && selected?.id == resolvedHive.id
+            val alreadyInspectingThisHive = inspecting && selected?.id == resolvedHive.id
+            if (!alreadyInspectingThisHive) pendingAutoStartVoiceHiveId = resolvedHive.id
             if (!alreadyOpen) {
                 vm.openHive(resolvedHive.id)
                 selectedHiveOpen = true
@@ -645,13 +648,18 @@ fun BeeKeepApp(
         InspectionScreen(
             activity, photoStore, locationController, hiveForInspection,
             priorInspections = inspections,
-            onBack = { inspecting = false },
+            autoStartVoice = pendingAutoStartVoiceHiveId == hiveForInspection.id,
+            onVoiceAutoStartConsumed = {
+                if (pendingAutoStartVoiceHiveId == hiveForInspection.id) pendingAutoStartVoiceHiveId = null
+            },
+            onBack = { pendingAutoStartVoiceHiveId = null; inspecting = false },
             onSave = { inspection ->
                 val saved = vm.saveInspection(inspection)
                 if (saved) {
                     // Keep the full note log (including an intentional empty value) available for the next Inspect session.
                     activity.getSharedPreferences(INSPECTION_NOTE_DRAFTS, android.content.Context.MODE_PRIVATE)
                         .edit { putString("hive_${inspection.hiveId}", inspection.notes) }
+                    pendingAutoStartVoiceHiveId = null
                     inspecting = false
                     scope.launch { snackbarHostState.showSnackbar("Inspection saved") }
                 } else {
@@ -710,7 +718,7 @@ fun BeeKeepApp(
             nfc = nfc,
             activity = activity,
             onBack = { selectedHiveOpen = false; vm.clearHive() },
-            onInspect = { inspecting = true },
+            onInspect = { pendingAutoStartVoiceHiveId = null; inspecting = true },
             onFeed = { logType = HiveLogType.FEED },
             onTreat = { logType = HiveLogType.TREAT },
             onHarvest = { logType = HiveLogType.HARVEST },
@@ -779,6 +787,7 @@ fun BeeKeepApp(
                                     vm.openHive(resolvedHive.id)
                                     selectedHiveOpen = true
                                     screen = Screen.HOME
+                                    pendingAutoStartVoiceHiveId = resolvedHive.id
                                     pendingInspectionHiveId = resolvedHive.id
                                     snackbarHostState.showSnackbar("Hive ${resolvedHive.number} recognized • inspection ready")
                                 } else {
@@ -835,6 +844,14 @@ fun BeeKeepApp(
                 onPendingUidConsumed = { pendingTagUid = null },
                 onBack = { screen = Screen.MORE },
                 onOpenHive = { vm.openHive(it); selectedHiveOpen = true; screen = Screen.HOME },
+                onScanOpenHive = { hiveId ->
+                    onSpeakHiveNumber(hives.firstOrNull { it.id == hiveId }?.number.orEmpty())
+                    vm.openHive(hiveId)
+                    selectedHiveOpen = true
+                    screen = Screen.HOME
+                    pendingAutoStartVoiceHiveId = hiveId
+                    pendingInspectionHiveId = hiveId
+                },
                 onAssignTag = { hiveId, uid, reassign, onResult -> vm.assignTagToHive(hiveId, uid, reassign, onResult) },
                 onClearTag = { hiveId -> vm.clearTagForHive(hiveId) },
                 onUnassignedTag = { uid -> unassignedTagUid = uid }
@@ -1528,6 +1545,8 @@ private fun InspectionScreen(
     locationController: LocationController,
     hive: Hive,
     priorInspections: List<Inspection>,
+    autoStartVoice: Boolean,
+    onVoiceAutoStartConsumed: () -> Unit,
     onBack: () -> Unit,
     onSave: suspend (Inspection) -> Unit
 ) {
@@ -1768,6 +1787,10 @@ private fun InspectionScreen(
     }
 
     androidx.compose.runtime.LaunchedEffect(hive.id) {
+        // Manual Inspect opens with the microphone off. Auto-start is reserved for
+        // an explicit scan-to-open request and is consumed once for this hive.
+        if (!autoStartVoice) return@LaunchedEffect
+        onVoiceAutoStartConsumed()
         // NFC entry announces the hive number with text-to-speech. Let that finish
         // before opening the microphone so the announcement is not dictated into notes.
         delay(1_800L)
@@ -2372,6 +2395,7 @@ private fun TagManagementScreen(
     onPendingUidConsumed: () -> Unit,
     onBack: () -> Unit,
     onOpenHive: (Long) -> Unit,
+    onScanOpenHive: (Long) -> Unit,
     onAssignTag: (Long, String, Boolean, (Boolean, String?) -> Unit) -> Unit,
     onClearTag: (Long) -> Unit,
     onUnassignedTag: (String) -> Unit
@@ -2567,8 +2591,8 @@ private fun TagManagementScreen(
                                 hiveByPayload != null -> "Hive ${hiveByPayload.number} • tag payload recognized"
                                 else -> "Unassigned tag • ${result.uid}"
                             }
-                            if (hiveByUid != null) onOpenHive(hiveByUid.id)
-                            else if (hiveByPayload != null) onOpenHive(hiveByPayload.id)
+                            if (hiveByUid != null) onScanOpenHive(hiveByUid.id)
+                            else if (hiveByPayload != null) onScanOpenHive(hiveByPayload.id)
                             else onUnassignedTag(result.uid)
                         }
                         is NfcResult.Error -> status = result.message
