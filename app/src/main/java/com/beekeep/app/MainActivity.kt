@@ -1103,8 +1103,9 @@ private fun HomeScreen(
             .background(MaterialTheme.colorScheme.background)
             .padding(padding),
         contentPadding = androidx.compose.foundation.layout.PaddingValues(
-            horizontal = 16.dp,
+            start = 16.dp,
             top = 16.dp,
+            end = 16.dp,
             bottom = 28.dp
         ),
         verticalArrangement = Arrangement.spacedBy(14.dp)
