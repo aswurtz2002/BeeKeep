@@ -44,8 +44,9 @@ class BeeKeepViewModel(
     init {
         viewModelScope.launch {
             repo.initialize()
-            // Hydrate saved UID assignments before NFC auto-write is permitted.
+            // Hydrate active and inactive UID assignments before NFC auto-write is permitted.
             _hives.value = repo.observeHives().first()
+            _deadHives.value = repo.observeDeadHives().first()
             _ready.value = true
             launch { repo.observeHives().collect { _hives.value = it } }
             launch { repo.observeDeadHives().collect { _deadHives.value = it } }
