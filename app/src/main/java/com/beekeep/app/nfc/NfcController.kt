@@ -159,12 +159,16 @@ class NfcController {
         enablePassiveIfNeeded(activity)
     }
 
+    /**
+     * Keep NDEF discovery enabled. This controller reads and writes NDEF records;
+     * FLAG_READER_SKIP_NDEF_CHECK prevents Android from enumerating the Ndef
+     * technology and disables NDEF-based app dispatch for the discovered tag.
+     */
     private fun readerFlags(): Int =
         NfcAdapter.FLAG_READER_NFC_A or
             NfcAdapter.FLAG_READER_NFC_B or
             NfcAdapter.FLAG_READER_NFC_F or
             NfcAdapter.FLAG_READER_NFC_V or
-            NfcAdapter.FLAG_READER_SKIP_NDEF_CHECK or
             NfcAdapter.FLAG_READER_NO_PLATFORM_SOUNDS
 
     private fun enablePassiveIfNeeded(activity: Activity) {
