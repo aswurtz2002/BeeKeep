@@ -1824,14 +1824,15 @@ private fun TagManagementScreen(
                             activity = activity,
                             text = BeeKeepNfcPayload.forHive(hiveId),
                             allowOverwriteOtherHive = allowOverwrite,
-                            expectedUid = uid
-                        ) { result ->
-                            when (result) {
-                                is NfcResult.Written -> updateStatus?.invoke("Tag assigned and written. Tapping it with BeeKeep closed can now open Hive $targetNumber.")
-                                is NfcResult.Error -> updateStatus?.invoke("Tag $uid is assigned, but launch data was not written: ${result.message} Open this hive and use WRITE TAG to retry.")
-                                is NfcResult.Read -> Unit
+                            expectedUid = uid,
+                            onResult = { result ->
+                                when (result) {
+                                    is NfcResult.Written -> updateStatus?.invoke("Tag assigned and written. Tapping it with BeeKeep closed can now open Hive $targetNumber.")
+                                    is NfcResult.Error -> updateStatus?.invoke("Tag $uid is assigned, but launch data was not written: ${result.message} Open this hive and use WRITE TAG to retry.")
+                                    is NfcResult.Read -> Unit
+                                }
                             }
-                        }
+                        )
                     }
                 }) { Text("CONTINUE TO TAG WRITE") }
             },
