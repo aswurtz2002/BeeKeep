@@ -1499,91 +1499,204 @@ private fun createApiaryMapHtml(apiaries: List<Apiary>, focusedApiaryId: Long?):
 
     return """
         <!doctype html>
-        <html>
+        <html lang="en">
         <head>
             <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
             <meta charset="utf-8">
-            <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+            <link rel="stylesheet"
+                  href="https://unpkg.com/maplibre-gl@5.12.0/dist/maplibre-gl.css"
+                  onerror="this.onerror=null;this.href='https://cdn.jsdelivr.net/npm/maplibre-gl@5.12.0/dist/maplibre-gl.css';">
             <style>
-                html, body, #map { width: 100%; height: 100%; padding: 0; margin: 0; background: #232623; }
+                html, body, #map {
+                    width: 100%; height: 100%; min-height: 220px;
+                    padding: 0; margin: 0; background: #e7e8e4;
+                    overflow: hidden;
+                }
                 body { font-family: Arial, sans-serif; }
-                .leaflet-container { background: #232623; }
-                .leaflet-control-attribution { font-size: 9px !important; }
-                .bee-marker { background: transparent; border: 0; }
-                .marker-wrap { position: relative; width: 36px; height: 42px; }
-                .ping-ring { position: absolute; left: 5px; top: 2px; width: 26px; height: 26px; border: 2px solid #F59E0B; border-radius: 50%; box-sizing: border-box; animation: mapPing 1.8s ease-out infinite; }
-                .pin { position: absolute; left: 7px; top: 4px; width: 22px; height: 22px; border-radius: 50% 50% 50% 0; transform: rotate(-45deg); background: #F59E0B; border: 3px solid #fff; box-shadow: 0 2px 7px rgba(0,0,0,.65); box-sizing: border-box; }
-                .pin:after { content: ''; position: absolute; width: 7px; height: 7px; top: 4px; left: 4px; background: #fff; border-radius: 50%; }
-                @keyframes mapPing { 0% { transform: scale(.65); opacity: .95; } 100% { transform: scale(1.9); opacity: 0; } }
-                .map-error { display: flex; height: 100%; padding: 24px; box-sizing: border-box; align-items: center; justify-content: center; color: #fff; text-align: center; }
+                #map { position: relative; }
+                .map-error {
+                    position: absolute; inset: 0; z-index: 20;
+                    display: none; padding: 24px; box-sizing: border-box;
+                    align-items: center; justify-content: center;
+                    text-align: center; color: #2d332d; background: #f2f1eb;
+                    font-size: 14px; line-height: 1.5;
+                }
+                .apiary-marker { position: relative; width: 36px; height: 42px; cursor: pointer; }
+                .apiary-ping {
+                    position: absolute; left: 5px; top: 2px; width: 26px; height: 26px;
+                    border: 2px solid #d97706; border-radius: 50%; box-sizing: border-box;
+                    animation: apiaryPing 1.8s ease-out infinite; pointer-events: none;
+                }
+                .apiary-pin {
+                    position: absolute; left: 7px; top: 4px; width: 22px; height: 22px;
+                    border-radius: 50% 50% 50% 0; transform: rotate(-45deg);
+                    background: #f59e0b; border: 3px solid #fff;
+                    box-shadow: 0 2px 7px rgba(0,0,0,.55); box-sizing: border-box;
+                }
+                .apiary-pin:after {
+                    content: ''; position: absolute; width: 7px; height: 7px;
+                    top: 4px; left: 4px; background: #fff; border-radius: 50%;
+                }
+                @keyframes apiaryPing {
+                    0% { transform: scale(.65); opacity: .95; }
+                    100% { transform: scale(1.9); opacity: 0; }
+                }
+                .apiary-popup-title { font-weight: 700; margin-bottom: 4px; }
+                .apiary-popup-coords { color: #60645e; font-size: 12px; }
+                .maplibregl-ctrl-attrib { font-size: 10px !important; }
             </style>
         </head>
         <body>
-            <div id="map"></div>
-            <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+            <div id="map">
+                <div id="map-error" class="map-error" role="status">
+                    Loading OpenFreeMap…
+                </div>
+            </div>
             <script>
                 (function () {
                     const apiaries = $markers;
                     const focusedId = $focusIdJson;
-                    if (!window.L) {
-                        document.getElementById('map').innerHTML = '<div class="map-error">Satellite map could not load. Check your internet connection and try again.</div>';
-                        return;
-                    }
-                    const map = L.map('map', { zoomControl: true, attributionControl: true, preferCanvas: true })
-                        .setView([$centerLat, $centerLon], $initialZoom);
-                    L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
-                        maxZoom: 19,
-                        attribution: 'Imagery © Esri, Maxar, Earthstar Geographics, USDA FSA, USGS, AEX, Getmapping, Aerogrid, IGN, IGP, swisstopo, and the GIS User Community'
-                    }).addTo(map);
-                    L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}', {
-                        maxZoom: 19,
-                        opacity: 0.9,
-                        attribution: 'Labels © Esri'
-                    }).addTo(map);
+                    const errorPanel = document.getElementById('map-error');
+                    let mapReady = false;
+                    let tileErrors = 0;
 
-                    const markerIcon = L.divIcon({
-                        className: 'bee-marker',
-                        html: '<div class="marker-wrap"><div class="ping-ring"></div><div class="pin"></div></div>',
-                        iconSize: [36, 42],
-                        iconAnchor: [18, 38],
-                        popupAnchor: [0, -34]
-                    });
-                    const bounds = [];
-                    const markersById = {};
-                    apiaries.forEach(function (apiary) {
-                        const point = [Number(apiary.lat), Number(apiary.lon)];
-                        const marker = L.marker(point, { icon: markerIcon, title: apiary.name, alt: apiary.name }).addTo(map);
-                        const popup = document.createElement('div');
-                        const title = document.createElement('strong');
-                        title.textContent = apiary.name;
-                        popup.appendChild(title);
-                        const coordinates = document.createElement('div');
-                        coordinates.textContent = Number(apiary.lat).toFixed(5) + ', ' + Number(apiary.lon).toFixed(5);
-                        popup.appendChild(coordinates);
-                        marker.bindPopup(popup);
-                        markersById[String(apiary.id)] = marker;
-                        bounds.push(point);
-                    });
-
-                    const focused = focusedId === null ? null : apiaries.find(function (a) { return String(a.id) === String(focusedId); });
-                    if (focused) {
-                        map.setView([Number(focused.lat), Number(focused.lon)], 17);
-                        if (markersById[String(focused.id)]) markersById[String(focused.id)].openPopup();
-                    } else if (bounds.length === 1) {
-                        map.setView(bounds[0], 16);
-                    } else if (bounds.length > 1) {
-                        map.fitBounds(bounds, { padding: [34, 34], maxZoom: 15 });
+                    function showMapError(message) {
+                        errorPanel.textContent = message;
+                        errorPanel.style.display = 'flex';
                     }
 
-                    window.addEventListener('resize', function () { setTimeout(function () { map.invalidateSize(); }, 150); });
-                    setTimeout(function () { map.invalidateSize(); }, 200);
+                    function initializeMap() {
+                        if (!window.maplibregl) {
+                            showMapError('The map controls could not be loaded. Check your internet connection and reopen this map.');
+                            return;
+                        }
+                        if (!window.maplibregl.supported()) {
+                            showMapError('This device does not support the graphics features needed for the map. Please update Android System WebView and try again.');
+                            return;
+                        }
+
+                        try {
+                            const map = new maplibregl.Map({
+                                container: 'map',
+                                style: 'https://tiles.openfreemap.org/styles/liberty',
+                                center: [$centerLon, $centerLat],
+                                zoom: $initialZoom,
+                                attributionControl: true,
+                                fadeDuration: 0
+                            });
+                            const markersById = {};
+                            const points = [];
+
+                            map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right');
+
+                            apiaries.forEach(function (apiary) {
+                                const longitude = Number(apiary.lon);
+                                const latitude = Number(apiary.lat);
+                                if (!Number.isFinite(longitude) || !Number.isFinite(latitude)) return;
+
+                                const point = [longitude, latitude];
+                                points.push(point);
+
+                                const markerElement = document.createElement('div');
+                                markerElement.className = 'apiary-marker';
+                                markerElement.setAttribute('role', 'img');
+                                markerElement.setAttribute('aria-label', apiary.name);
+                                markerElement.innerHTML = '<div class="apiary-ping"></div><div class="apiary-pin"></div>';
+
+                                const popupContent = document.createElement('div');
+                                const title = document.createElement('div');
+                                title.className = 'apiary-popup-title';
+                                title.textContent = apiary.name;
+                                const coordinates = document.createElement('div');
+                                coordinates.className = 'apiary-popup-coords';
+                                coordinates.textContent = latitude.toFixed(5) + ', ' + longitude.toFixed(5);
+                                popupContent.appendChild(title);
+                                popupContent.appendChild(coordinates);
+
+                                const marker = new maplibregl.Marker({
+                                    element: markerElement,
+                                    anchor: 'bottom'
+                                })
+                                    .setLngLat(point)
+                                    .setPopup(new maplibregl.Popup({ offset: 25 }).setDOMContent(popupContent))
+                                    .addTo(map);
+
+                                markersById[String(apiary.id)] = marker;
+                            });
+
+                            map.on('load', function () {
+                                mapReady = true;
+                                errorPanel.style.display = 'none';
+                                map.resize();
+
+                                const focused = focusedId === null ? null : apiaries.find(function (a) {
+                                    return String(a.id) === String(focusedId);
+                                });
+                                if (focused && markersById[String(focused.id)]) {
+                                    map.flyTo({
+                                        center: [Number(focused.lon), Number(focused.lat)],
+                                        zoom: 17,
+                                        duration: 450
+                                    });
+                                    markersById[String(focused.id)].togglePopup();
+                                } else if (points.length === 1) {
+                                    map.setView ? map.setView(points[0], 16) : map.jumpTo({ center: points[0], zoom: 16 });
+                                } else if (points.length > 1) {
+                                    const bounds = new maplibregl.LngLatBounds();
+                                    points.forEach(function (point) { bounds.extend(point); });
+                                    map.fitBounds(bounds, { padding: 44, maxZoom: 15, duration: 400 });
+                                }
+                            });
+
+                            map.on('error', function (event) {
+                                console.warn('BeeKeep OpenFreeMap error', event && event.error ? event.error : event);
+                                if (event && (event.sourceId || event.tile)) {
+                                    tileErrors += 1;
+                                    if (tileErrors >= 12) {
+                                        showMapError('OpenFreeMap tiles are not responding. Check your internet connection and reopen the map.');
+                                    }
+                                }
+                            });
+
+                            window.setTimeout(function () {
+                                if (!mapReady) {
+                                    showMapError('OpenFreeMap is taking too long to load. Check your internet connection and try again.');
+                                }
+                            }, 15000);
+                            window.addEventListener('resize', function () { map.resize(); });
+                            window.setTimeout(function () { map.resize(); }, 250);
+                        } catch (error) {
+                            console.error('BeeKeep could not initialize the map', error);
+                            showMapError('The map could not be started on this device. Update Android System WebView and try again.');
+                        }
+                    }
+
+                    function loadMapLibrary(index) {
+                        const sources = [
+                            'https://unpkg.com/maplibre-gl@5.12.0/dist/maplibre-gl.js',
+                            'https://cdn.jsdelivr.net/npm/maplibre-gl@5.12.0/dist/maplibre-gl.js'
+                        ];
+                        if (index >= sources.length) {
+                            showMapError('The map library could not be downloaded. Check your internet connection and reopen this map.');
+                            return;
+                        }
+                        const script = document.createElement('script');
+                        script.src = sources[index];
+                        script.onload = function () {
+                            if (window.maplibregl) initializeMap();
+                            else loadMapLibrary(index + 1);
+                        };
+                        script.onerror = function () { loadMapLibrary(index + 1); };
+                        document.head.appendChild(script);
+                    }
+
+                    loadMapLibrary(0);
                 })();
             </script>
         </body>
         </html>
     """.trimIndent()
 }
-
 @Composable
 private fun ApiaryHivesScreen(
     apiaryName: String,
