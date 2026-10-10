@@ -92,6 +92,32 @@ class NfcController {
         start(activity, { tag -> read(tag) }, onResult)
     }
 
+    /**
+     * Assign a hive and write its launch payload during the same NFC discovery.
+     * This removes the old read-then-reprompt-then-write workflow for a new assignment.
+     * The caller provides a UID conflict check so an existing tag is never overwritten
+     * just because it has a blank or invalid payload.
+     */
+    fun startAssignAndWrite(
+        activity: Activity,
+        text: String,
+        expectedUid: String? = null,
+        isAssignedElsewhere: (String) -> Boolean,
+        onResult: (NfcResult) -> Unit
+    ) {
+        start(activity, { tag ->
+            val scannedUid = uid(tag)
+            when {
+                expectedUid != null && !scannedUid.equals(expectedUid, ignoreCase = true) ->
+                    NfcResult.Error("This is tag $scannedUid, not the selected tag $expectedUid. No data was written.")
+                isAssignedElsewhere(scannedUid) ->
+                    // Return a read result so the UI can ask the user to confirm reassignment first.
+                    read(tag)
+                else -> write(tag, text, allowOverwriteOtherHive = false)
+            }
+        }, onResult)
+    }
+
     fun startWrite(
         activity: Activity,
         text: String,
@@ -317,7 +343,9 @@ class NfcController {
         if (text.isBlank()) return NfcResult.Error("There is no hive payload to write.")
         val payload = text.trim().toByteArray(StandardCharsets.UTF_8)
         val mimeRecord = NdefRecord.createMime(BeeKeepNfcPayload.MIME_TYPE, payload)
-        val message = NdefMessage(arrayOf(mimeRecord))
+        // The Android Application Record asks Android to launch BeeKeep for this tag.
+        val appRecord = NdefRecord.createApplicationRecord("com.beekeep.app")
+        val message = NdefMessage(arrayOf(mimeRecord, appRecord))
 
         try {
             val ndef = Ndef.get(tag)
