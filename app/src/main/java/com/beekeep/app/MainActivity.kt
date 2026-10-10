@@ -1346,50 +1346,75 @@ private fun ApiaryMapScreen(
     val locatedApiaries = apiaries.filter { it.latitude != null && it.longitude != null }
     val focusedId = focusedApiaryId?.takeIf { id -> locatedApiaries.any { it.id == id } }
 
-    Column(
-        Modifier.fillMaxSize().padding(padding).background(MaterialTheme.colorScheme.background)
+    // The map is the full screen content layer. Controls are overlays, not rows
+    // that take height away from the actual AndroidView/WebView canvas.
+    Box(
+        Modifier
+            .fillMaxSize()
+            .padding(padding)
+            .background(MaterialTheme.colorScheme.background)
     ) {
-        Row(
-            Modifier.fillMaxWidth().padding(start = 8.dp, end = 16.dp, top = 4.dp, bottom = 2.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            IconButton(onClick = onBack) { Icon(Icons.Rounded.ArrowBack, "Back") }
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text("Apiary Map", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.ExtraBold)
-                Text(
-                    "${locatedApiaries.size} of ${apiaries.size} apiaries have GPS pins",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-            IconButton(onClick = { focusedApiaryId = null }) {
-                Icon(Icons.Rounded.GpsFixed, "Show all saved apiary locations")
-            }
-        }
-
-        // Give the map nearly all remaining vertical space. The selector below is
-        // deliberately a short horizontal strip instead of a tall scrolling list.
         ApiarySatelliteMap(
             apiaries = locatedApiaries,
             focusedApiaryId = focusedId,
             modifier = Modifier
-                .fillMaxWidth()
-                .weight(1f)
-                .padding(horizontal = 8.dp, vertical = 4.dp)
-                // Avoid clipping the hardware-composited WebView canvas in Compose.
-                // Rounded corners are applied inside the HTML map shell instead.
+                .fillMaxSize()
+                .padding(4.dp)
                 .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(22.dp))
         )
 
+        Surface(
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .fillMaxWidth()
+                .padding(horizontal = 10.dp, vertical = 8.dp),
+            shape = RoundedCornerShape(18.dp),
+            color = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f),
+            tonalElevation = 4.dp,
+            shadowElevation = 3.dp
+        ) {
+            Row(
+                Modifier.fillMaxWidth().padding(start = 4.dp, end = 8.dp, top = 2.dp, bottom = 2.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(onClick = onBack) {
+                    Icon(Icons.Rounded.ArrowBack, "Back")
+                }
+                Column(
+                    Modifier.weight(1f).padding(vertical = 5.dp),
+                    verticalArrangement = Arrangement.spacedBy(1.dp)
+                ) {
+                    Text(
+                        "Apiary Map",
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.ExtraBold
+                    )
+                    Text(
+                        "${locatedApiaries.size} of ${apiaries.size} apiaries have GPS pins",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                IconButton(onClick = { focusedApiaryId = null }) {
+                    Icon(Icons.Rounded.GpsFixed, "Show all saved apiary locations")
+                }
+            }
+        }
+
         if (locatedApiaries.isEmpty()) {
             Surface(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 4.dp),
-                shape = RoundedCornerShape(14.dp),
-                color = MaterialTheme.colorScheme.surfaceVariant
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .padding(horizontal = 10.dp, vertical = 10.dp),
+                shape = RoundedCornerShape(16.dp),
+                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f),
+                tonalElevation = 4.dp,
+                shadowElevation = 3.dp
             ) {
                 Column(
-                    Modifier.padding(horizontal = 14.dp, vertical = 9.dp),
-                    verticalArrangement = Arrangement.spacedBy(2.dp)
+                    Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                    verticalArrangement = Arrangement.spacedBy(3.dp)
                 ) {
                     Text("No saved GPS pins yet", fontWeight = FontWeight.Bold)
                     Text(
@@ -1402,9 +1427,10 @@ private fun ApiaryMapScreen(
         } else {
             Row(
                 modifier = Modifier
+                    .align(Alignment.BottomStart)
                     .fillMaxWidth()
                     .horizontalScroll(rememberScrollState())
-                    .padding(start = 10.dp, end = 10.dp, top = 2.dp, bottom = 8.dp),
+                    .padding(start = 10.dp, end = 10.dp, top = 8.dp, bottom = 10.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -1415,8 +1441,14 @@ private fun ApiaryMapScreen(
                             .width(174.dp)
                             .clickable { focusedApiaryId = apiary.id },
                         shape = RoundedCornerShape(14.dp),
-                        color = if (isFocused) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
-                        border = if (isFocused) BorderStroke(1.dp, MaterialTheme.colorScheme.primary) else null
+                        color = if (isFocused) {
+                            MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.97f)
+                        } else {
+                            MaterialTheme.colorScheme.surface.copy(alpha = 0.96f)
+                        },
+                        border = if (isFocused) BorderStroke(1.dp, MaterialTheme.colorScheme.primary) else null,
+                        tonalElevation = 3.dp,
+                        shadowElevation = 2.dp
                     ) {
                         Column(
                             Modifier.padding(horizontal = 11.dp, vertical = 8.dp),
