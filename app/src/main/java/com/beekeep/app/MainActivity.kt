@@ -209,11 +209,11 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun handleNfcIntent(intent: Intent?) {
-        lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) {
-            nfc.readIntent(intent)?.let { result ->
-                nfc.rememberHandledUid(result.uid)
-                pendingNfcResult.value = result
-            }
+        // NFC dispatch extras are already present in the Intent; parse them immediately
+        // so the foreground reader cannot deliver the same physical tap first.
+        nfc.readIntent(intent)?.let { result ->
+            nfc.rememberHandledUid(result.uid)
+            pendingNfcResult.value = result
         }
     }
 

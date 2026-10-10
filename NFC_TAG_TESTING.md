@@ -7,7 +7,7 @@
 3. Choose an unassigned hive and tap ASSIGN, then tap the physical tag to save its UID.
 4. Use that hive's WRITE/REPLACE action and tap the same tag again. This writes BeeKeep's own `application/vnd.beekeep.hive` NDEF record, which lets Android launch BeeKeep directly when the app is not already open.
 5. Confirm the UID appears beside the hive, then tap VERIFY and confirm the tag matches.
-6. If the tag previously contained a website link, WRITE/REPLACE replaces that old NDEF content with BeeKeep's hive payload. Android can route web-link tags to a browser/link handler before its technology fallback, so a UID assignment alone does not change a tag's existing on-tag content.
+6. If the tag previously contained a website link or other recognized NDEF data, WRITE/REPLACE replaces the old on-tag payload with BeeKeep's hive record. Android can route recognized NDEF content to a matching app before its technology fallback, so a UID assignment alone does not change what is stored on the tag.
 
 ## Behaviour checks
 
