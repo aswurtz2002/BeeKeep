@@ -424,8 +424,9 @@ fun BeeKeepApp(
     val ready by vm.ready.collectAsStateWithLifecycle()
 
     // Keep the NFC writer's UID protection synchronized with the fully-loaded local hive list.
-    androidx.compose.runtime.LaunchedEffect(ready, hives) {
-        val assignments = hives.mapNotNull { hive ->
+    androidx.compose.runtime.LaunchedEffect(ready, hives, deadHives) {
+        // Include inactive colonies too; their saved NFC UIDs must never be treated as blank tags.
+        val assignments = (hives + deadHives).mapNotNull { hive ->
             hive.tagUid?.trim()?.takeIf { it.isNotBlank() }?.let { it to hive.id }
         }.toMap()
         nfc.updateKnownHiveTags(assignments, ready)
