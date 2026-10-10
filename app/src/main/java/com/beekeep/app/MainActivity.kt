@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -108,11 +109,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.text.font.FontWeight
@@ -140,8 +143,6 @@ import com.beekeep.app.nfc.BeeKeepNfcPayload
 import com.beekeep.app.nfc.NfcResult
 import com.beekeep.app.ui.camera.CameraCaptureView
 import com.beekeep.app.ui.theme.BeeKeepTheme
-import com.beekeep.app.ui.theme.LandscapeDay
-import com.beekeep.app.ui.theme.LandscapeDusk
 import com.beekeep.app.ui.theme.NavBarDark
 import com.beekeep.app.ui.theme.NavBarLight
 import com.beekeep.app.ui.theme.NavIndicator
@@ -832,7 +833,7 @@ fun BeeKeepApp(
         }
     ) { padding ->
         when (screen) {
-            Screen.HOME -> HomeScreen(hives, padding, onScan = { screen = Screen.SCAN })
+            Screen.HOME -> HomeScreen(hives, apiaries, padding, onScan = { screen = Screen.SCAN })
             Screen.APIARIES -> ApiariesScreen(apiaries, hives, padding, onAddApiary = { addApiary = true }, onEditApiary = { editingApiary = it }, onOpenApiary = { selectedApiaryName = it; screen = Screen.APIARY_HIVES })
             Screen.MORE -> MoreScreen(padding, darkMode, onDarkModeChange, onTagManager = { screen = Screen.TAG_MANAGER }, onColonyHistory = { screen = Screen.COLONY_HISTORY }, deadCount = deadHives.size, activity, cloud)
             Screen.TAG_MANAGER -> TagManagementScreen(
@@ -900,43 +901,41 @@ private fun MetricCard(title: String, value: String, modifier: Modifier = Modifi
 }
 
 @Composable
-private fun LandscapeCanvas(modifier: Modifier, palette: com.beekeep.app.ui.theme.LandscapePalette) {
+private fun HoneybeeGlyph(modifier: Modifier = Modifier) {
     Canvas(modifier) {
-        val w = size.width
-        val h = size.height
-        drawRect(palette.sky)
-        drawCircle(palette.sun, radius = h * 0.15f, center = Offset(w * 0.80f, h * 0.26f))
-        drawPath(Path().apply {
-            moveTo(0f, h * 0.60f)
-            cubicTo(w * 0.16f, h * 0.42f, w * 0.30f, h * 0.54f, w * 0.44f, h * 0.38f)
-            cubicTo(w * 0.60f, h * 0.22f, w * 0.74f, h * 0.46f, w, h * 0.34f)
-            lineTo(w, h); lineTo(0f, h); close()
-        }, palette.hillBack)
-        drawPath(Path().apply {
-            moveTo(0f, h * 0.76f)
-            cubicTo(w * 0.22f, h * 0.58f, w * 0.38f, h * 0.72f, w * 0.55f, h * 0.56f)
-            cubicTo(w * 0.74f, h * 0.42f, w * 0.86f, h * 0.64f, w, h * 0.54f)
-            lineTo(w, h); lineTo(0f, h); close()
-        }, palette.hillMid)
-        drawPath(Path().apply {
-            moveTo(0f, h * 0.90f)
-            cubicTo(w * 0.25f, h * 0.76f, w * 0.45f, h * 0.94f, w * 0.68f, h * 0.80f)
-            cubicTo(w * 0.84f, h * 0.72f, w * 0.94f, h * 0.84f, w, h * 0.78f)
-            lineTo(w, h); lineTo(0f, h); close()
-        }, palette.hillFront)
-        listOf(w * 0.62f to h * 0.88f, w * 0.72f to h * 0.82f, w * 0.90f to h * 0.80f).forEach { (cx, base) ->
-            val ph = h * 0.30f
-            for (tier in 0..2) {
-                val top = base - ph + tier * ph * 0.26f
-                val half = ph * 0.16f * (0.6f + tier * 0.4f)
-                drawPath(Path().apply {
-                    moveTo(cx, top)
-                    lineTo(cx + half, top + ph * 0.45f)
-                    lineTo(cx - half, top + ph * 0.45f)
-                    close()
-                }, palette.tree)
-            }
-            drawRect(palette.tree, Offset(cx - w * 0.005f, base - ph * 0.08f), Size(w * 0.010f, ph * 0.10f))
+        val unit = minOf(size.width, size.height) / 48f
+        val startX = (size.width - 48f * unit) / 2f
+        val startY = (size.height - 48f * unit) / 2f
+        fun at(x: Float, y: Float) = Offset(startX + x * unit, startY + y * unit)
+
+        val beeDark = Color(0xFF26190B)
+        val beeGold = Color(0xFFF1B63F)
+        val beeWing = Color(0xFFFFF0C7)
+
+        rotate(-27f, pivot = Offset(size.width / 2f, size.height / 2f)) {
+            // Two clean, flat wings give the scan action its own small 2D bee mark.
+            drawOval(beeWing, topLeft = at(12f, 9f), size = Size(15f * unit, 8f * unit))
+            drawOval(beeWing.copy(alpha = 0.94f), topLeft = at(20f, 10f), size = Size(12f * unit, 7f * unit))
+
+            // Rounded, striped abdomen with a dark outline.
+            drawOval(beeDark, topLeft = at(7f, 19f), size = Size(28f * unit, 15f * unit))
+            drawOval(beeGold, topLeft = at(8.5f, 20.5f), size = Size(25f * unit, 12f * unit))
+            drawLine(beeDark, at(16f, 21f), at(16f, 32f), strokeWidth = 3.1f * unit)
+            drawLine(beeDark, at(23f, 20.5f), at(23f, 32.5f), strokeWidth = 3.1f * unit)
+            drawLine(beeDark, at(29f, 22f), at(29f, 30.5f), strokeWidth = 2.7f * unit)
+
+            // Head, eye, and antennae.
+            drawCircle(beeDark, radius = 6.2f * unit, center = at(34f, 24.5f))
+            drawCircle(beeGold, radius = 1.35f * unit, center = at(35.5f, 23f))
+            drawLine(beeDark, at(32.5f, 19.5f), at(35.5f, 14f), strokeWidth = 1.8f * unit)
+            drawLine(beeDark, at(36f, 20f), at(41f, 17.5f), strokeWidth = 1.8f * unit)
+            drawCircle(beeGold, radius = 1.4f * unit, center = at(35.5f, 14f))
+            drawCircle(beeGold, radius = 1.4f * unit, center = at(41f, 17.5f))
+
+            // Tiny legs, kept simple so the symbol stays crisp at phone sizes.
+            drawLine(beeDark, at(17f, 32f), at(15f, 36f), strokeWidth = 1.8f * unit)
+            drawLine(beeDark, at(24f, 32f), at(23f, 36f), strokeWidth = 1.8f * unit)
+            drawLine(beeDark, at(29f, 31f), at(31f, 34f), strokeWidth = 1.8f * unit)
         }
     }
 }
@@ -944,52 +943,80 @@ private fun LandscapeCanvas(modifier: Modifier, palette: com.beekeep.app.ui.them
 @Composable
 private fun HomeScreen(
     hives: List<Hive>,
+    apiaries: List<Apiary>,
     padding: androidx.compose.foundation.layout.PaddingValues,
     onScan: () -> Unit
 ) {
-    val flagged = hives.count { it.mitePercent >= 3.0 || it.queenStatus == "Queenless" }
+    val context = LocalContext.current
+    val bannerBitmap = remember(context) {
+        runCatching {
+            context.assets.open("beekeep_home_banner.webp").use { input ->
+                BitmapFactory.decodeStream(input)
+            }
+        }.getOrNull()
+    }
+
     LazyColumn(
         Modifier.fillMaxSize().padding(padding).padding(horizontal = 16.dp),
         contentPadding = androidx.compose.foundation.layout.PaddingValues(top = 16.dp, bottom = 28.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         item {
-            val landscape = if (MaterialTheme.colorScheme.background.luminance() < 0.35f) LandscapeDusk else LandscapeDay
-            Box(Modifier.fillMaxWidth().height(176.dp).clip(RoundedCornerShape(24.dp))) {
-                LandscapeCanvas(Modifier.fillMaxSize(), landscape)
-                Column(Modifier.align(Alignment.TopStart).padding(horizontal = 20.dp, vertical = 16.dp)) {
-                    Text("GOOD FIELD DAY", style = MaterialTheme.typography.labelLarge, color = landscape.ink.copy(alpha = .8f))
-                    Text("BeeKeep", style = MaterialTheme.typography.headlineLarge, color = landscape.ink)
-                    Text("Your operation at a glance", color = landscape.ink.copy(alpha = .72f))
+            Box(
+                Modifier.fillMaxWidth().height(168.dp)
+                    .clip(RoundedCornerShape(26.dp))
+                    .background(Color(0xFF15110E))
+            ) {
+                if (bannerBitmap != null) {
+                    Image(
+                        bitmap = bannerBitmap.asImageBitmap(),
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
+                Column(
+                    Modifier.align(Alignment.CenterStart).padding(start = 24.dp, end = 150.dp),
+                    verticalArrangement = Arrangement.Center
+                ) {
+                    Text(
+                        "BeeKeep",
+                        style = MaterialTheme.typography.headlineLarge,
+                        color = Color(0xFFFFC754),
+                        fontWeight = FontWeight.ExtraBold
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Box(
+                        Modifier.width(42.dp).height(4.dp)
+                            .clip(CircleShape)
+                            .background(Color(0xFFE8AD39))
+                    )
                 }
             }
         }
         item {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 MetricCard("Hives", hives.size.toString(), Modifier.weight(1f))
-                MetricCard("Watch", flagged.toString(), Modifier.weight(1f))
+                MetricCard("Apiaries", apiaries.size.toString(), Modifier.weight(1f))
             }
         }
         item {
-            Card(shape = RoundedCornerShape(24.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primary)) {
-                Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                        Text("Fast field scan", color = MaterialTheme.colorScheme.onPrimary, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.ExtraBold)
-                        Text("Tap a hive tag and jump straight to its record.", color = MaterialTheme.colorScheme.onPrimary.copy(alpha = .88f))
-                    }
-                    Button(onClick = onScan, shape = RoundedCornerShape(16.dp), colors = androidx.compose.material3.ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.onPrimary)) {
-                        Icon(Icons.Rounded.Nfc, null, tint = MaterialTheme.colorScheme.primary)
-                        Spacer(Modifier.width(6.dp))
-                        Text("SCAN", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.ExtraBold)
-                    }
-                }
-            }
-        }
-        item {
-            Card(shape = RoundedCornerShape(24.dp)) {
-                Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text("Hive lists are organized by apiary", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.ExtraBold)
-                    Text("Open Apiaries to choose a yard, then see only the hives belonging to that apiary.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Row(
+                Modifier.fillMaxWidth().padding(top = 2.dp, bottom = 2.dp),
+                horizontalArrangement = Arrangement.Center
+            ) {
+                Button(
+                    onClick = onScan,
+                    modifier = Modifier.width(176.dp).height(62.dp),
+                    shape = RoundedCornerShape(20.dp),
+                    colors = androidx.compose.material3.ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFFF1B63F),
+                        contentColor = Color(0xFF26190B)
+                    )
+                ) {
+                    HoneybeeGlyph(Modifier.size(29.dp))
+                    Spacer(Modifier.width(10.dp))
+                    Text("SCAN", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.ExtraBold)
                 }
             }
         }
