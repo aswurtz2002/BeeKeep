@@ -300,6 +300,12 @@ enum class Screen {
 
 enum class HiveLogType { FEED, TREAT, HARVEST }
 
+private fun distanceMeters(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Float {
+    val results = FloatArray(1)
+    android.location.Location.distanceBetween(lat1, lon1, lat2, lon2, results)
+    return results[0]
+}
+
 @Composable
 fun BeeKeepApp(
     vm: BeeKeepViewModel,
@@ -324,6 +330,9 @@ fun BeeKeepApp(
     var unassignedTagUid by rememberSaveable { mutableStateOf<String?>(null) }
     var pendingTagUid by rememberSaveable { mutableStateOf<String?>(null) }
     var scanning by remember { mutableStateOf(false) }
+    var pendingLocationHive by remember { mutableStateOf<Hive?>(null) }
+    var pendingApiaryMove by remember { mutableStateOf<Pair<Hive, Apiary>?>(null) }
+    var locationCheckCallback by remember { mutableStateOf<(() -> Unit)?>(null) }
     val scope = rememberCoroutineScope()
     val snackbarHostState = androidx.compose.material3.SnackbarHostState()
 
@@ -337,6 +346,64 @@ fun BeeKeepApp(
     val treatments by vm.treatments.collectAsStateWithLifecycle()
     val harvests by vm.harvests.collectAsStateWithLifecycle()
     val ready by vm.ready.collectAsStateWithLifecycle()
+
+    val locationPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { result ->
+        val granted = result[Manifest.permission.ACCESS_FINE_LOCATION] == true ||
+            result[Manifest.permission.ACCESS_COARSE_LOCATION] == true
+        if (granted) {
+            locationCheckCallback?.invoke()
+        } else {
+            pendingLocationHive = null
+            scope.launch { snackbarHostState.showSnackbar("Location permission denied. Hive apiary was not changed.") }
+        }
+        locationCheckCallback = null
+    }
+
+    fun checkHiveLocation(hive: Hive) {
+        val currentApiary = apiaries.firstOrNull { it.name.equals(hive.apiary, ignoreCase = true) }
+        if (currentApiary?.latitude == null || currentApiary.longitude == null) {
+            scope.launch { snackbarHostState.showSnackbar("Add GPS coordinates to ${hive.apiary} to enable hive location checks.") }
+            return
+        }
+        if (!locationController.hasPermission()) {
+            pendingLocationHive = hive
+            locationCheckCallback = { pendingLocationHive?.let { checkHiveLocation(it) } }
+            locationPermissionLauncher.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
+            return
+        }
+        locationController.current { phoneLocation ->
+            scope.launch {
+                if (phoneLocation == null) {
+                    snackbarHostState.showSnackbar("Could not get GPS. Hive apiary was not changed.")
+                    return@launch
+                }
+                val assignedDistance = distanceMeters(
+                    phoneLocation.latitude, phoneLocation.longitude,
+                    currentApiary.latitude, currentApiary.longitude
+                )
+                // Ignore ordinary GPS drift. Only consider a move if the phone is
+                // clearly away from the assigned yard and close to another saved yard.
+                if (assignedDistance <= 300f) return@launch
+                val nearestOther = apiaries
+                    .filter { it.id != currentApiary.id && it.latitude != null && it.longitude != null }
+                    .map { apiary ->
+                        apiary to distanceMeters(
+                            phoneLocation.latitude, phoneLocation.longitude,
+                            apiary.latitude!!, apiary.longitude!!
+                        )
+                    }
+                    .filter { it.second <= 500f }
+                    .minByOrNull { it.second }
+                if (nearestOther != null) {
+                    pendingApiaryMove = hive to nearestOther.first
+                } else {
+                    snackbarHostState.showSnackbar("Hive ${hive.number} is far from ${currentApiary.name}, but no other saved apiary GPS location is nearby. No changes made.")
+                }
+            }
+        }
+    }
 
     androidx.compose.runtime.LaunchedEffect(ready, incomingNfc?.uid, screen) {
         val result = incomingNfc ?: return@LaunchedEffect
@@ -355,6 +422,7 @@ fun BeeKeepApp(
         val payloadHive = payloadHiveId?.let { id -> hives.firstOrNull { it.id == id } }
         val resolvedHive = assignedHive ?: payloadHive
         if (resolvedHive != null) {
+            checkHiveLocation(resolvedHive)
             // Announce every accepted tag read, even when this hive is already open.
             onSpeakHiveNumber(resolvedHive.number)
             // A tag may be seen repeatedly while held near the phone. Do not
@@ -394,6 +462,29 @@ fun BeeKeepApp(
                     }) { Text("CREATE NEW HIVE") }
                     TextButton(onClick = { unassignedTagUid = null }) { Text("CANCEL") }
                 }
+            }
+        )
+    }
+
+    pendingApiaryMove?.let { (hive, targetApiary) ->
+        AlertDialog(
+            onDismissRequest = { pendingApiaryMove = null },
+            title = { Text("Hive scanned at another apiary?", fontWeight = FontWeight.ExtraBold) },
+            text = {
+                Text("Hive ${hive.number} is assigned to ${hive.apiary}, but your phone's GPS is near ${targetApiary.name}. Would you like to move this hive to ${targetApiary.name}?")
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    vm.moveHiveToApiary(hive.id, targetApiary.name) { success, error ->
+                        pendingApiaryMove = null
+                        scope.launch {
+                            snackbarHostState.showSnackbar(error ?: "Hive ${hive.number} moved to ${targetApiary.name}")
+                        }
+                    }
+                }) { Text("MOVE HIVE", fontWeight = FontWeight.ExtraBold) }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingApiaryMove = null }) { Text("KEEP CURRENT APIARY") }
             }
         )
     }
@@ -564,6 +655,7 @@ fun BeeKeepApp(
                                 val payloadHive = payloadId?.let { id -> hives.firstOrNull { it.id == id } }
                                 val resolvedHive = assignedHive ?: payloadHive
                                 if (resolvedHive != null) {
+                                    checkHiveLocation(resolvedHive)
                                     onSpeakHiveNumber(resolvedHive.number)
                                     vm.openHive(resolvedHive.id)
                                     selectedHiveOpen = true
