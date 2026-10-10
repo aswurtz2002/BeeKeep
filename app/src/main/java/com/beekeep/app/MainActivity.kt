@@ -1862,11 +1862,6 @@ private fun InspectionSnapshot(i: Inspection) {
             if (i.notes.isNotBlank()) {
                 Text("FIELD NOTES", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.ExtraBold)
                 Text(
-                    "Recorded ${DateFormat.getDateInstance(DateFormat.MEDIUM).format(Date(i.createdAt))}",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Text(
                     if (hasInlineInspectionNoteDate(i.notes)) i.notes else "${inspectionNoteDatePrefix(i.createdAt)}${i.notes}",
                     style = MaterialTheme.typography.bodyMedium
                 )
