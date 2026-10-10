@@ -26,6 +26,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -47,6 +48,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.GenericShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -108,11 +110,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.layout.ContentScale
@@ -940,6 +945,93 @@ private fun HoneybeeGlyph(modifier: Modifier = Modifier) {
     }
 }
 
+private val HoneycombButtonShape = GenericShape { size, _ ->
+    moveTo(size.width * 0.24f, 0f)
+    lineTo(size.width * 0.76f, 0f)
+    lineTo(size.width, size.height * 0.5f)
+    lineTo(size.width * 0.76f, size.height)
+    lineTo(size.width * 0.24f, size.height)
+    lineTo(0f, size.height * 0.5f)
+    close()
+}
+
+@Composable
+private fun HoneycombPattern(modifier: Modifier = Modifier) {
+    Canvas(modifier) {
+        val radius = size.height / 6.0f
+        val halfHeight = radius * 0.8660254f
+        val columnStep = radius * 1.7320508f
+        val rowStep = radius * 1.5f
+        val lineColor = Color(0xFFD99C0C).copy(alpha = 0.48f)
+        val lineWidth = 1.25.dp.toPx()
+
+        var row = -2
+        while (row * rowStep < size.height + radius) {
+            val cy = radius + row * rowStep
+            val offset = if (row % 2 == 0) 0f else columnStep / 2f
+            var col = -2
+            while (col * columnStep + offset < size.width + columnStep) {
+                val cx = col * columnStep + offset
+                val cell = Path().apply {
+                    moveTo(cx + radius, cy)
+                    lineTo(cx + radius / 2f, cy + halfHeight)
+                    lineTo(cx - radius / 2f, cy + halfHeight)
+                    lineTo(cx - radius, cy)
+                    lineTo(cx - radius / 2f, cy - halfHeight)
+                    lineTo(cx + radius / 2f, cy - halfHeight)
+                    close()
+                }
+                drawPath(cell, lineColor, style = Stroke(width = lineWidth))
+                col++
+            }
+            row++
+        }
+        val edge = Path().apply {
+            moveTo(size.width * 0.24f, 1f)
+            lineTo(size.width * 0.76f, 1f)
+            lineTo(size.width - 1f, size.height / 2f)
+            lineTo(size.width * 0.76f, size.height - 1f)
+            lineTo(size.width * 0.24f, size.height - 1f)
+            lineTo(1f, size.height / 2f)
+            close()
+        }
+        drawPath(edge, Color(0xFFE5A400).copy(alpha = 0.9f), style = Stroke(width = 2.dp.toPx()))
+    }
+}
+
+@Composable
+private fun HoneycombScanButton(onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .width(260.dp)
+            .height(148.dp)
+            .shadow(8.dp, HoneycombButtonShape)
+            .clip(HoneycombButtonShape)
+            .background(
+                Brush.verticalGradient(
+                    colors = listOf(Color(0xFFFFD64D), Color(0xFFF6B914))
+                )
+            )
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) {
+        HoneycombPattern(Modifier.fillMaxSize())
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Center
+        ) {
+            HoneybeeGlyph(Modifier.size(43.dp))
+            Spacer(Modifier.width(14.dp))
+            Text(
+                "SCAN",
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.ExtraBold,
+                color = Color(0xFF26190B)
+            )
+        }
+    }
+}
+
 @Composable
 private fun HomeScreen(
     hives: List<Hive>,
@@ -990,29 +1082,20 @@ private fun HomeScreen(
             }
         }
         item {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(
+                Modifier.fillMaxWidth().padding(top = 16.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
                 MetricCard("Hives", hives.size.toString(), Modifier.weight(1f))
                 MetricCard("Apiaries", apiaries.size.toString(), Modifier.weight(1f))
             }
         }
         item {
             Row(
-                Modifier.fillMaxWidth().padding(top = 54.dp, bottom = 38.dp),
+                Modifier.fillMaxWidth().padding(top = 72.dp, bottom = 42.dp),
                 horizontalArrangement = Arrangement.Center
             ) {
-                Button(
-                    onClick = onScan,
-                    modifier = Modifier.width(220.dp).height(74.dp),
-                    shape = RoundedCornerShape(22.dp),
-                    colors = androidx.compose.material3.ButtonDefaults.buttonColors(
-                        containerColor = Color(0xFFF1B63F),
-                        contentColor = Color(0xFF26190B)
-                    )
-                ) {
-                    HoneybeeGlyph(Modifier.size(35.dp))
-                    Spacer(Modifier.width(12.dp))
-                    Text("SCAN", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.ExtraBold)
-                }
+                HoneycombScanButton(onClick = onScan)
             }
         }
     }
