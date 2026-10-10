@@ -1543,76 +1543,86 @@ private fun InspectionScreen(
                 }
             }
         },
-        bottomBar = {
-            Surface(tonalElevation = 6.dp, shadowElevation = 12.dp) {
-                Row(
-                    Modifier.fillMaxWidth().navigationBarsPadding().padding(8.dp),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    FieldActionButton(Icons.Rounded.CameraAlt, "PHOTO", Modifier.weight(1f)) {
-                        val file = photoStore.createInspectionPhoto(hive.id).file
-                        pendingPhotoPath = file.absolutePath
-                        photoCaptured = false
-                        cameraStatus = ""
-                        if (ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
-                            cameraOpen = true
-                        } else cameraPermission.launch(Manifest.permission.CAMERA)
-                    }
-                    FieldActionButton(Icons.Rounded.Mic, "VOICE", Modifier.weight(1f)) {
-                        if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
-                            val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-                                putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-                                putExtra(RecognizerIntent.EXTRA_PROMPT, "Describe Hive ${hive.number}")
-                            }
-                            runCatching { voiceLauncher.launch(intent) }.onFailure { voiceStatus = "Voice input unavailable" }
-                        } else voicePermission.launch(Manifest.permission.RECORD_AUDIO)
-                    }
-                    FieldActionButton(Icons.Rounded.GpsFixed, "GPS", Modifier.weight(1f)) {
-                        if (locationController.hasPermission()) {
-                            locationController.current { loc ->
-                                if (loc != null) {
-                                    lat = loc.latitude
-                                    lon = loc.longitude
-                                    locationStatus = "GPS captured • ${"%.5f".format(Locale.US, loc.latitude)}, ${"%.5f".format(Locale.US, loc.longitude)}"
-                                } else locationStatus = "Could not get a location"
-                            }
-                        } else locationPermission.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
-                    }
-                    Button(
-                        onClick = {
-                            if (!saving && !photoProcessing) {
-                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                saving = true
-                                val now = System.currentTimeMillis()
-                                val inspection = Inspection(
-                                    IdGenerator.nextLong(), hive.id, now, strength, queen, mites,
-                                    sample.coerceAtLeast(1), notes.trim(), photoPath, lat, lon,
-                                    emergency, supercedure, swarm, eggs, openBrood, cappedBrood,
-                                    honey, pollen, emptyComb, diseasesCsv
-                                )
-                                scope.launch {
-                                    onSave(inspection)
-                                    saving = false
-                                }
-                            }
-                        },
-                        enabled = !saving && !photoProcessing,
-                        modifier = Modifier.weight(1.15f).height(54.dp),
-                        shape = RoundedCornerShape(16.dp)
-                    ) {
-                        Icon(Icons.Rounded.Check, null)
-                        Spacer(Modifier.width(4.dp))
-                        Text(if (saving) "SAVE…" else "SAVE", fontWeight = FontWeight.ExtraBold)
-                    }
-                }
-            }
-        }
+
     ) { padding ->
         LazyColumn(
             Modifier.fillMaxSize().padding(padding),
             contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
+            item {
+                Card(shape = RoundedCornerShape(18.dp)) {
+                    Column(
+                        Modifier.fillMaxWidth().padding(10.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            FieldActionButton(Icons.Rounded.CameraAlt, "PHOTO", Modifier.weight(1f)) {
+                                val file = photoStore.createInspectionPhoto(hive.id).file
+                                pendingPhotoPath = file.absolutePath
+                                photoCaptured = false
+                                cameraStatus = ""
+                                if (ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+                                    cameraOpen = true
+                                } else cameraPermission.launch(Manifest.permission.CAMERA)
+                            }
+                            FieldActionButton(Icons.Rounded.Mic, "VOICE", Modifier.weight(1f)) {
+                                if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+                                    val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+                                        putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                                        putExtra(RecognizerIntent.EXTRA_PROMPT, "Describe Hive ${hive.number}")
+                                    }
+                                    runCatching { voiceLauncher.launch(intent) }.onFailure { voiceStatus = "Voice input unavailable" }
+                                } else voicePermission.launch(Manifest.permission.RECORD_AUDIO)
+                            }
+                        }
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            FieldActionButton(Icons.Rounded.GpsFixed, "GPS", Modifier.weight(1f)) {
+                                if (locationController.hasPermission()) {
+                                    locationController.current { loc ->
+                                        if (loc != null) {
+                                            lat = loc.latitude
+                                            lon = loc.longitude
+                                            locationStatus = "GPS captured • ${"%.5f".format(Locale.US, loc.latitude)}, ${"%.5f".format(Locale.US, loc.longitude)}"
+                                        } else locationStatus = "Could not get a location"
+                                    }
+                                } else locationPermission.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
+                            }
+                            Button(
+                                onClick = {
+                                    if (!saving && !photoProcessing) {
+                                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                        saving = true
+                                        val now = System.currentTimeMillis()
+                                        val inspection = Inspection(
+                                            IdGenerator.nextLong(), hive.id, now, strength, queen, mites,
+                                            sample.coerceAtLeast(1), notes.trim(), photoPath, lat, lon,
+                                            emergency, supercedure, swarm, eggs, openBrood, cappedBrood,
+                                            honey, pollen, emptyComb, diseasesCsv
+                                        )
+                                        scope.launch {
+                                            onSave(inspection)
+                                            saving = false
+                                        }
+                                    }
+                                },
+                                enabled = !saving && !photoProcessing,
+                                modifier = Modifier.weight(1f).height(54.dp),
+                                shape = RoundedCornerShape(16.dp),
+                                contentPadding = PaddingValues(horizontal = 8.dp)
+                            ) {
+                                Icon(Icons.Rounded.Check, null)
+                                Spacer(Modifier.width(5.dp))
+                                Text(if (saving) "SAVING…" else "SAVE", fontWeight = FontWeight.ExtraBold, maxLines = 1)
+                            }
+                        }
+                        if (photoProcessing) {
+                            Text("Preparing photo…", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                }
+            }
+
             item {
                 SectionHeader("QUEEN")
                 Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -1630,19 +1640,37 @@ private fun InspectionScreen(
             }
 
             item {
+                Card(shape = RoundedCornerShape(24.dp)) {
+                    Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("FIELD NOTES", fontWeight = FontWeight.ExtraBold)
+                        OutlinedTextField(
+                            value = notes,
+                            onValueChange = { notes = it },
+                            modifier = Modifier.fillMaxWidth().height(124.dp),
+                            label = { Text("What did you see?") }
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            if (voiceStatus.isNotBlank()) Text(voiceStatus, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
+                            if (locationStatus != "No GPS captured") Text(locationStatus, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
+                        }
+                    }
+                }
+            }
+
+            item {
                 ComparisonCounter("Colony strength", strength, previousForComparison?.strength, 0..10, haptic) { strength = it }
             }
             item {
                 Card(shape = RoundedCornerShape(24.dp)) {
-                    Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Column(Modifier.padding(horizontal = 10.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
-                            Column(Modifier.weight(1f)) {
-                                Text("Mite wash", fontWeight = FontWeight.ExtraBold)
-                                Text("${mites} / ${sample} bees", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
+                                Text("Mite wash", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.ExtraBold)
+                                Text("${mites} / ${sample} bees", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
-                            Text(String.format(Locale.US, "%.2f%%", miteRate), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.ExtraBold)
+                            Text(String.format(Locale.US, "%.2f%%", miteRate), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.ExtraBold)
                         }
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                             NumberField("Mites", mites, Modifier.weight(1f)) { mites = it.coerceIn(0, sample) }
                             NumberField("Sample", sample, Modifier.weight(1f)) {
                                 sample = it.coerceAtLeast(1)
@@ -1653,7 +1681,7 @@ private fun InspectionScreen(
                         if (priorMite != null) {
                             Text(
                                 "Previous ${String.format(Locale.US, "%.2f%%", priorMite)} • Change ${String.format(Locale.US, "%+.2f%%", miteRate - priorMite)}",
-                                style = MaterialTheme.typography.bodySmall,
+                                style = MaterialTheme.typography.labelSmall,
                                 color = if (miteRate > priorMite) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
@@ -1712,23 +1740,7 @@ private fun InspectionScreen(
                 }
             }
 
-            item {
-                Card(shape = RoundedCornerShape(24.dp)) {
-                    Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("FIELD NOTES", fontWeight = FontWeight.ExtraBold)
-                        OutlinedTextField(
-                            value = notes,
-                            onValueChange = { notes = it },
-                            modifier = Modifier.fillMaxWidth().height(124.dp),
-                            label = { Text("What did you see?") }
-                        )
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            if (voiceStatus.isNotBlank()) Text(voiceStatus, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
-                            if (locationStatus != "No GPS captured") Text(locationStatus, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
-                        }
-                    }
-                }
-            }
+
 
             item {
                 photoPath?.let { path ->
@@ -1782,29 +1794,32 @@ private fun ComparisonCounter(
     haptic: androidx.compose.ui.hapticfeedback.HapticFeedback,
     onChange: (Int) -> Unit
 ) {
-    Card(shape = RoundedCornerShape(24.dp)) {
-        Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+    Card(shape = RoundedCornerShape(16.dp)) {
+        Column(
+            Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 6.dp),
+            verticalArrangement = Arrangement.spacedBy(1.dp)
+        ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(label, Modifier.weight(1f), fontWeight = FontWeight.ExtraBold)
+                Text(label, Modifier.weight(1f), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.ExtraBold)
                 previous?.let {
                     val delta = value - it
                     Text(
                         "Prev $it • ${if (delta >= 0) "+$delta" else delta}",
-                        style = MaterialTheme.typography.bodySmall,
+                        style = MaterialTheme.typography.labelSmall,
                         color = if (delta < 0) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
             }
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onClick = { haptic.performHapticFeedback(HapticFeedbackType.SegmentTick); onChange((value - 1).coerceIn(range)) }) { Text("−", style = MaterialTheme.typography.headlineMedium) }
-                Text(value.toString(), style = MaterialTheme.typography.displaySmall, fontWeight = FontWeight.ExtraBold)
-                IconButton(onClick = { haptic.performHapticFeedback(HapticFeedbackType.SegmentTick); onChange((value + 1).coerceIn(range)) }) { Text("+", style = MaterialTheme.typography.headlineMedium) }
-            }
-        }
-    }
-}
-
-@Composable
+            Row(
+                Modifier.fillMaxWidth().height(38.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(
+                    onClick = { haptic.performHapticFeedback(HapticFeedbackType.SegmentTick); onChange((value - 1).coerceIn(range)) },
+                    modifier = Modifier.size(36.dp)
+                ) { Text("−", style = MaterialTheme.typography.titleMedium) }
+                Text(value.toString(), style = MaterialTheme.typography.titleLarge, f@Composable
 private fun CompactCounter(
     label: String,
     value: Int,
@@ -1813,14 +1828,28 @@ private fun CompactCounter(
     modifier: Modifier = Modifier,
     onChange: (Int) -> Unit
 ) {
-    Card(modifier = modifier, shape = RoundedCornerShape(16.dp)) {
-        Column(Modifier.fillMaxWidth().padding(10.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(label, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold, maxLines = 1)
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
-                IconButton(onClick = { haptic.performHapticFeedback(HapticFeedbackType.SegmentTick); onChange((value - 1).coerceIn(range)) }) { Text("−") }
-                Text(value.toString(), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.ExtraBold)
-                IconButton(onClick = { haptic.performHapticFeedback(HapticFeedbackType.SegmentTick); onChange((value + 1).coerceIn(range)) }) { Text("+") }
-            }
+    Card(modifier = modifier, shape = RoundedCornerShape(12.dp)) {
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 5.dp, vertical = 2.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(1.dp)
+        ) {
+            Text(
+                label,
+                modifier = Modifier.weight(1f),
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1
+            )
+            IconButton(
+                onClick = { haptic.performHapticFeedback(HapticFeedbackType.SegmentTick); onChange((value - 1).coerceIn(range)) },
+                modifier = Modifier.size(32.dp)
+            ) { Text("−", style = MaterialTheme.typography.bodyMedium) }
+            Text(value.toString(), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.ExtraBold)
+            IconButton(
+                onClick = { haptic.performHapticFeedback(HapticFeedbackType.SegmentTick); onChange((value + 1).coerceIn(range)) },
+                modifier = Modifier.size(32.dp)
+            ) { Text("+", style = MaterialTheme.typography.bodyMedium) }
         }
     }
 }
