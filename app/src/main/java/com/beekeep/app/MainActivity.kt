@@ -25,6 +25,7 @@ import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -1349,7 +1350,7 @@ private fun ApiaryMapScreen(
         Modifier.fillMaxSize().padding(padding).background(MaterialTheme.colorScheme.background)
     ) {
         Row(
-            Modifier.fillMaxWidth().padding(start = 8.dp, end = 16.dp, top = 10.dp, bottom = 8.dp),
+            Modifier.fillMaxWidth().padding(start = 8.dp, end = 16.dp, top = 4.dp, bottom = 2.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             IconButton(onClick = onBack) { Icon(Icons.Rounded.ArrowBack, "Back") }
@@ -1366,70 +1367,72 @@ private fun ApiaryMapScreen(
             }
         }
 
+        // Give the map nearly all remaining vertical space. The selector below is
+        // deliberately a short horizontal strip instead of a tall scrolling list.
         ApiarySatelliteMap(
             apiaries = locatedApiaries,
             focusedApiaryId = focusedId,
             modifier = Modifier
                 .fillMaxWidth()
                 .weight(1f)
-                .padding(horizontal = 12.dp)
+                .padding(horizontal = 8.dp, vertical = 4.dp)
                 .clip(RoundedCornerShape(22.dp))
                 .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(22.dp))
         )
 
         if (locatedApiaries.isEmpty()) {
-            Column(
-                Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 14.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp)
+            Surface(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 4.dp),
+                shape = RoundedCornerShape(14.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant
             ) {
-                Text("No saved GPS pins yet", fontWeight = FontWeight.Bold)
-                Text(
-                    "Open an apiary, choose Edit, then capture its current GPS. Its satellite pin will appear here.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                Column(
+                    Modifier.padding(horizontal = 14.dp, vertical = 9.dp),
+                    verticalArrangement = Arrangement.spacedBy(2.dp)
+                ) {
+                    Text("No saved GPS pins yet", fontWeight = FontWeight.Bold)
+                    Text(
+                        "Edit an apiary and capture its current GPS to place it on the map.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             }
         } else {
-            Text(
-                "SAVED APIARY LOCATIONS",
-                modifier = Modifier.padding(start = 16.dp, top = 12.dp, bottom = 6.dp),
-                style = MaterialTheme.typography.labelMedium,
-                fontWeight = FontWeight.ExtraBold,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            LazyColumn(
-                Modifier.fillMaxWidth().heightIn(max = 174.dp),
-                contentPadding = PaddingValues(start = 12.dp, end = 12.dp, bottom = 10.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp)
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState())
+                    .padding(start = 10.dp, end = 10.dp, top = 2.dp, bottom = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                items(locatedApiaries, key = { it.id }) { apiary ->
+                locatedApiaries.forEach { apiary ->
                     val isFocused = focusedId == apiary.id
                     Surface(
-                        modifier = Modifier.fillMaxWidth().clickable { focusedApiaryId = apiary.id },
+                        modifier = Modifier
+                            .width(174.dp)
+                            .clickable { focusedApiaryId = apiary.id },
                         shape = RoundedCornerShape(14.dp),
-                        color = if (isFocused) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant
+                        color = if (isFocused) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
+                        border = if (isFocused) BorderStroke(1.dp, MaterialTheme.colorScheme.primary) else null
                     ) {
-                        Row(
-                            Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 9.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        Column(
+                            Modifier.padding(horizontal = 11.dp, vertical = 8.dp),
+                            verticalArrangement = Arrangement.spacedBy(2.dp)
                         ) {
-                            Icon(
-                                Icons.Rounded.LocationOn,
-                                contentDescription = null,
-                                tint = if (isFocused) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.primary
+                            Text(
+                                apiary.name,
+                                fontWeight = FontWeight.Bold,
+                                style = MaterialTheme.typography.labelLarge,
+                                maxLines = 1
                             )
-                            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                                Text(apiary.name, fontWeight = FontWeight.Bold, maxLines = 1)
-                                Text(
-                                    "${"%.5f".format(Locale.US, apiary.latitude)}, ${"%.5f".format(Locale.US, apiary.longitude)}",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                            if (isFocused) {
-                                Text("ON MAP", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.ExtraBold)
-                            }
+                            Text(
+                                "${"%.4f".format(Locale.US, apiary.latitude)}, ${"%.4f".format(Locale.US, apiary.longitude)}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1
+                            )
                         }
                     }
                 }
