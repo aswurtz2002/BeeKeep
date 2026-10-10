@@ -972,6 +972,7 @@ private fun HomeScreen(
                         bitmap = bannerBitmap.asImageBitmap(),
                         contentDescription = null,
                         contentScale = ContentScale.Crop,
+                        alignment = Alignment.CenterEnd,
                         modifier = Modifier.fillMaxSize()
                     )
                 }
@@ -985,12 +986,6 @@ private fun HomeScreen(
                         color = Color(0xFFFFC754),
                         fontWeight = FontWeight.ExtraBold
                     )
-                    Spacer(Modifier.height(8.dp))
-                    Box(
-                        Modifier.width(42.dp).height(4.dp)
-                            .clip(CircleShape)
-                            .background(Color(0xFFE8AD39))
-                    )
                 }
             }
         }
@@ -1002,21 +997,21 @@ private fun HomeScreen(
         }
         item {
             Row(
-                Modifier.fillMaxWidth().padding(top = 2.dp, bottom = 2.dp),
+                Modifier.fillMaxWidth().padding(top = 54.dp, bottom = 38.dp),
                 horizontalArrangement = Arrangement.Center
             ) {
                 Button(
                     onClick = onScan,
-                    modifier = Modifier.width(176.dp).height(62.dp),
-                    shape = RoundedCornerShape(20.dp),
+                    modifier = Modifier.width(220.dp).height(74.dp),
+                    shape = RoundedCornerShape(22.dp),
                     colors = androidx.compose.material3.ButtonDefaults.buttonColors(
                         containerColor = Color(0xFFF1B63F),
                         contentColor = Color(0xFF26190B)
                     )
                 ) {
-                    HoneybeeGlyph(Modifier.size(29.dp))
-                    Spacer(Modifier.width(10.dp))
-                    Text("SCAN", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.ExtraBold)
+                    HoneybeeGlyph(Modifier.size(35.dp))
+                    Spacer(Modifier.width(12.dp))
+                    Text("SCAN", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.ExtraBold)
                 }
             }
         }
