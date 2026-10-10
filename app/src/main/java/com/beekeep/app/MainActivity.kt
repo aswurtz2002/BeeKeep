@@ -1569,6 +1569,11 @@ private fun ApiaryMapScreen(
     }
 }
 
+private data class ApiaryMapWebViewState(
+    val htmlHash: Int,
+    val currentLocation: LocationController.Result?
+)
+
 @Composable
 private fun ApiarySatelliteMap(
     apiaries: List<Apiary>,
@@ -1576,8 +1581,10 @@ private fun ApiarySatelliteMap(
     currentLocation: LocationController.Result?,
     modifier: Modifier = Modifier
 ) {
-    val html = remember(apiaries, focusedApiaryId, currentLocation) {
-        createApiaryMapHtml(apiaries, focusedApiaryId, currentLocation)
+    // Keep the WebView and MapLibre map alive when only the GPS position changes.
+    // The location button should move the existing map, not reload the entire page.
+    val html = remember(apiaries, focusedApiaryId) {
+        createApiaryMapHtml(apiaries, focusedApiaryId)
     }
     AndroidView(
         modifier = modifier,
@@ -1587,12 +1594,25 @@ private fun ApiarySatelliteMap(
                 settings.domStorageEnabled = false
                 settings.allowFileAccess = false
                 settings.javaScriptCanOpenWindowsAutomatically = false
-                webViewClient = WebViewClient()
+                webViewClient = object : WebViewClient() {
+                    override fun onPageFinished(view: WebView, url: String?) {
+                        super.onPageFinished(view, url)
+                        // Re-apply the latest GPS after any map HTML refresh. The JS
+                        // function queues the location if MapLibre has not loaded yet.
+                        val location = (view.tag as? ApiaryMapWebViewState)?.currentLocation
+                        if (location != null) {
+                            view.evaluateJavascript(
+                                "window.beekeepQueueLocation && window.beekeepQueueLocation(${location.latitude}, ${location.longitude});",
+                                null
+                            )
+                        }
+                    }
+                }
                 setBackgroundColor(android.graphics.Color.rgb(231, 232, 228))
                 isVerticalScrollBarEnabled = false
                 isHorizontalScrollBarEnabled = false
                 overScrollMode = View.OVER_SCROLL_NEVER
-                tag = html.hashCode()
+                tag = ApiaryMapWebViewState(html.hashCode(), currentLocation)
                 // Compose can resize AndroidView without firing a browser window resize.
                 // Notify MapLibre whenever the native WebView viewport changes size.
                 addOnLayoutChangeListener { view, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom ->
@@ -1611,9 +1631,26 @@ private fun ApiarySatelliteMap(
             }
         },
         update = { webView ->
-            if (webView.tag != html.hashCode()) {
-                webView.tag = html.hashCode()
+            val htmlHash = html.hashCode()
+            val previous = webView.tag as? ApiaryMapWebViewState
+            if (previous == null || previous.htmlHash != htmlHash) {
+                // A changed apiary list or selected apiary requires fresh map content.
+                // Store the latest GPS so onPageFinished can restore it after loading.
+                webView.tag = ApiaryMapWebViewState(htmlHash, currentLocation)
                 webView.loadDataWithBaseURL("https://beekeep.local/map/", html, "text/html", "UTF-8", null)
+            } else if (previous.currentLocation != currentLocation) {
+                webView.tag = ApiaryMapWebViewState(htmlHash, currentLocation)
+                if (currentLocation != null) {
+                    webView.evaluateJavascript(
+                        "window.beekeepQueueLocation && window.beekeepQueueLocation(${currentLocation.latitude}, ${currentLocation.longitude});",
+                        null
+                    )
+                } else {
+                    webView.evaluateJavascript(
+                        "window.beekeepClearCurrentLocation && window.beekeepClearCurrentLocation();",
+                        null
+                    )
+                }
             }
         }
     )
@@ -1621,8 +1658,7 @@ private fun ApiarySatelliteMap(
 
 private fun createApiaryMapHtml(
     apiaries: List<Apiary>,
-    focusedApiaryId: Long?,
-    currentLocation: LocationController.Result?
+    focusedApiaryId: Long?
 ): String {
     val located = apiaries.filter { it.latitude != null && it.longitude != null }
     val markers = JSONArray()
@@ -1636,25 +1672,16 @@ private fun createApiaryMapHtml(
         )
     }
     val focus = located.firstOrNull { it.id == focusedApiaryId }
-    val centerLat = currentLocation?.latitude
-        ?: focus?.latitude
+    val centerLat = focus?.latitude
         ?: if (located.isNotEmpty()) located.mapNotNull { it.latitude }.average() else 20.0
-    val centerLon = currentLocation?.longitude
-        ?: focus?.longitude
+    val centerLon = focus?.longitude
         ?: if (located.isNotEmpty()) located.mapNotNull { it.longitude }.average() else 0.0
     val initialZoom = when {
-        currentLocation != null -> 15
         focus != null -> 17
         located.size == 1 -> 16
         located.size > 1 -> 5
         else -> 2
     }
-    val currentLocationJson = currentLocation?.let { location ->
-        JSONObject()
-            .put("lat", location.latitude)
-            .put("lon", location.longitude)
-            .toString()
-    } ?: "null"
     val focusIdJson = focusedApiaryId?.takeIf { id -> located.any { it.id == id } }
         ?.let { JSONObject.quote(it.toString()) } ?: "null"
 
@@ -1733,10 +1760,29 @@ private fun createApiaryMapHtml(
                 (function () {
                     const apiaries = $markers;
                     const focusedId = $focusIdJson;
-                    const currentLocation = $currentLocationJson;
                     const errorPanel = document.getElementById('map-error');
                     let mapReady = false;
                     let tileErrors = 0;
+                    window.beekeepPendingLocation = null;
+
+                    // This entry point is available even while MapLibre's library/style is
+                    // still loading. The camera move is applied as soon as the map is ready.
+                    window.beekeepQueueLocation = function (latitude, longitude) {
+                        const lat = Number(latitude);
+                        const lon = Number(longitude);
+                        if (!Number.isFinite(lat) || !Number.isFinite(lon) ||
+                            lat < -85.051129 || lat > 85.051129 || lon < -180 || lon > 180) return;
+                        window.beekeepPendingLocation = { lat: lat, lon: lon };
+                        if (typeof window.beekeepApplyCurrentLocation === 'function') {
+                            window.beekeepApplyCurrentLocation(window.beekeepPendingLocation, true);
+                        }
+                    };
+                    window.beekeepClearCurrentLocation = function () {
+                        window.beekeepPendingLocation = null;
+                        if (typeof window.beekeepRemoveCurrentLocation === 'function') {
+                            window.beekeepRemoveCurrentLocation();
+                        }
+                    };
 
                     function showMapError(message) {
                         errorPanel.textContent = message;
@@ -1824,6 +1870,79 @@ private fun createApiaryMapHtml(
                                 });
                             }
                             window.beekeepResizeMap = resizeMapViewport;
+
+                            function applyCurrentLocation(location, animate) {
+                                if (!location) return;
+                                const longitude = Number(location.lon);
+                                const latitude = Number(location.lat);
+                                if (!Number.isFinite(longitude) || !Number.isFinite(latitude) ||
+                                    longitude < -180 || longitude > 180 ||
+                                    latitude < -85.051129 || latitude > 85.051129) return;
+
+                                const userPoint = [longitude, latitude];
+                                const locationData = {
+                                    type: 'Feature',
+                                    properties: {},
+                                    geometry: { type: 'Point', coordinates: userPoint }
+                                };
+                                const locationSource = map.getSource('beekeep-current-location');
+                                if (locationSource) {
+                                    locationSource.setData(locationData);
+                                } else {
+                                    map.addSource('beekeep-current-location', {
+                                        type: 'geojson',
+                                        data: locationData
+                                    });
+                                    map.addLayer({
+                                        id: 'beekeep-current-location-halo',
+                                        type: 'circle',
+                                        source: 'beekeep-current-location',
+                                        paint: {
+                                            'circle-radius': 15,
+                                            'circle-color': '#2563EB',
+                                            'circle-opacity': 0.20
+                                        }
+                                    });
+                                    map.addLayer({
+                                        id: 'beekeep-current-location-dot',
+                                        type: 'circle',
+                                        source: 'beekeep-current-location',
+                                        paint: {
+                                            'circle-radius': 7,
+                                            'circle-color': '#2563EB',
+                                            'circle-stroke-color': '#FFFFFF',
+                                            'circle-stroke-width': 2.5
+                                        }
+                                    });
+                                }
+
+                                window.beekeepPendingLocation = { lat: latitude, lon: longitude };
+                                if (animate) {
+                                    map.flyTo({ center: userPoint, zoom: 15, duration: 650 });
+                                } else {
+                                    map.jumpTo({ center: userPoint, zoom: 15 });
+                                }
+                            }
+                            window.beekeepApplyCurrentLocation = function (location, animate) {
+                                if (!mapReady) {
+                                    window.beekeepPendingLocation = location;
+                                    return;
+                                }
+                                applyCurrentLocation(location, animate);
+                            };
+                            window.beekeepRemoveCurrentLocation = function () {
+                                if (!mapReady) return;
+                                if (map.getLayer('beekeep-current-location-dot')) {
+                                    map.removeLayer('beekeep-current-location-dot');
+                                }
+                                if (map.getLayer('beekeep-current-location-halo')) {
+                                    map.removeLayer('beekeep-current-location-halo');
+                                }
+                                if (map.getSource('beekeep-current-location')) {
+                                    map.removeSource('beekeep-current-location');
+                                }
+                            };
+
                             if (window.ResizeObserver) {
                                 const resizeObserver = new ResizeObserver(resizeMapViewport);
                                 resizeObserver.observe(document.getElementById('map-shell'));
@@ -1902,46 +2021,6 @@ private fun createApiaryMapHtml(
                                     }
                                 });
 
-                                // Show the device's current position as a blue dot, separate
-                                // from saved apiary pins.
-                                if (currentLocation &&
-                                    Number.isFinite(Number(currentLocation.lon)) &&
-                                    Number.isFinite(Number(currentLocation.lat))) {
-                                    const userPoint = [
-                                        Number(currentLocation.lon),
-                                        Number(currentLocation.lat)
-                                    ];
-                                    map.addSource('beekeep-current-location', {
-                                        type: 'geojson',
-                                        data: {
-                                            type: 'Feature',
-                                            properties: {},
-                                            geometry: { type: 'Point', coordinates: userPoint }
-                                        }
-                                    });
-                                    map.addLayer({
-                                        id: 'beekeep-current-location-halo',
-                                        type: 'circle',
-                                        source: 'beekeep-current-location',
-                                        paint: {
-                                            'circle-radius': 15,
-                                            'circle-color': '#2563EB',
-                                            'circle-opacity': 0.20
-                                        }
-                                    });
-                                    map.addLayer({
-                                        id: 'beekeep-current-location-dot',
-                                        type: 'circle',
-                                        source: 'beekeep-current-location',
-                                        paint: {
-                                            'circle-radius': 7,
-                                            'circle-color': '#2563EB',
-                                            'circle-stroke-color': '#FFFFFF',
-                                            'circle-stroke-width': 2.5
-                                        }
-                                    });
-                                }
-
                                 map.on('click', 'beekeep-apiary-pins', function (event) {
                                     const feature = event.features && event.features[0];
                                     if (!feature || !feature.geometry || feature.geometry.type !== 'Point') return;
@@ -1968,13 +2047,10 @@ private fun createApiaryMapHtml(
                                 const focused = focusedId === null ? null : apiaries.find(function (a) {
                                     return String(a.id) === String(focusedId);
                                 });
-                                if (currentLocation &&
-                                    Number.isFinite(Number(currentLocation.lon)) &&
-                                    Number.isFinite(Number(currentLocation.lat))) {
-                                    map.jumpTo({
-                                        center: [Number(currentLocation.lon), Number(currentLocation.lat)],
-                                        zoom: 15
-                                    });
+                                if (window.beekeepPendingLocation) {
+                                    // A GPS request can arrive before the style finishes loading;
+                                    // consume the queued position now and move the camera last.
+                                    applyCurrentLocation(window.beekeepPendingLocation, false);
                                 } else if (focused && Number.isFinite(Number(focused.lon)) && Number.isFinite(Number(focused.lat))) {
                                     const focusedCoordinates = [Number(focused.lon), Number(focused.lat)];
                                     map.flyTo({
