@@ -1657,45 +1657,45 @@ private fun createApiaryMapHtml(apiaries: List<Apiary>, focusedApiaryId: Long?):
                                 maxCanvasSize: [4096, 4096],
                                 trackResize: true
                             });
-                            const markersById = {};
+                            // Keep apiary coordinates in a single GeoJSON source. Pins are
+                            // rendered by MapLibre's WebGL layers rather than separate DOM
+                            // elements, preventing marker/canvas drift during zoom animations.
                             const points = [];
-
-                            map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right');
-
-                            apiaries.forEach(function (apiary) {
+                            const apiaryFeatures = apiaries.map(function (apiary) {
                                 const longitude = Number(apiary.lon);
                                 const latitude = Number(apiary.lat);
-                                if (!Number.isFinite(longitude) || !Number.isFinite(latitude)) return;
-
+                                if (!Number.isFinite(longitude) || !Number.isFinite(latitude) ||
+                                    longitude < -180 || longitude > 180 ||
+                                    latitude < -85.051129 || latitude > 85.051129) return null;
                                 const point = [longitude, latitude];
                                 points.push(point);
+                                return {
+                                    type: 'Feature',
+                                    properties: {
+                                        id: String(apiary.id),
+                                        name: String(apiary.name || '')
+                                    },
+                                    geometry: {
+                                        type: 'Point',
+                                        coordinates: point
+                                    }
+                                };
+                            }).filter(Boolean);
 
-                                const markerElement = document.createElement('div');
-                                markerElement.className = 'apiary-marker';
-                                markerElement.setAttribute('role', 'img');
-                                markerElement.setAttribute('aria-label', apiary.name);
-                                markerElement.innerHTML = '<div class="apiary-ping"></div><div class="apiary-pin"></div>';
-
+                            function createApiaryPopup(name, longitude, latitude) {
                                 const popupContent = document.createElement('div');
                                 const title = document.createElement('div');
                                 title.className = 'apiary-popup-title';
-                                title.textContent = apiary.name;
+                                title.textContent = name;
                                 const coordinates = document.createElement('div');
                                 coordinates.className = 'apiary-popup-coords';
                                 coordinates.textContent = latitude.toFixed(5) + ', ' + longitude.toFixed(5);
                                 popupContent.appendChild(title);
                                 popupContent.appendChild(coordinates);
+                                return popupContent;
+                            }
 
-                                const marker = new maplibregl.Marker({
-                                    element: markerElement,
-                                    anchor: 'bottom'
-                                })
-                                    .setLngLat(point)
-                                    .setPopup(new maplibregl.Popup({ offset: 25 }).setDOMContent(popupContent))
-                                    .addTo(map);
-
-                                markersById[String(apiary.id)] = marker;
-                            });
+                            map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right');
 
                             function resizeMapViewport() {
                                 // Wait for Android/Compose, CSS layout, and the WebGL canvas
@@ -1728,16 +1728,106 @@ private fun createApiaryMapHtml(apiaries: List<Apiary>, focusedApiaryId: Long?):
                                 window.setTimeout(resizeMapViewport, 250);
                                 window.setTimeout(resizeMapViewport, 600);
 
+                                // Draw pins in the map's own projection/render loop so they
+                                // remain attached to their real geographic coordinates at all zooms.
+                                const pinCanvas = document.createElement('canvas');
+                                pinCanvas.width = 72;
+                                pinCanvas.height = 84;
+                                const ctx = pinCanvas.getContext('2d');
+                                if (ctx) {
+                                    ctx.lineJoin = 'round';
+                                    ctx.lineCap = 'round';
+                                    ctx.beginPath();
+                                    ctx.moveTo(36, 82);
+                                    ctx.bezierCurveTo(29, 70, 7, 48, 7, 30);
+                                    ctx.arc(36, 30, 28, Math.PI, 0, false);
+                                    ctx.bezierCurveTo(65, 48, 43, 70, 36, 82);
+                                    ctx.closePath();
+                                    ctx.fillStyle = '#F59E0B';
+                                    ctx.fill();
+                                    ctx.lineWidth = 5;
+                                    ctx.strokeStyle = '#FFFFFF';
+                                    ctx.stroke();
+                                    ctx.beginPath();
+                                    ctx.arc(36, 30, 8, 0, Math.PI * 2);
+                                    ctx.fillStyle = '#FFFFFF';
+                                    ctx.fill();
+                                }
+                                if (!map.hasImage('beekeep-apiary-pin')) {
+                                    map.addImage('beekeep-apiary-pin', pinCanvas, { pixelRatio: 2 });
+                                }
+
+                                map.addSource('beekeep-apiaries', {
+                                    type: 'geojson',
+                                    data: {
+                                        type: 'FeatureCollection',
+                                        features: apiaryFeatures
+                                    }
+                                });
+                                map.addLayer({
+                                    id: 'beekeep-apiary-halos',
+                                    type: 'circle',
+                                    source: 'beekeep-apiaries',
+                                    paint: {
+                                        'circle-radius': 15,
+                                        'circle-color': '#F59E0B',
+                                        'circle-opacity': 0.22
+                                    }
+                                });
+                                map.addLayer({
+                                    id: 'beekeep-apiary-pins',
+                                    type: 'symbol',
+                                    source: 'beekeep-apiaries',
+                                    layout: {
+                                        'icon-image': 'beekeep-apiary-pin',
+                                        'icon-anchor': 'bottom',
+                                        'icon-size': 1,
+                                        'icon-allow-overlap': true,
+                                        'icon-ignore-placement': true
+                                    }
+                                });
+
+                                map.on('click', 'beekeep-apiary-pins', function (event) {
+                                    const feature = event.features && event.features[0];
+                                    if (!feature || !feature.geometry || feature.geometry.type !== 'Point') return;
+                                    const coordinates = feature.geometry.coordinates.slice();
+                                    const properties = feature.properties || {};
+                                    const longitude = Number(coordinates[0]);
+                                    const latitude = Number(coordinates[1]);
+                                    new maplibregl.Popup({ offset: 36 })
+                                        .setLngLat(coordinates)
+                                        .setDOMContent(createApiaryPopup(
+                                            String(properties.name || 'Apiary'),
+                                            longitude,
+                                            latitude
+                                        ))
+                                        .addTo(map);
+                                });
+                                map.on('mouseenter', 'beekeep-apiary-pins', function () {
+                                    map.getCanvas().style.cursor = 'pointer';
+                                });
+                                map.on('mouseleave', 'beekeep-apiary-pins', function () {
+                                    map.getCanvas().style.cursor = '';
+                                });
+
                                 const focused = focusedId === null ? null : apiaries.find(function (a) {
                                     return String(a.id) === String(focusedId);
                                 });
-                                if (focused && markersById[String(focused.id)]) {
+                                if (focused && Number.isFinite(Number(focused.lon)) && Number.isFinite(Number(focused.lat))) {
+                                    const focusedCoordinates = [Number(focused.lon), Number(focused.lat)];
                                     map.flyTo({
-                                        center: [Number(focused.lon), Number(focused.lat)],
+                                        center: focusedCoordinates,
                                         zoom: 17,
                                         duration: 450
                                     });
-                                    markersById[String(focused.id)].togglePopup();
+                                    new maplibregl.Popup({ offset: 36 })
+                                        .setLngLat(focusedCoordinates)
+                                        .setDOMContent(createApiaryPopup(
+                                            String(focused.name || 'Apiary'),
+                                            focusedCoordinates[0],
+                                            focusedCoordinates[1]
+                                        ))
+                                        .addTo(map);
                                 } else if (points.length === 1) {
                                     map.jumpTo({ center: points[0], zoom: 16 });
                                 } else if (points.length > 1) {
