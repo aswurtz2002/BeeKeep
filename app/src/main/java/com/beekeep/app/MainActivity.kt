@@ -1,7 +1,6 @@
 package com.beekeep.app
 
 import android.Manifest
-import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
@@ -82,7 +81,6 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableDoubleStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -115,6 +113,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import androidx.core.content.edit
 import androidx.core.view.WindowCompat
 import androidx.lifecycle.ViewModelProvider
 import com.beekeep.app.data.ActivityEvent
@@ -182,7 +181,7 @@ class MainActivity : ComponentActivity() {
                 val incomingNfc by pendingNfcResult.collectAsStateWithLifecycle()
                 BeeKeepApp(vm, nfc, this, photoStore, locationController, cloud, darkMode, incomingNfc) { value ->
                     darkMode = value
-                    prefs.edit().putBoolean("dark_mode", value).apply()
+                    prefs.edit { putBoolean("dark_mode", value) }
                 }
             }
         }
@@ -264,10 +263,6 @@ fun BeeKeepApp(
     val feedings by vm.feedings.collectAsStateWithLifecycle()
     val treatments by vm.treatments.collectAsStateWithLifecycle()
     val harvests by vm.harvests.collectAsStateWithLifecycle()
-    val allInspections by vm.allInspections.collectAsStateWithLifecycle()
-    val allFeedings by vm.allFeedings.collectAsStateWithLifecycle()
-    val allTreatments by vm.allTreatments.collectAsStateWithLifecycle()
-    val allHarvests by vm.allHarvests.collectAsStateWithLifecycle()
     val ready by vm.ready.collectAsStateWithLifecycle()
 
     androidx.compose.runtime.LaunchedEffect(ready, incomingNfc?.uid) {
@@ -379,7 +374,6 @@ fun BeeKeepApp(
                     scope.launch { snackbarHostState.showSnackbar(error ?: "Harvest logged") }
                 }
             }
-            null -> Unit
         }
         return
     }
@@ -433,12 +427,12 @@ fun BeeKeepApp(
             },
             onEditQueen = { status, mark, origin, age, temperament -> vm.updateQueenProfile(status, mark, origin, age, temperament) },
             onMarkDead = {
-                vm.markHiveDead(hiveForDetail.id) { success, error ->
+                vm.markHiveDead(hiveForDetail.id) { _, error ->
                     scope.launch { snackbarHostState.showSnackbar(error ?: "Hive ${hiveForDetail.number} marked dead. History preserved.") }
                 }
             },
             onRestore = {
-                vm.restoreHive(hiveForDetail.id) { success, error ->
+                vm.restoreHive(hiveForDetail.id) { _, error ->
                     scope.launch { snackbarHostState.showSnackbar(error ?: "Hive ${hiveForDetail.number} restored to active.") }
                 }
             },
