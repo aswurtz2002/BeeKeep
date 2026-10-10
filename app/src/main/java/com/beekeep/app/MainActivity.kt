@@ -1899,7 +1899,6 @@ private fun InspectionScreen(
     }
     val noteDraftKey = remember(hive.id) { "hive_${hive.id}" }
     val noteDraftTimestampKey = remember(hive.id) { "${noteDraftKey}_recorded_at" }
-    val noteDraftTimestampKey = remember(hive.id) { "${noteDraftKey}_recorded_at" }
     // The inspection list may briefly still contain the previous hive while NFC
     // switches the selected hive. Never let another hive's latest inspection seed this form.
     val lastInspection = remember(hive.id, priorInspections) {
