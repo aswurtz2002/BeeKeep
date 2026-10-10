@@ -319,6 +319,7 @@ fun BeeKeepApp(
     var addHive by rememberSaveable { mutableStateOf(false) }
     var logType by rememberSaveable { mutableStateOf<HiveLogType?>(null) }
     var addApiary by rememberSaveable { mutableStateOf(false) }
+    var editingApiary by remember { mutableStateOf<Apiary?>(null) }
     var unassignedTagUid by rememberSaveable { mutableStateOf<String?>(null) }
     var pendingTagUid by rememberSaveable { mutableStateOf<String?>(null) }
     var scanning by remember { mutableStateOf(false) }
@@ -415,8 +416,18 @@ fun BeeKeepApp(
         }
         return
     }
+    if (editingApiary != null) {
+        val apiaryToEdit = editingApiary!!
+        AddApiaryScreen(locationController, apiaryToEdit, { editingApiary = null }) { id, name, notes, lat, lon, forage, water ->
+            vm.updateApiary(id ?: apiaryToEdit.id, name, notes, lat, lon, forage, water) { success, error ->
+                scope.launch { snackbarHostState.showSnackbar(error ?: "Apiary updated") }
+                if (success) editingApiary = null
+            }
+        }
+        return
+    }
     if (addApiary) {
-        AddApiaryScreen(locationController, { addApiary = false }) { name, notes, lat, lon, forage, water ->
+        AddApiaryScreen(locationController, null, { addApiary = false }) { _, name, notes, lat, lon, forage, water ->
             vm.saveApiary(name, notes, lat, lon, forage, water) { success, error ->
                 scope.launch { snackbarHostState.showSnackbar(error ?: "Apiary saved") }
                 if (success) addApiary = false
@@ -600,7 +611,7 @@ fun BeeKeepApp(
     ) { padding ->
         when (screen) {
             Screen.HOME -> HomeScreen(hives, padding, onScan = { screen = Screen.SCAN })
-            Screen.APIARIES -> ApiariesScreen(apiaries, hives, padding, onAddApiary = { addApiary = true }, onOpenApiary = { selectedApiaryName = it; screen = Screen.APIARY_HIVES })
+            Screen.APIARIES -> ApiariesScreen(apiaries, hives, padding, onAddApiary = { addApiary = true }, onEditApiary = { editingApiary = it }, onOpenApiary = { selectedApiaryName = it; screen = Screen.APIARY_HIVES })
             Screen.MORE -> MoreScreen(padding, darkMode, onDarkModeChange, onTagManager = { screen = Screen.TAG_MANAGER }, onColonyHistory = { screen = Screen.COLONY_HISTORY }, deadCount = deadHives.size, activity, cloud)
             Screen.TAG_MANAGER -> TagManagementScreen(
                 padding = padding,
@@ -760,8 +771,10 @@ private fun ApiariesScreen(
     hives: List<Hive>,
     padding: androidx.compose.foundation.layout.PaddingValues,
     onAddApiary: () -> Unit,
+    onEditApiary: (Apiary) -> Unit,
     onOpenApiary: (String) -> Unit
 ) {
+    val context = LocalContext.current
     var query by rememberSaveable { mutableStateOf("") }
     val filtered = apiaries.filter { it.name.contains(query, ignoreCase = true) }
 
@@ -809,7 +822,17 @@ private fun ApiariesScreen(
                                 Text("$count ${if (count == 1) "hive" else "hives"}", color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 apiary.notes.takeIf { it.isNotBlank() }?.let { Text(it, maxLines = 2, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall) }
                             }
-                            Icon(Icons.Rounded.ChevronRight, "Open apiary", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                IconButton(onClick = { onEditApiary(apiary) }) { Icon(Icons.Rounded.Edit, "Edit apiary ${apiary.name}") }
+                                if (apiary.latitude != null && apiary.longitude != null) {
+                                    IconButton(onClick = {
+                                        val uri = android.net.Uri.parse("geo:${apiary.latitude},${apiary.longitude}?q=${apiary.latitude},${apiary.longitude}(${android.net.Uri.encode(apiary.name)})")
+                                        runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, uri)) }
+                                    }) { Icon(Icons.Rounded.LocationOn, "Open apiary location in maps") }
+                                } else {
+                                    Icon(Icons.Rounded.ChevronRight, "Open apiary", tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(12.dp))
+                                }
+                            }
                         }
                     }
                 }
@@ -1719,15 +1742,16 @@ private fun rememberPhotoBitmap(path: String?, maxDimension: Int): Bitmap? {
 @Composable
 private fun AddApiaryScreen(
     locationController: LocationController,
+    existingApiary: Apiary?,
     onBack: () -> Unit,
-    onSave: (String, String, Double?, Double?, String, String) -> Unit
+    onSave: (Long?, String, String, Double?, Double?, String, String) -> Unit
 ) {
-    var name by rememberSaveable { mutableStateOf("") }
-    var notes by rememberSaveable { mutableStateOf("") }
-    var forage by rememberSaveable { mutableStateOf("") }
-    var water by rememberSaveable { mutableStateOf("") }
-    var lat by rememberSaveable { mutableStateOf<Double?>(null) }
-    var lon by rememberSaveable { mutableStateOf<Double?>(null) }
+    var name by rememberSaveable(existingApiary?.id) { mutableStateOf(existingApiary?.name.orEmpty()) }
+    var notes by rememberSaveable(existingApiary?.id) { mutableStateOf(existingApiary?.notes.orEmpty()) }
+    var forage by rememberSaveable(existingApiary?.id) { mutableStateOf(existingApiary?.forageNotes.orEmpty()) }
+    var water by rememberSaveable(existingApiary?.id) { mutableStateOf(existingApiary?.waterNotes.orEmpty()) }
+    var lat by rememberSaveable(existingApiary?.id) { mutableStateOf(existingApiary?.latitude) }
+    var lon by rememberSaveable(existingApiary?.id) { mutableStateOf(existingApiary?.longitude) }
     var gpsStatus by rememberSaveable { mutableStateOf("") }
     val context = LocalContext.current
     BackHandler { onBack() }
@@ -1740,7 +1764,7 @@ private fun AddApiaryScreen(
         } else gpsStatus = "Location permission denied"
     }
     Column(Modifier.fillMaxSize().safeDrawingPadding().verticalScroll(rememberScrollState()).padding(18.dp),verticalArrangement=Arrangement.spacedBy(12.dp)) {
-        Row(verticalAlignment=Alignment.CenterVertically){IconButton(onBack){Icon(Icons.Rounded.ArrowBack,"Back")};Text("Add Apiary",style=MaterialTheme.typography.headlineSmall,fontWeight=FontWeight.ExtraBold)}
+        Row(verticalAlignment=Alignment.CenterVertically){IconButton(onBack){Icon(Icons.Rounded.ArrowBack,"Back")};Text(if (existingApiary == null) "Add Apiary" else "Edit Apiary",style=MaterialTheme.typography.headlineSmall,fontWeight=FontWeight.ExtraBold)}
         OutlinedTextField(name,{name=it},Modifier.fillMaxWidth(),label={Text("Apiary name")},singleLine=true)
         OutlinedTextField(notes,{notes=it},Modifier.fillMaxWidth(),label={Text("Site notes")})
         OutlinedTextField(forage,{forage=it},Modifier.fillMaxWidth(),label={Text("Forage notes")})
@@ -1750,8 +1774,12 @@ private fun AddApiaryScreen(
                 if(r != null){lat=r.latitude;lon=r.longitude;gpsStatus="GPS captured"} else gpsStatus="Could not get a location"
             } else locationPermission.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION,Manifest.permission.ACCESS_COARSE_LOCATION))
         },Modifier.fillMaxWidth().height(54.dp)){Icon(Icons.Rounded.LocationOn,null);Spacer(Modifier.width(6.dp));Text(if(lat==null)"CAPTURE CURRENT GPS" else "GPS CAPTURED")}
-        if(gpsStatus.isNotBlank()) Text(gpsStatus,color=if(gpsStatus.startsWith("Could"))MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,fontWeight=FontWeight.Bold)
-        Button({onSave(name.trim(),notes.trim(),lat,lon,forage.trim(),water.trim())},Modifier.fillMaxWidth().height(60.dp),enabled=name.isNotBlank(),shape=RoundedCornerShape(24.dp)){Text("SAVE APIARY",fontWeight=FontWeight.ExtraBold)}
+        if (lat != null && lon != null) {
+            Text("Saved GPS: ${"%.5f".format(Locale.US, lat)}, ${"%.5f".format(Locale.US, lon)}", color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Bold)
+            TextButton(onClick = { lat = null; lon = null; gpsStatus = "GPS location removed" }) { Text("REMOVE GPS LOCATION") }
+        }
+        if(gpsStatus.isNotBlank()) Text(gpsStatus,color=if(gpsStatus.startsWith("Could") || gpsStatus.startsWith("Location permission denied"))MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,fontWeight=FontWeight.Bold)
+        Button({onSave(existingApiary?.id, name.trim(),notes.trim(),lat,lon,forage.trim(),water.trim())},Modifier.fillMaxWidth().height(60.dp),enabled=name.isNotBlank(),shape=RoundedCornerShape(24.dp)){Text(if (existingApiary == null) "SAVE APIARY" else "SAVE CHANGES",fontWeight=FontWeight.ExtraBold)}
     }
 }
 
