@@ -470,8 +470,10 @@ class NfcController {
         if (assignedHiveId != null && payloadHiveId != null && assignedHiveId != payloadHiveId) {
             val warning = "This tag's stored hive payload conflicts with its saved assignment. The payload was preserved."
             if (result.info.hasBeeKeepLaunchRecord) return result.copy(launchPreparationError = warning)
-            return when (val launchWrite = write(tag, result.text!!.trim(), allowOverwriteOtherHive = false)) {
-                is NfcResult.Written -> NfcResult.Read(launchWrite.info, result.text.trim(), warning)
+            val originalPayload = result.text?.trim()
+                ?: return result.copy(launchPreparationError = warning)
+            return when (val launchWrite = write(tag, originalPayload, allowOverwriteOtherHive = false)) {
+                is NfcResult.Written -> NfcResult.Read(launchWrite.info, originalPayload, warning)
                 is NfcResult.Error -> result.copy(launchPreparationError = "$warning BeeKeep launch data could not be added: ${launchWrite.message}")
                 is NfcResult.Read -> result.copy(launchPreparationError = warning)
             }
