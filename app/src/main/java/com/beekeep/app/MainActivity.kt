@@ -545,7 +545,7 @@ fun BeeKeepApp(
             onSave = { inspection ->
                 val saved = vm.saveInspection(inspection)
                 if (saved) {
-                    // The inspection now permanently contains the note, so the draft is no longer needed.
+                    // The note is now in the saved inspection. The next Inspect session reloads it from the saved record.
                     activity.getSharedPreferences(INSPECTION_NOTE_DRAFTS, android.content.Context.MODE_PRIVATE)
                         .edit { remove("hive_${inspection.hiveId}") }
                     inspecting = false
@@ -1429,16 +1429,20 @@ private fun InspectionScreen(
         context.getSharedPreferences(INSPECTION_NOTE_DRAFTS, android.content.Context.MODE_PRIVATE)
     }
     val noteDraftKey = remember(hive.id) { "hive_${hive.id}" }
-    val savedNoteDraft = remember(hive.id) { noteDraftPrefs.getString(noteDraftKey, "").orEmpty() }
     val lastInspection = remember(priorInspections) { priorInspections.maxByOrNull { it.createdAt } }
+    val savedNoteDraft = remember(hive.id) { noteDraftPrefs.getString(noteDraftKey, "").orEmpty() }
+    // A draft takes priority while editing; otherwise resume the saved note log from the last inspection.
+    val startingNotes = remember(hive.id, savedNoteDraft, lastInspection?.id, lastInspection?.notes) {
+        savedNoteDraft.ifBlank { lastInspection?.notes.orEmpty() }
+    }
 
     var strength by rememberSaveable { mutableIntStateOf(hive.strength) }
     var queen by rememberSaveable { mutableStateOf(hive.queenStatus) }
     var mites by rememberSaveable { mutableIntStateOf(lastInspection?.miteCount ?: 0) }
     var sample by rememberSaveable { mutableIntStateOf(lastInspection?.sampleSize ?: 300) }
-    var notes by rememberSaveable(hive.id) { mutableStateOf(savedNoteDraft) }
+    var notes by rememberSaveable(hive.id) { mutableStateOf(startingNotes) }
     var noteSaveStatus by rememberSaveable(hive.id) {
-        mutableStateOf(if (savedNoteDraft.isBlank()) "" else "Auto-saved note restored")
+        mutableStateOf(if (startingNotes.isBlank()) "" else if (savedNoteDraft.isNotBlank()) "Auto-saved note restored" else "Saved notes loaded")
     }
     var eggs by rememberSaveable { mutableIntStateOf(lastInspection?.eggs ?: 0) }
     var openBrood by rememberSaveable { mutableIntStateOf(lastInspection?.openBrood ?: 0) }
@@ -1489,7 +1493,9 @@ private fun InspectionScreen(
     }
     val voiceLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         result.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)?.firstOrNull()?.let { spokenText ->
-            val updatedNotes = if (notes.isBlank()) spokenText else "$notes $spokenText"
+            // Each completed dictation is a separate note entry. Keep earlier notes and add this one below.
+            val cleanSpokenText = spokenText.trim()
+            val updatedNotes = if (notes.isBlank()) cleanSpokenText else "${notes.trimEnd()}\n$cleanSpokenText"
             notes = updatedNotes
             // Save immediately when Android returns the finished speech transcription.
             noteDraftPrefs.edit {
