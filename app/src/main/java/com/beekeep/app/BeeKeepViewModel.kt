@@ -238,6 +238,18 @@ class BeeKeepViewModel(
         }
     }
 
+    fun updateApiary(id: Long, name: String, notes: String, lat: Double?, lon: Double?, forage: String, water: String, onResult: (Boolean, String?) -> Unit = { _, _ -> }) {
+        val clean = name.trim()
+        if (clean.isBlank()) { onResult(false, "Enter an apiary name."); return }
+        viewModelScope.launch {
+            val existing = _apiaries.value.firstOrNull { it.id == id }
+            if (existing == null) { onResult(false, "Apiary not found. Refresh and try again."); return@launch }
+            runCatching { repo.saveApiary(Apiary(id, clean, notes, lat, lon, forage, water)) }
+                .onSuccess { onResult(true, null) }
+                .onFailure { onResult(false, it.message ?: "Could not update apiary.") }
+        }
+    }
+
     private fun localPlusDays(timestamp: Long, days: Long): Long =
         java.time.Instant.ofEpochMilli(timestamp)
             .atZone(ZoneId.systemDefault())
