@@ -44,6 +44,7 @@ sealed interface NfcResult {
 
 class NfcController {
     private var adapter: NfcAdapter? = null
+    @Volatile private var attachedActivity: Activity? = null
     private val active = AtomicBoolean(false)
     private val passiveReadInFlight = AtomicBoolean(false)
     private val passiveLock = Any()
@@ -60,10 +61,11 @@ class NfcController {
     }
 
     fun attach(activity: Activity) {
+        attachedActivity = activity
         adapter = activity.getSystemService(NfcManager::class.java)?.defaultAdapter
     }
 
-    /** Receives passive reads; the host should forward only hive tags it recognizes. */
+    /** Receives passive reads after the local UID-to-hive index is ready. */
     fun setPassiveReadListener(activity: Activity, listener: (NfcResult.Read) -> Unit) {
         passiveReadListener = listener
         if (activityResumed) enablePassiveIfNeeded(activity)
@@ -101,6 +103,7 @@ class NfcController {
             .mapNotNull { (uid, hiveId) -> uid.trim().uppercase(java.util.Locale.ROOT).takeIf { it.isNotBlank() }?.let { it to hiveId } }
             .toMap()
         knownHiveTagsReady = ready
+        if (ready) attachedActivity?.takeIf { activityResumed }?.let(::enablePassiveIfNeeded)
     }
 
     fun startRead(activity: Activity, onResult: (NfcResult) -> Unit) {
@@ -221,7 +224,7 @@ class NfcController {
             NfcAdapter.FLAG_READER_NO_PLATFORM_SOUNDS
 
     private fun enablePassiveIfNeeded(activity: Activity) {
-        if (!activityResumed || active.get() || passiveReaderActive ||
+        if (!activityResumed || active.get() || passiveReaderActive || !knownHiveTagsReady ||
             passiveReadListener == null || activity.isFinishing || activity.isDestroyed) return
         val nfc = adapter ?: activity.getSystemService(NfcManager::class.java)?.defaultAdapter ?: return
         if (!nfc.isEnabled) return
