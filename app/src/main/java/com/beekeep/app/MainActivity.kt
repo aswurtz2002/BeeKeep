@@ -1754,7 +1754,12 @@ private fun createApiaryMapHtml(apiaries: List<Apiary>, focusedApiaryId: Long?):
                                     ctx.fill();
                                 }
                                 if (!map.hasImage('beekeep-apiary-pin')) {
-                                    map.addImage('beekeep-apiary-pin', pinCanvas, { pixelRatio: 2 });
+                                    // MapLibre's addImage accepts ImageData (not a raw canvas).
+                                    map.addImage(
+                                        'beekeep-apiary-pin',
+                                        ctx.getImageData(0, 0, pinCanvas.width, pinCanvas.height),
+                                        { pixelRatio: 2 }
+                                    );
                                 }
 
                                 map.addSource('beekeep-apiaries', {
