@@ -1795,6 +1795,59 @@ private fun QueenProfileDialog(
 }
 
 @Composable private fun EventCard(event:ActivityEvent){Card(shape=RoundedCornerShape(16.dp)){Row(Modifier.fillMaxWidth().padding(14.dp),horizontalArrangement=Arrangement.spacedBy(10.dp)){Icon(Icons.Rounded.Yard,null);Column{Text(event.title,fontWeight=FontWeight.Bold);Text(DateFormat.getDateTimeInstance(DateFormat.MEDIUM,DateFormat.SHORT).format(Date(event.createdAt)),color=MaterialTheme.colorScheme.onSurfaceVariant);if(event.detail.isNotBlank())Text(event.detail)}}}}
+private fun inspectionNoteDatePrefix(timestamp: Long): String =
+    "${DateFormat.getDateInstance(DateFormat.MEDIUM).format(Date(timestamp))} — "
+
+private fun hasInlineInspectionNoteDate(notes: String): Boolean {
+    val firstLine = notes.lineSequence().firstOrNull() ?: return false
+    val separator = firstLine.indexOf(" — ")
+    if (separator <= 0) return false
+    val dateText = firstLine.substring(0, separator)
+    val formatter = DateFormat.getDateInstance(DateFormat.MEDIUM)
+    val parsed = runCatching { formatter.parse(dateText) }.getOrNull() ?: return false
+    return formatter.format(parsed) == dateText
+}
+
+/**
+ * Adds a date directly to the first note and to each new line appended at the end.
+ * Existing lines stay unchanged when they're edited; dates become part of the saved text.
+ */
+private fun addDateToNewInspectionNoteLines(previousNotes: String, updatedNotes: String): String {
+    if (updatedNotes.isEmpty()) return updatedNotes
+    val datePrefix = inspectionNoteDatePrefix(System.currentTimeMillis())
+
+    // First text in an empty field gets a date. Pasted multi-line text receives a date
+    // for each line, while Enter at the start preserves the empty first line.
+    if (previousNotes.isBlank()) {
+        return updatedNotes.split('\n').mapIndexed { index, line ->
+            when {
+                line.startsWith(datePrefix) -> line
+                index == 0 && line.isBlank() -> line
+                else -> datePrefix + line
+            }
+        }.joinToString("\n")
+    }
+
+    // Only auto-date lines when text is appended, so editing historical lines does not
+    // rewrite their content or replace their original dates.
+    if (!updatedNotes.startsWith(previousNotes)) return updatedNotes
+    val appended = updatedNotes.substring(previousNotes.length)
+    if (!appended.contains('\n')) return updatedNotes
+
+    val appendedLines = appended.split('\n')
+    return buildString {
+        append(previousNotes)
+        appendedLines.forEachIndexed { index, line ->
+            if (index == 0) {
+                append(line)
+            } else {
+                append('\n')
+                append(if (line.startsWith(datePrefix)) line else datePrefix + line)
+            }
+        }
+    }
+}
+
 @Composable
 private fun InspectionSnapshot(i: Inspection) {
     Card(shape = RoundedCornerShape(16.dp)) {
@@ -1813,7 +1866,10 @@ private fun InspectionSnapshot(i: Inspection) {
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                Text(i.notes, style = MaterialTheme.typography.bodyMedium)
+                Text(
+                    if (hasInlineInspectionNoteDate(i.notes)) i.notes else "${inspectionNoteDatePrefix(i.createdAt)}${i.notes}",
+                    style = MaterialTheme.typography.bodyMedium
+                )
             }
         }
     }
@@ -1843,6 +1899,7 @@ private fun InspectionScreen(
     }
     val noteDraftKey = remember(hive.id) { "hive_${hive.id}" }
     val noteDraftTimestampKey = remember(hive.id) { "${noteDraftKey}_recorded_at" }
+    val noteDraftTimestampKey = remember(hive.id) { "${noteDraftKey}_recorded_at" }
     // The inspection list may briefly still contain the previous hive while NFC
     // switches the selected hive. Never let another hive's latest inspection seed this form.
     val lastInspection = remember(hive.id, priorInspections) {
@@ -1858,7 +1915,17 @@ private fun InspectionScreen(
     val savedNoteDraft = remember(hive.id) { noteDraftPrefs.getString(noteDraftKey, "").orEmpty() }
     // A stored empty string means the beekeeper deliberately cleared the notes; don't restore older text.
     val startingNotes = remember(hive.id, hasSavedNoteDraft, savedNoteDraft, lastInspection?.id, lastInspection?.notes) {
-        if (hasSavedNoteDraft) savedNoteDraft else lastInspection?.notes.orEmpty()
+        val loadedNotes = if (hasSavedNoteDraft) savedNoteDraft else lastInspection?.notes.orEmpty()
+        if (loadedNotes.isBlank() || hasInlineInspectionNoteDate(loadedNotes)) {
+            loadedNotes
+        } else {
+            val originalTimestamp = if (hasSavedNoteDraft) {
+                noteDraftPrefs.getLong(noteDraftTimestampKey, 0L)
+            } else {
+                lastInspection?.createdAt ?: 0L
+            }
+            if (originalTimestamp > 0L) "${inspectionNoteDatePrefix(originalTimestamp)}$loadedNotes" else loadedNotes
+        }
     }
 
     var strength by rememberSaveable(hive.id, formStateKey, lastInspection?.id) {
@@ -1874,9 +1941,6 @@ private fun InspectionScreen(
         mutableIntStateOf(formDraft?.sampleSize ?: lastInspection?.sampleSize ?: 300)
     }
     var notes by rememberSaveable(hive.id) { mutableStateOf(startingNotes) }
-    var noteRecordedAt by rememberSaveable(hive.id) {
-        mutableStateOf(noteDraftPrefs.getLong(noteDraftTimestampKey, lastInspection?.createdAt ?: 0L))
-    }
     var noteSaveStatus by rememberSaveable(hive.id) {
         mutableStateOf(if (startingNotes.isBlank()) "" else if (hasSavedNoteDraft) "Auto-saved note restored" else "Saved notes loaded")
     }
@@ -2029,14 +2093,13 @@ private fun InspectionScreen(
     val appendRecognizedSpeech by rememberUpdatedState<(String) -> Unit>({ spokenText ->
         val cleanSpokenText = spokenText.trim()
         if (cleanSpokenText.isNotBlank()) {
-            val updatedNotes = if (latestNotes.isBlank()) cleanSpokenText else "${latestNotes.trimEnd()}\n$cleanSpokenText"
             val recordedAt = System.currentTimeMillis()
+            val datedSpokenText = "${inspectionNoteDatePrefix(recordedAt)}$cleanSpokenText"
+            val updatedNotes = if (latestNotes.isBlank()) datedSpokenText else "${latestNotes.trimEnd()}\n$datedSpokenText"
             notes = updatedNotes
             noteDraftPrefs.edit {
                 putString(noteDraftKey, updatedNotes)
-                putLong(noteDraftTimestampKey, recordedAt)
             }
-            noteRecordedAt = recordedAt
             noteSaveStatus = "Note auto-saved"
             voicePartialText = ""
             voiceStatus = "Saved • continuing to listen"
@@ -2171,12 +2234,10 @@ private fun InspectionScreen(
         // Debounce edits so a longer note is stored when the user pauses typing.
         delay(400)
         // Store blank too: it records an intentional manual clear rather than reviving old notes later.
-        val recordedAt = if (notes.isBlank()) 0L else System.currentTimeMillis()
         noteDraftPrefs.edit {
             putString(noteDraftKey, notes)
-            if (recordedAt == 0L) remove(noteDraftTimestampKey) else putLong(noteDraftTimestampKey, recordedAt)
+            if (notes.isBlank()) remove(noteDraftTimestampKey)
         }
-        noteRecordedAt = recordedAt
         noteSaveStatus = if (notes.isBlank()) "" else "Note auto-saved"
     }
 
@@ -2364,19 +2425,12 @@ private fun InspectionScreen(
                         OutlinedTextField(
                             value = notes,
                             onValueChange = {
-                                notes = it
+                                notes = addDateToNewInspectionNoteLines(notes, it)
                                 noteSaveStatus = if (it.isBlank()) "" else "Saving note…"
                             },
                             modifier = Modifier.fillMaxWidth().height(124.dp),
                             label = { Text("What did you see?") }
                         )
-                        if (notes.isNotBlank() && noteRecordedAt > 0L) {
-                            Text(
-                                "Date recorded: ${DateFormat.getDateInstance(DateFormat.MEDIUM).format(Date(noteRecordedAt))}",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
                         if (noteSaveStatus.isNotBlank()) {
                             Text(
                                 noteSaveStatus,
