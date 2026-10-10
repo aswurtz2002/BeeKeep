@@ -26,6 +26,13 @@
                 <category android:name="android.intent.category.DEFAULT" />
                 <data android:mimeType="application/vnd.beekeep.hive" />
             </intent-filter>
+            <intent-filter>
+                <action android:name="android.nfc.action.TECH_DISCOVERED" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+            <meta-data
+                android:name="android.nfc.action.TECH_DISCOVERED"
+                android:resource="@xml/nfc_tech_filter" />
         </activity>
     </application>
 </manifest>

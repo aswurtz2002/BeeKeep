@@ -164,6 +164,20 @@ class MainActivity : ComponentActivity() {
         photoStore = PhotoStore(this)
         locationController = LocationController(this)
         val repository = LocalHiveRepository(applicationContext)
+        // Keep NFC in foreground-reader mode while BeeKeep is visible. This takes
+        // priority over Android's normal tag dispatch, so a tag can open its hive
+        // without switching to a browser or another NFC app.
+        nfc.setPassiveReadListener(this) { result ->
+            lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                runCatching {
+                    val assignedHive = repository.findHiveByNfc(result.uid)
+                    val payloadHive = BeeKeepNfcPayload.hiveId(result.text)?.let { repository.getHive(it) }
+                    if (assignedHive != null || payloadHive != null) {
+                        pendingNfcResult.value = result
+                    }
+                }
+            }
+        }
         val cloud = SupabaseGateway(applicationContext, repository)
         cloudGateway = cloud
         CloudSyncScheduler.schedule(applicationContext)
@@ -196,22 +210,25 @@ class MainActivity : ComponentActivity() {
 
     private fun handleNfcIntent(intent: Intent?) {
         lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) {
-            nfc.readIntent(intent)?.let { pendingNfcResult.value = it }
+            nfc.readIntent(intent)?.let { result ->
+                nfc.rememberHandledUid(result.uid)
+                pendingNfcResult.value = result
+            }
         }
     }
 
     override fun onResume() {
         super.onResume()
-        nfc.attach(this)
+        nfc.resume(this)
     }
 
     override fun onPause() {
-        nfc.stop(this)
+        nfc.pause(this)
         super.onPause()
     }
 
     override fun onDestroy() {
-        nfc.stop(this)
+        nfc.pause(this)
         if (::cloudGateway.isInitialized) cloudGateway.stopRealtime()
         super.onDestroy()
     }
@@ -272,10 +289,15 @@ fun BeeKeepApp(
         val resolvedId = vm.findHiveByTag(result.uid)?.id
             ?: payloadHiveId?.takeIf { id -> hives.any { it.id == id } }
         if (resolvedId != null) {
-            vm.openHive(resolvedId)
-            selectedHiveOpen = true
-            screen = Screen.HOME
-            scope.launch { snackbarHostState.showSnackbar("Hive tag ${result.uid} recognized") }
+            // A tag may be seen repeatedly while held near the phone. Do not
+            // reload the same hive detail screen if it is already open.
+            val alreadyOpen = selectedHiveOpen && selected?.id == resolvedId
+            if (!alreadyOpen) {
+                vm.openHive(resolvedId)
+                selectedHiveOpen = true
+                screen = Screen.HOME
+                scope.launch { snackbarHostState.showSnackbar("Hive tag ${result.uid} recognized") }
+            }
         } else {
             screen = Screen.SCAN
             unassignedTagUid = result.uid

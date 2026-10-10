@@ -40,10 +40,50 @@ sealed interface NfcResult {
 class NfcController {
     private var adapter: NfcAdapter? = null
     private val active = AtomicBoolean(false)
+    private val passiveReadInFlight = AtomicBoolean(false)
+    private val passiveLock = Any()
+    @Volatile private var activityResumed = false
+    @Volatile private var passiveReaderActive = false
+    @Volatile private var passiveReadListener: ((NfcResult.Read) -> Unit)? = null
+    private var lastHandledUid: String? = null
+    private var lastHandledAt = 0L
+
+    private companion object {
+        const val PASSIVE_REPEAT_DELAY_MS = 1_800L
+    }
 
     fun attach(activity: Activity) {
         adapter = activity.getSystemService(NfcManager::class.java)?.defaultAdapter
     }
+
+    /** Receives passive reads; the host should forward only hive tags it recognizes. */
+    fun setPassiveReadListener(activity: Activity, listener: (NfcResult.Read) -> Unit) {
+        passiveReadListener = listener
+        if (activityResumed) enablePassiveIfNeeded(activity)
+    }
+
+    /** Prevents a cold-start NFC intent from immediately being delivered a second time. */
+    fun rememberHandledUid(uid: String) {
+        synchronized(passiveLock) {
+            lastHandledUid = uid
+            lastHandledAt = System.currentTimeMillis()
+        }
+    }
+
+    fun resume(activity: Activity) {
+        attach(activity)
+        activityResumed = true
+        enablePassiveIfNeeded(activity)
+    }
+
+    fun pause(activity: Activity) {
+        activityResumed = false
+        active.set(false)
+        passiveReadInFlight.set(false)
+        runCatching { adapter?.disableReaderMode(activity) }
+        passiveReaderActive = false
+    }
+
     fun isAvailable(): Boolean = adapter != null
     fun isEnabled(): Boolean = adapter?.isEnabled == true
     fun isScanning(): Boolean = active.get()
@@ -73,12 +113,11 @@ class NfcController {
             onResult(NfcResult.Error("NFC scan is already running."))
             return
         }
-        val flags = NfcAdapter.FLAG_READER_NFC_A or
-            NfcAdapter.FLAG_READER_NFC_B or
-            NfcAdapter.FLAG_READER_NFC_F or
-            NfcAdapter.FLAG_READER_NFC_V or
-            NfcAdapter.FLAG_READER_SKIP_NDEF_CHECK or
-            NfcAdapter.FLAG_READER_NO_PLATFORM_SOUNDS
+        // Explicit read/write operations temporarily take ownership from the
+        // passive reader so the one-shot callback cannot compete with it.
+        runCatching { nfc.disableReaderMode(activity) }
+        passiveReaderActive = false
+        val flags = readerFlags()
         val delivered = AtomicBoolean(false)
         try {
             nfc.enableReaderMode(activity, { tag ->
@@ -86,8 +125,9 @@ class NfcController {
                 if (delivered.compareAndSet(false, true)) {
                     val result = runCatching { operation(tag) }
                         .getOrElse { e -> NfcResult.Error(friendlyError(e)) }
+                    if (result is NfcResult.Read) rememberHandledUid(result.uid)
                     activity.runOnUiThread {
-                        if (activity.isFinishing || activity.isDestroyed) {
+                        if (!active.get() || activity.isFinishing || activity.isDestroyed) {
                             stop(activity)
                         } else {
                             onResult(result)
@@ -99,12 +139,73 @@ class NfcController {
         } catch (e: RuntimeException) {
             active.set(false)
             onResult(NfcResult.Error(friendlyError(e)))
+            enablePassiveIfNeeded(activity)
         }
     }
 
     fun stop(activity: Activity) {
         runCatching { adapter?.disableReaderMode(activity) }
+        passiveReaderActive = false
         active.set(false)
+        passiveReadInFlight.set(false)
+        enablePassiveIfNeeded(activity)
+    }
+
+    private fun readerFlags(): Int =
+        NfcAdapter.FLAG_READER_NFC_A or
+            NfcAdapter.FLAG_READER_NFC_B or
+            NfcAdapter.FLAG_READER_NFC_F or
+            NfcAdapter.FLAG_READER_NFC_V or
+            NfcAdapter.FLAG_READER_SKIP_NDEF_CHECK or
+            NfcAdapter.FLAG_READER_NO_PLATFORM_SOUNDS
+
+    private fun enablePassiveIfNeeded(activity: Activity) {
+        if (!activityResumed || active.get() || passiveReaderActive ||
+            passiveReadListener == null || activity.isFinishing || activity.isDestroyed) return
+        val nfc = adapter ?: activity.getSystemService(NfcManager::class.java)?.defaultAdapter ?: return
+        if (!nfc.isEnabled) return
+
+        try {
+            nfc.enableReaderMode(activity, { tag ->
+                if (!activityResumed || active.get() ||
+                    !passiveReadInFlight.compareAndSet(false, true)) {
+                    return@enableReaderMode
+                }
+                try {
+                    val result = runCatching { read(tag) }.getOrNull()
+                    if (result is NfcResult.Read) {
+                        val shouldDeliver = synchronized(passiveLock) {
+                            val now = System.currentTimeMillis()
+                            if (lastHandledUid == result.uid && now - lastHandledAt < PASSIVE_REPEAT_DELAY_MS) {
+                                // Refresh while the same tag is still present. This prevents a
+                                // held tag from repeatedly reopening the same hive.
+                                lastHandledAt = now
+                                false
+                            } else {
+                                lastHandledUid = result.uid
+                                lastHandledAt = now
+                                true
+                            }
+                        }
+                        if (shouldDeliver) {
+                            activity.runOnUiThread {
+                                if (activityResumed && !active.get() &&
+                                    !activity.isFinishing && !activity.isDestroyed) {
+                                    passiveReadListener?.invoke(result)
+                                }
+                            }
+                        }
+                    }
+                } finally {
+                    passiveReadInFlight.set(false)
+                }
+            }, readerFlags(), Bundle())
+            passiveReaderActive = true
+        } catch (_: RuntimeException) {
+            // Passive NFC is best-effort. The explicit Scan/Write actions will still
+            // return a clear error if reader mode cannot be started.
+            passiveReaderActive = false
+        }
     }
 
     /** Reads an NDEF/tag-dispatch intent when BeeKeep is launched by an NFC tap.
