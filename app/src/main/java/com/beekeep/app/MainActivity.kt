@@ -1047,6 +1047,14 @@ private fun HomeScreen(
             }
         }.getOrNull()
     }
+    // Reuse the existing logo artwork but crop away its decorative gold outer frame.
+    val bannerLogoBitmap = remember(bannerBitmap) {
+        bannerBitmap?.let { bitmap ->
+            runCatching {
+                Bitmap.createBitmap(bitmap, 467, 38, 220, 238)
+            }.getOrNull()
+        }
+    }
 
     LazyColumn(
         Modifier.fillMaxSize().padding(padding).padding(horizontal = 16.dp),
@@ -1057,19 +1065,76 @@ private fun HomeScreen(
             Box(
                 Modifier.fillMaxWidth().height(168.dp)
                     .clip(RoundedCornerShape(26.dp))
-                    .background(Color(0xFF15110E))
+                    .background(Color(0xFF2B1F15))
             ) {
-                if (bannerBitmap != null) {
+                // A brighter, warm charcoal-to-amber backdrop keeps the banner readable
+                // without the gold trim baked into the previous logo framing.
+                Canvas(Modifier.fillMaxSize()) {
+                    val w = size.width
+                    val h = size.height
+                    drawRect(
+                        Brush.horizontalGradient(
+                            colors = listOf(
+                                Color(0xFF241912),
+                                Color(0xFF342519),
+                                Color(0xFF49331F)
+                            ),
+                            startX = 0f,
+                            endX = w
+                        )
+                    )
+                    drawRect(
+                        Brush.radialGradient(
+                            colors = listOf(
+                                Color(0xFF6A4825).copy(alpha = 0.28f),
+                                Color(0xFF49331F).copy(alpha = 0.04f),
+                                Color.Transparent
+                            ),
+                            center = Offset(w * 0.78f, h * 0.48f),
+                            radius = w * 0.60f
+                        )
+                    )
+
+                    val radius = h * 0.105f
+                    val halfHeight = radius * 0.8660254f
+                    val columnStep = radius * 1.7320508f
+                    val rowStep = radius * 1.5f
+                    val hexColor = Color(0xFFB68A4A).copy(alpha = 0.13f)
+                    var row = -1
+                    while (row * rowStep < h + radius) {
+                        val cy = radius + row * rowStep
+                        val offset = if (row % 2 == 0) 0f else columnStep / 2f
+                        var col = -1
+                        while (col * columnStep + offset < w * 0.65f) {
+                            val cx = col * columnStep + offset
+                            val hex = Path().apply {
+                                moveTo(cx + radius, cy)
+                                lineTo(cx + radius / 2f, cy + halfHeight)
+                                lineTo(cx - radius / 2f, cy + halfHeight)
+                                lineTo(cx - radius, cy)
+                                lineTo(cx - radius / 2f, cy - halfHeight)
+                                lineTo(cx + radius / 2f, cy - halfHeight)
+                                close()
+                            }
+                            drawPath(hex, hexColor, style = Stroke(width = 1.dp.toPx()))
+                            col++
+                        }
+                        row++
+                    }
+                }
+                if (bannerLogoBitmap != null) {
                     Image(
-                        bitmap = bannerBitmap.asImageBitmap(),
-                        contentDescription = null,
-                        contentScale = ContentScale.Crop,
-                        alignment = Alignment.CenterEnd,
-                        modifier = Modifier.fillMaxSize()
+                        bitmap = bannerLogoBitmap.asImageBitmap(),
+                        contentDescription = "BeeKeep logo",
+                        contentScale = ContentScale.FillBounds,
+                        modifier = Modifier
+                            .align(Alignment.CenterEnd)
+                            .padding(end = 14.dp)
+                            .size(width = 100.dp, height = 108.dp)
                     )
                 }
                 Column(
-                    Modifier.align(Alignment.CenterStart).padding(start = 24.dp, end = 150.dp),
+                    Modifier.align(Alignment.CenterStart).padding(start = 24.dp, end = 140.dp),
                     verticalArrangement = Arrangement.Center
                 ) {
                     Text(
