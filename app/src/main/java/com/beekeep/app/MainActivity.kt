@@ -1808,6 +1808,11 @@ private fun InspectionSnapshot(i: Inspection) {
             }
             if (i.notes.isNotBlank()) {
                 Text("FIELD NOTES", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.ExtraBold)
+                Text(
+                    "Recorded ${DateFormat.getDateInstance(DateFormat.MEDIUM).format(Date(i.createdAt))}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
                 Text(i.notes, style = MaterialTheme.typography.bodyMedium)
             }
         }
@@ -1837,6 +1842,7 @@ private fun InspectionScreen(
         context.getSharedPreferences(INSPECTION_FORM_DRAFTS, android.content.Context.MODE_PRIVATE)
     }
     val noteDraftKey = remember(hive.id) { "hive_${hive.id}" }
+    val noteDraftTimestampKey = remember(hive.id) { "${noteDraftKey}_recorded_at" }
     // The inspection list may briefly still contain the previous hive while NFC
     // switches the selected hive. Never let another hive's latest inspection seed this form.
     val lastInspection = remember(hive.id, priorInspections) {
@@ -1868,6 +1874,9 @@ private fun InspectionScreen(
         mutableIntStateOf(formDraft?.sampleSize ?: lastInspection?.sampleSize ?: 300)
     }
     var notes by rememberSaveable(hive.id) { mutableStateOf(startingNotes) }
+    var noteRecordedAt by rememberSaveable(hive.id) {
+        mutableStateOf(noteDraftPrefs.getLong(noteDraftTimestampKey, lastInspection?.createdAt ?: 0L))
+    }
     var noteSaveStatus by rememberSaveable(hive.id) {
         mutableStateOf(if (startingNotes.isBlank()) "" else if (hasSavedNoteDraft) "Auto-saved note restored" else "Saved notes loaded")
     }
@@ -2021,8 +2030,13 @@ private fun InspectionScreen(
         val cleanSpokenText = spokenText.trim()
         if (cleanSpokenText.isNotBlank()) {
             val updatedNotes = if (latestNotes.isBlank()) cleanSpokenText else "${latestNotes.trimEnd()}\n$cleanSpokenText"
+            val recordedAt = System.currentTimeMillis()
             notes = updatedNotes
-            noteDraftPrefs.edit { putString(noteDraftKey, updatedNotes) }
+            noteDraftPrefs.edit {
+                putString(noteDraftKey, updatedNotes)
+                putLong(noteDraftTimestampKey, recordedAt)
+            }
+            noteRecordedAt = recordedAt
             noteSaveStatus = "Note auto-saved"
             voicePartialText = ""
             voiceStatus = "Saved • continuing to listen"
@@ -2157,7 +2171,12 @@ private fun InspectionScreen(
         // Debounce edits so a longer note is stored when the user pauses typing.
         delay(400)
         // Store blank too: it records an intentional manual clear rather than reviving old notes later.
-        noteDraftPrefs.edit { putString(noteDraftKey, notes) }
+        val recordedAt = if (notes.isBlank()) 0L else System.currentTimeMillis()
+        noteDraftPrefs.edit {
+            putString(noteDraftKey, notes)
+            if (recordedAt == 0L) remove(noteDraftTimestampKey) else putLong(noteDraftTimestampKey, recordedAt)
+        }
+        noteRecordedAt = recordedAt
         noteSaveStatus = if (notes.isBlank()) "" else "Note auto-saved"
     }
 
@@ -2351,6 +2370,13 @@ private fun InspectionScreen(
                             modifier = Modifier.fillMaxWidth().height(124.dp),
                             label = { Text("What did you see?") }
                         )
+                        if (notes.isNotBlank() && noteRecordedAt > 0L) {
+                            Text(
+                                "Date recorded: ${DateFormat.getDateInstance(DateFormat.MEDIUM).format(Date(noteRecordedAt))}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                         if (noteSaveStatus.isNotBlank()) {
                             Text(
                                 noteSaveStatus,
