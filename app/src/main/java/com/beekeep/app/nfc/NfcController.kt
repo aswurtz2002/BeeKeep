@@ -458,9 +458,16 @@ class NfcController {
         val assignedHiveId = knownHiveIdByTagUid[uidKey]
         val payloadHiveId = BeeKeepNfcPayload.hiveId(result.text)
 
-        // Never replace a valid hive payload when it conflicts with the saved UID assignment.
+        // A UID/payload conflict must never change the hive data. If needed, rewrite
+        // the same stored payload only to add BeeKeep's Android launch record.
         if (assignedHiveId != null && payloadHiveId != null && assignedHiveId != payloadHiveId) {
-            return result.copy(launchPreparationError = "This tag's stored hive payload conflicts with its saved assignment. No data was changed.")
+            val warning = "This tag's stored hive payload conflicts with its saved assignment. The payload was preserved."
+            if (result.info.hasBeeKeepLaunchRecord) return result.copy(launchPreparationError = warning)
+            return when (val launchWrite = write(tag, result.text!!.trim(), allowOverwriteOtherHive = false)) {
+                is NfcResult.Written -> NfcResult.Read(launchWrite.info, result.text.trim(), warning)
+                is NfcResult.Error -> result.copy(launchPreparationError = "$warning BeeKeep launch data could not be added: ${launchWrite.message}")
+                is NfcResult.Read -> result.copy(launchPreparationError = warning)
+            }
         }
 
         val targetPayload = when {
