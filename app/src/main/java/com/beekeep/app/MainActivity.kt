@@ -409,6 +409,7 @@ fun BeeKeepApp(
     var editingApiary by remember { mutableStateOf<Apiary?>(null) }
     var unassignedTagUid by rememberSaveable { mutableStateOf<String?>(null) }
     var pendingTagUid by rememberSaveable { mutableStateOf<String?>(null) }
+    var pendingInspectionHiveId by rememberSaveable { mutableStateOf<Long?>(null) }
     var scanning by remember { mutableStateOf(false) }
     var pendingLocationHive by remember { mutableStateOf<Hive?>(null) }
     var pendingApiaryMove by remember { mutableStateOf<Pair<Hive, Apiary>?>(null) }
@@ -426,6 +427,15 @@ fun BeeKeepApp(
     val treatments by vm.treatments.collectAsStateWithLifecycle()
     val harvests by vm.harvests.collectAsStateWithLifecycle()
     val ready by vm.ready.collectAsStateWithLifecycle()
+
+    // Wait until the ViewModel has loaded the scanned hive before presenting Inspect.
+    androidx.compose.runtime.LaunchedEffect(selected?.id, pendingInspectionHiveId) {
+        val targetHiveId = pendingInspectionHiveId ?: return@LaunchedEffect
+        if (selected?.id == targetHiveId) {
+            inspecting = true
+            pendingInspectionHiveId = null
+        }
+    }
 
     // Keep the NFC writer's UID protection synchronized with the fully-loaded local hive list.
     androidx.compose.runtime.LaunchedEffect(ready, hives, deadHives) {
@@ -528,7 +538,11 @@ fun BeeKeepApp(
                 selectedHiveOpen = true
             }
             screen = Screen.HOME
-            inspecting = true
+            if (selected?.id == resolvedHive.id) {
+                inspecting = true
+            } else {
+                pendingInspectionHiveId = resolvedHive.id
+            }
             if (!alreadyOpen) scope.launch { snackbarHostState.showSnackbar("Hive ${resolvedHive.number} recognized • inspection ready") }
         } else {
             screen = Screen.SCAN
@@ -765,7 +779,7 @@ fun BeeKeepApp(
                                     vm.openHive(resolvedHive.id)
                                     selectedHiveOpen = true
                                     screen = Screen.HOME
-                                    inspecting = true
+                                    pendingInspectionHiveId = resolvedHive.id
                                     snackbarHostState.showSnackbar("Hive ${resolvedHive.number} recognized • inspection ready")
                                 } else {
                                     unassignedTagUid = result.uid
