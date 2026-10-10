@@ -363,8 +363,8 @@ fun BeeKeepApp(
 
     fun checkHiveLocation(hive: Hive) {
         val currentApiary = apiaries.firstOrNull { it.name.equals(hive.apiary, ignoreCase = true) }
-        if (currentApiary?.latitude == null || currentApiary.longitude == null) {
-            scope.launch { snackbarHostState.showSnackbar("Add GPS coordinates to ${hive.apiary} to enable hive location checks.") }
+        if (apiaries.none { it.latitude != null && it.longitude != null }) {
+            scope.launch { snackbarHostState.showSnackbar("Save GPS coordinates for your apiaries to enable hive location checks.") }
             return
         }
         if (!locationController.hasPermission()) {
@@ -379,15 +379,17 @@ fun BeeKeepApp(
                     snackbarHostState.showSnackbar("Could not get GPS. Hive apiary was not changed.")
                     return@launch
                 }
-                val assignedDistance = distanceMeters(
-                    phoneLocation.latitude, phoneLocation.longitude,
-                    currentApiary.latitude, currentApiary.longitude
-                )
+                val assignedDistance = if (currentApiary?.latitude != null && currentApiary.longitude != null) {
+                    distanceMeters(phoneLocation.latitude, phoneLocation.longitude, currentApiary.latitude, currentApiary.longitude)
+                } else Float.POSITIVE_INFINITY
                 // Ignore ordinary GPS drift. Only consider a move if the phone is
                 // clearly away from the assigned yard and close to another saved yard.
                 if (assignedDistance <= 300f) return@launch
                 val nearestOther = apiaries
-                    .filter { it.id != currentApiary.id && it.latitude != null && it.longitude != null }
+                    .filter { apiary ->
+                        apiary.latitude != null && apiary.longitude != null &&
+                            (currentApiary == null || apiary.id != currentApiary.id)
+                    }
                     .map { apiary ->
                         apiary to distanceMeters(
                             phoneLocation.latitude, phoneLocation.longitude,
@@ -398,8 +400,10 @@ fun BeeKeepApp(
                     .minByOrNull { it.second }
                 if (nearestOther != null) {
                     pendingApiaryMove = hive to nearestOther.first
-                } else {
+                } else if (currentApiary != null) {
                     snackbarHostState.showSnackbar("Hive ${hive.number} is far from ${currentApiary.name}, but no other saved apiary GPS location is nearby. No changes made.")
+                } else {
+                    snackbarHostState.showSnackbar("No saved apiary GPS location is close enough to identify a destination. No changes made.")
                 }
             }
         }
@@ -478,7 +482,10 @@ fun BeeKeepApp(
                     vm.moveHiveToApiary(hive.id, targetApiary.name) { success, error ->
                         pendingApiaryMove = null
                         scope.launch {
-                            snackbarHostState.showSnackbar(error ?: "Hive ${hive.number} moved to ${targetApiary.name}")
+                            snackbarHostState.showSnackbar(
+                                if (success) "Hive ${hive.number} moved to ${targetApiary.name}"
+                                else error ?: "Could not move the hive."
+                            )
                         }
                     }
                 }) { Text("MOVE HIVE", fontWeight = FontWeight.ExtraBold) }
