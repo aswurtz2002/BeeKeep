@@ -1507,16 +1507,23 @@ private fun createApiaryMapHtml(apiaries: List<Apiary>, focusedApiaryId: Long?):
                   href="https://unpkg.com/maplibre-gl@5.12.0/dist/maplibre-gl.css"
                   onerror="this.onerror=null;this.href='https://cdn.jsdelivr.net/npm/maplibre-gl@5.12.0/dist/maplibre-gl.css';">
             <style>
-                html, body, #map {
+                html, body, #map-shell {
                     width: 100%; height: 100%; min-height: 220px;
-                    padding: 0; margin: 0; background: #e7e8e4;
-                    overflow: hidden;
+                    padding: 0; margin: 0; overflow: hidden;
                 }
                 body { font-family: Arial, sans-serif; }
-                #map { position: relative; }
+                #map-shell {
+                    position: relative; width: 100%; height: 100%; min-height: 220px;
+                    background: #e7e8e4; overflow: hidden;
+                }
+                /* MapLibre requires its target container to have no child elements. */
+                #map {
+                    position: absolute; inset: 0; width: 100%; height: 100%; min-height: 220px;
+                    padding: 0; margin: 0; background: #e7e8e4; overflow: hidden;
+                }
                 .map-error {
                     position: absolute; inset: 0; z-index: 20;
-                    display: none; padding: 24px; box-sizing: border-box;
+                    display: flex; padding: 24px; box-sizing: border-box;
                     align-items: center; justify-content: center;
                     text-align: center; color: #2d332d; background: #f2f1eb;
                     font-size: 14px; line-height: 1.5;
@@ -1547,9 +1554,10 @@ private fun createApiaryMapHtml(apiaries: List<Apiary>, focusedApiaryId: Long?):
             </style>
         </head>
         <body>
-            <div id="map">
+            <div id="map-shell">
+                <div id="map"></div>
                 <div id="map-error" class="map-error" role="status">
-                    Loading OpenFreeMap…
+                    Connecting to OpenFreeMap…
                 </div>
             </div>
             <script>
@@ -1570,7 +1578,7 @@ private fun createApiaryMapHtml(apiaries: List<Apiary>, focusedApiaryId: Long?):
                             showMapError('The map controls could not be loaded. Check your internet connection and reopen this map.');
                             return;
                         }
-                        if (!window.maplibregl.supported()) {
+                        if (typeof window.maplibregl.supported === 'function' && !window.maplibregl.supported()) {
                             showMapError('This device does not support the graphics features needed for the map. Please update Android System WebView and try again.');
                             return;
                         }
@@ -1640,7 +1648,7 @@ private fun createApiaryMapHtml(apiaries: List<Apiary>, focusedApiaryId: Long?):
                                     });
                                     markersById[String(focused.id)].togglePopup();
                                 } else if (points.length === 1) {
-                                    map.setView ? map.setView(points[0], 16) : map.jumpTo({ center: points[0], zoom: 16 });
+                                    map.jumpTo({ center: points[0], zoom: 16 });
                                 } else if (points.length > 1) {
                                     const bounds = new maplibregl.LngLatBounds();
                                     points.forEach(function (point) { bounds.extend(point); });
@@ -1649,11 +1657,13 @@ private fun createApiaryMapHtml(apiaries: List<Apiary>, focusedApiaryId: Long?):
                             });
 
                             map.on('error', function (event) {
-                                console.warn('BeeKeep OpenFreeMap error', event && event.error ? event.error : event);
-                                if (event && (event.sourceId || event.tile)) {
+                                const detail = event && event.error && event.error.message
+                                    ? event.error.message : 'Unknown map loading error';
+                                console.warn('BeeKeep OpenFreeMap error: ' + detail);
+                                if (!mapReady) {
                                     tileErrors += 1;
-                                    if (tileErrors >= 12) {
-                                        showMapError('OpenFreeMap tiles are not responding. Check your internet connection and reopen the map.');
+                                    if (tileErrors >= 3) {
+                                        showMapError('OpenFreeMap could not load its map style or tiles. Check your internet connection, then reopen the map. Details: ' + detail);
                                     }
                                 }
                             });
