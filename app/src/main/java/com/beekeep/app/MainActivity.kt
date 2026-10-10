@@ -1376,7 +1376,8 @@ private fun ApiaryMapScreen(
                 .fillMaxWidth()
                 .weight(1f)
                 .padding(horizontal = 8.dp, vertical = 4.dp)
-                .clip(RoundedCornerShape(22.dp))
+                // Avoid clipping the hardware-composited WebView canvas in Compose.
+                // Rounded corners are applied inside the HTML map shell instead.
                 .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(22.dp))
         )
 
@@ -1459,11 +1460,25 @@ private fun ApiarySatelliteMap(
                 settings.allowFileAccess = false
                 settings.javaScriptCanOpenWindowsAutomatically = false
                 webViewClient = WebViewClient()
-                setBackgroundColor(android.graphics.Color.rgb(35, 38, 35))
+                setBackgroundColor(android.graphics.Color.rgb(231, 232, 228))
                 isVerticalScrollBarEnabled = false
                 isHorizontalScrollBarEnabled = false
                 overScrollMode = View.OVER_SCROLL_NEVER
                 tag = html.hashCode()
+                // Compose can resize AndroidView without firing a browser window resize.
+                // Notify MapLibre whenever the native WebView viewport changes size.
+                addOnLayoutChangeListener { view, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom ->
+                    if ((right - left) != (oldRight - oldLeft) ||
+                        (bottom - top) != (oldBottom - oldTop)
+                    ) {
+                        view.post {
+                            (view as? WebView)?.evaluateJavascript(
+                                "window.beekeepResizeMap && window.beekeepResizeMap();",
+                                null
+                            )
+                        }
+                    }
+                }
                 loadDataWithBaseURL("https://beekeep.local/map/", html, "text/html", "UTF-8", null)
             }
         },
@@ -1517,7 +1532,8 @@ private fun createApiaryMapHtml(apiaries: List<Apiary>, focusedApiaryId: Long?):
                 body { font-family: Arial, sans-serif; }
                 #map-shell {
                     position: relative; width: 100%; height: 100%; min-height: 220px;
-                    background: #e7e8e4; overflow: hidden;
+                    background: #e7e8e4; border-radius: 22px; overflow: hidden;
+                    contain: layout size paint;
                 }
                 /* MapLibre requires its target container to have no child elements. */
                 #map {
@@ -1593,7 +1609,11 @@ private fun createApiaryMapHtml(apiaries: List<Apiary>, focusedApiaryId: Long?):
                                 center: [$centerLon, $centerLat],
                                 zoom: $initialZoom,
                                 attributionControl: true,
-                                fadeDuration: 0
+                                fadeDuration: 0,
+                                // WebView canvas sizes are more predictable at CSS-pixel ratio.
+                                pixelRatio: 1,
+                                maxCanvasSize: [2048, 2048],
+                                trackResize: true
                             });
                             const markersById = {};
                             const points = [];
@@ -1635,10 +1655,27 @@ private fun createApiaryMapHtml(apiaries: List<Apiary>, focusedApiaryId: Long?):
                                 markersById[String(apiary.id)] = marker;
                             });
 
+                            function resizeMapViewport() {
+                                // Re-measure after Android/Compose has applied the final WebView size.
+                                window.requestAnimationFrame(function () {
+                                    map.resize();
+                                    window.requestAnimationFrame(function () { map.resize(); });
+                                });
+                            }
+                            window.beekeepResizeMap = resizeMapViewport;
+                            if (window.ResizeObserver) {
+                                const resizeObserver = new ResizeObserver(resizeMapViewport);
+                                resizeObserver.observe(document.getElementById('map-shell'));
+                                resizeObserver.observe(document.getElementById('map'));
+                            }
+
                             map.on('load', function () {
                                 mapReady = true;
                                 errorPanel.style.display = 'none';
-                                map.resize();
+                                resizeMapViewport();
+                                window.setTimeout(resizeMapViewport, 80);
+                                window.setTimeout(resizeMapViewport, 250);
+                                window.setTimeout(resizeMapViewport, 600);
 
                                 const focused = focusedId === null ? null : apiaries.find(function (a) {
                                     return String(a.id) === String(focusedId);
@@ -1676,8 +1713,14 @@ private fun createApiaryMapHtml(apiaries: List<Apiary>, focusedApiaryId: Long?):
                                     showMapError('OpenFreeMap is taking too long to load. Check your internet connection and try again.');
                                 }
                             }, 15000);
-                            window.addEventListener('resize', function () { map.resize(); });
-                            window.setTimeout(function () { map.resize(); }, 250);
+                            window.addEventListener('resize', resizeMapViewport);
+                            window.addEventListener('orientationchange', function () {
+                                window.setTimeout(resizeMapViewport, 100);
+                                window.setTimeout(resizeMapViewport, 450);
+                            });
+                            window.setTimeout(resizeMapViewport, 100);
+                            window.setTimeout(resizeMapViewport, 300);
+                            window.setTimeout(resizeMapViewport, 800);
                         } catch (error) {
                             console.error('BeeKeep could not initialize the map', error);
                             showMapError('The map could not be started on this device. Update Android System WebView and try again.');
