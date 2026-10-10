@@ -1819,7 +1819,17 @@ private fun ComparisonCounter(
                     onClick = { haptic.performHapticFeedback(HapticFeedbackType.SegmentTick); onChange((value - 1).coerceIn(range)) },
                     modifier = Modifier.size(36.dp)
                 ) { Text("−", style = MaterialTheme.typography.titleMedium) }
-                Text(value.toString(), style = MaterialTheme.typography.titleLarge, f@Composable
+                Text(value.toString(), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.ExtraBold)
+                IconButton(
+                    onClick = { haptic.performHapticFeedback(HapticFeedbackType.SegmentTick); onChange((value + 1).coerceIn(range)) },
+                    modifier = Modifier.size(36.dp)
+                ) { Text("+", style = MaterialTheme.typography.titleMedium) }
+            }
+        }
+    }
+}
+
+@Composable
 private fun CompactCounter(
     label: String,
     value: Int,
