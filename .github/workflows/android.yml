@@ -3,6 +3,7 @@ name: BeeKeep Android build
 on:
   push:
   pull_request:
+  workflow_dispatch:
 
 jobs:
   build:
