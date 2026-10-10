@@ -5,19 +5,15 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.beekeep.app.data.*
-import com.beekeep.app.notifications.ReminderScheduler
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
-import java.util.concurrent.TimeUnit
-import java.time.LocalDate
 import java.time.ZoneId
-import java.time.ZonedDateTime
 
 class BeeKeepViewModel(
     private val repo: LocalHiveRepository,
-    private val appContext: Context
+    @Suppress("unused") private val appContext: Context
 ) : ViewModel() {
     private val _hives = MutableStateFlow<List<Hive>>(emptyList())
     val hives: StateFlow<List<Hive>> = _hives
@@ -25,8 +21,6 @@ class BeeKeepViewModel(
     val deadHives: StateFlow<List<Hive>> = _deadHives
     private val _apiaries = MutableStateFlow<List<Apiary>>(emptyList())
     val apiaries: StateFlow<List<Apiary>> = _apiaries
-    private val _tasks = MutableStateFlow<List<Task>>(emptyList())
-    val tasks: StateFlow<List<Task>> = _tasks
     private val _selected = MutableStateFlow<Hive?>(null)
     val selected: StateFlow<Hive?> = _selected
     private val _inspections = MutableStateFlow<List<Inspection>>(emptyList())
@@ -53,7 +47,6 @@ class BeeKeepViewModel(
     val allHarvests: StateFlow<List<Harvest>> = _allHarvests
 
     private var detailJob: Job? = null
-    private val scheduledReminderFingerprints = mutableMapOf<Long, String>()
 
     init {
         viewModelScope.launch {
@@ -62,10 +55,6 @@ class BeeKeepViewModel(
             launch { repo.observeHives().collect { _hives.value = it } }
             launch { repo.observeDeadHives().collect { _deadHives.value = it } }
             launch { repo.observeApiaries().collect { _apiaries.value = it } }
-            launch { repo.observeTasks().collect { tasks ->
-                _tasks.value = tasks
-                syncReminderSchedules(tasks)
-            } }
             launch { repo.observeAllInspections().collect { _allInspections.value = it } }
             launch { repo.observeAllFeedings().collect { _allFeedings.value = it } }
             launch { repo.observeAllTreatments().collect { _allTreatments.value = it } }
@@ -208,10 +197,6 @@ class BeeKeepViewModel(
         return runCatching {
             repo.saveInspection(normalized)
             _selected.value = repo.getHive(h.id)
-            if (normalized.queenStatus == "Queenless") addReminder(h.id, "Check Hive ${h.number}: queenless follow-up", 1, "queenless")
-            if (normalized.emergencyCells + normalized.supercedureCells + normalized.swarmCells > 0) addReminder(h.id, "Check Hive ${h.number}: queen-cell outcome / egg laying", 14, "queen_cells")
-            if (normalized.mitePercent >= 3.0) addReminder(h.id, "Review Hive ${h.number}: mites ${"%.2f".format(normalized.mitePercent)}%", 1, "mites")
-            if (normalized.diseaseFlags.isNotBlank()) addReminder(h.id, "Review Hive ${h.number}: disease/pest flags", 1, "health")
             true
         }.getOrElse { false }
     }
@@ -239,8 +224,6 @@ class BeeKeepViewModel(
                 val withdrawal = if (removal != null && withdrawalDays > 0) localPlusDays(removal, withdrawalDays.toLong()) else null
                 val treatment = Treatment(IdGenerator.nextLong(), h.id, now, treatmentType, product, now, removal, withdrawal, notes)
                 repo.saveTreatment(treatment)
-                if (durationDays > 0) addReminder(h.id, "Remove ${product.trim()} from Hive ${h.number}", durationDays.toLong(), "treatment_removal")
-                if (withdrawal != null) addReminder(h.id, "Honey withdrawal period ends: Hive ${h.number}", durationDays.toLong() + withdrawalDays.toLong(), "withdrawal")
             }.onSuccess { onResult(true, null) }
                 .onFailure { onResult(false, it.message ?: "Could not save treatment.") }
         }
@@ -273,99 +256,6 @@ class BeeKeepViewModel(
             .plusDays(days)
             .toInstant()
             .toEpochMilli()
-
-    fun createScheduledTask(
-        title: String,
-        hiveId: Long?,
-        dueAt: Long,
-        reminderEnabled: Boolean = true,
-        repeatEveryDays: Long? = null,
-        onResult: (Boolean, String?) -> Unit = { _, _ -> }
-    ) {
-        val clean = title.trim()
-        if (clean.isBlank()) { onResult(false, "Give this task a name."); return }
-        if (dueAt <= 0L) { onResult(false, "Choose a valid date and time."); return }
-        viewModelScope.launch {
-            runCatching {
-                val kind = repeatEveryDays?.takeIf { it > 0 }?.let(SeasonalPlanner::recurringKind) ?: "calendar"
-                val task = Task(IdGenerator.nextLong(), hiveId, clean, dueAt, false, kind, reminderEnabled)
-                repo.saveTask(task)
-                if (reminderEnabled) ReminderScheduler.schedule(appContext, task.id, task.title, task.dueAt)
-            }.onSuccess { onResult(true, null) }
-                .onFailure { onResult(false, it.message ?: "Could not schedule task.") }
-        }
-    }
-
-    fun buildSeasonalPlan(templateIds: Set<String>, daysAhead: Int = 180) {
-        if (templateIds.isEmpty()) return
-        viewModelScope.launch {
-            val start = LocalDate.now().plusDays(1)
-            val selected = SeasonalPlanner.templates.filter { it.id in templateIds }
-            val existingKeys = _tasks.value.mapTo(mutableSetOf()) { it.kind }
-            val generated = buildList {
-                for (template in selected) {
-                    SeasonalPlanner.generateDates(template, start, daysAhead.coerceIn(30, 730)).forEach { date ->
-                        val fingerprint = SeasonalPlanner.fingerprint(template.id, date)
-                        if (!existingKeys.add(fingerprint)) return@forEach
-                        val dueAt = date.atTime(9, 0).atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
-                        add(Task(IdGenerator.nextLong(), null, template.title, dueAt, false, fingerprint, true))
-                    }
-                }
-            }
-            repo.saveTasks(generated)
-            generated.forEach { ReminderScheduler.schedule(appContext, it.id, it.title, it.dueAt) }
-        }
-    }
-
-    fun addReminder(title: String, days: Long = 0) = addReminder(null, title, days, "manual")
-    private fun addReminder(hiveId: Long?, title: String, days: Long, kind: String) {
-        viewModelScope.launch {
-            val dueAt = localPlusDays(System.currentTimeMillis(), days.coerceAtLeast(0L))
-            val duplicateWindow = TimeUnit.DAYS.toMillis(2)
-            val duplicate = _tasks.value.any { existing ->
-                !existing.completed && existing.hiveId == hiveId && existing.kind == kind &&
-                    existing.title == title && kotlin.math.abs(existing.dueAt - dueAt) <= duplicateWindow
-            }
-            if (duplicate) return@launch
-            val task = Task(IdGenerator.nextLong(), hiveId, title, dueAt, false, kind, true)
-            repo.saveTask(task); ReminderScheduler.schedule(appContext, task.id, task.title, task.dueAt)
-        }
-    }
-
-    fun completeTask(task: Task) {
-        viewModelScope.launch {
-            repo.completeTask(task.id)
-            ReminderScheduler.cancel(appContext, task.id)
-            scheduledReminderFingerprints.remove(task.id)
-            val repeatDays = SeasonalPlanner.recurrenceDays(task.kind)
-            if (repeatDays != null) {
-                val nextFromOriginal = localPlusDays(task.dueAt, repeatDays)
-                val dueAt = maxOf(nextFromOriginal, System.currentTimeMillis() + TimeUnit.MINUTES.toMillis(5))
-                val next = Task(IdGenerator.nextLong(), task.hiveId, task.title, dueAt, false, task.kind, task.reminderEnabled)
-                repo.saveTask(next)
-                if (task.reminderEnabled) ReminderScheduler.schedule(appContext, next.id, next.title, next.dueAt)
-            }
-        }
-    }
-
-    private fun syncReminderSchedules(tasks: List<Task>) {
-        val now = System.currentTimeMillis()
-        val activeIds = mutableSetOf<Long>()
-        tasks.forEach { task ->
-            if (task.completed || !task.reminderEnabled || task.dueAt <= now) {
-                ReminderScheduler.cancel(appContext, task.id)
-                scheduledReminderFingerprints.remove(task.id)
-                return@forEach
-            }
-            activeIds += task.id
-            val fingerprint = "${task.dueAt}|${task.reminderEnabled}|${task.title}"
-            if (scheduledReminderFingerprints[task.id] != fingerprint) {
-                ReminderScheduler.schedule(appContext, task.id, task.title, task.dueAt)
-                scheduledReminderFingerprints[task.id] = fingerprint
-            }
-        }
-        scheduledReminderFingerprints.keys.retainAll(activeIds)
-    }
 
     fun createHiveFromApiaryDefaults(number: String) = createHive(number, _apiaries.value.firstOrNull()?.name ?: "Unassigned Yard", "Laying", 5)
 

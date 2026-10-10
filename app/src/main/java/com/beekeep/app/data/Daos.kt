@@ -122,25 +122,6 @@ interface OutboxDao {
 
 
 @Dao
-interface TaskDao {
-    @Query("SELECT * FROM tasks ORDER BY completed ASC, due_at ASC")
-    fun observeAll(): Flow<List<TaskEntity>>
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun upsert(entity: TaskEntity)
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun upsertAll(entities: List<TaskEntity>)
-    @Query("SELECT * FROM tasks WHERE id = :id")
-    suspend fun get(id: Long): TaskEntity?
-    @Query("SELECT * FROM tasks WHERE completed = 0 AND due_at > :now ORDER BY due_at ASC")
-    suspend fun pendingAfter(now: Long): List<TaskEntity>
-    @Query("UPDATE tasks SET completed = 1, updated_at = :updatedAt WHERE id = :id")
-    suspend fun complete(id: Long, updatedAt: Long)
-    @Query("DELETE FROM tasks WHERE hive_id = :hiveId")
-    suspend fun deleteForHive(hiveId: Long)
-}
-
-
-@Dao
 interface PhotoDao {
     @Query("SELECT * FROM inspection_photos WHERE hive_id = :hiveId ORDER BY created_at DESC")
     fun observeForHive(hiveId: Long): Flow<List<PhotoEntity>>
@@ -154,4 +135,19 @@ interface PhotoDao {
     suspend fun markError(id: Long, error: String)
     @Query("SELECT * FROM inspection_photos WHERE hive_id = :hiveId")
     suspend fun listForHive(hiveId: Long): List<PhotoEntity>
+}
+
+@Dao
+interface TaskDao {
+    @Query("SELECT * FROM tasks ORDER BY due_at DESC")
+    fun observeAll(): Flow<List<TaskEntity>>
+
+    @Query("SELECT * FROM tasks WHERE due_at >= :timestamp ORDER BY due_at ASC")
+    suspend fun pendingAfter(timestamp: Long): List<TaskEntity>
+
+    @Query("SELECT * FROM tasks WHERE id = :id")
+    suspend fun get(id: Long): TaskEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsert(entity: TaskEntity)
 }

@@ -21,9 +21,9 @@ abstract class BeeKeepRoomDb : RoomDatabase() {
     abstract fun harvests(): HarvestDao
     abstract fun events(): EventDao
     abstract fun outbox(): OutboxDao
-    abstract fun tasks(): TaskDao
     abstract fun photos(): PhotoDao
     abstract fun nfcTagAssignments(): NfcTagAssignmentDao
+    abstract fun tasks(): TaskDao
 
     companion object {
         val MIGRATION_1_2 = object : Migration(1, 2) {

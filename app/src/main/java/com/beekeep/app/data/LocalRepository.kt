@@ -27,7 +27,6 @@ class LocalHiveRepository(context: Context) {
     fun observeTreatments(hiveId: Long): Flow<List<Treatment>> = db.treatments().observeForHive(hiveId).map { it.map(::toTreatment) }
     fun observeHarvests(hiveId: Long): Flow<List<Harvest>> = db.harvests().observeForHive(hiveId).map { it.map(::toHarvest) }
     fun observeEvents(hiveId: Long): Flow<List<ActivityEvent>> = db.events().observeForHive(hiveId).map { it.map(::toEvent) }
-    fun observeTasks(): Flow<List<Task>> = db.tasks().observeAll().map { it.map(::toTask) }
     fun observeAllFeedings(): Flow<List<Feeding>> = db.feedings().observeAll().map { it.map(::toFeeding) }
     fun observeAllTreatments(): Flow<List<Treatment>> = db.treatments().observeAll().map { it.map(::toTreatment) }
     fun observeAllHarvests(): Flow<List<Harvest>> = db.harvests().observeAll().map { it.map(::toHarvest) }
@@ -146,7 +145,6 @@ class LocalHiveRepository(context: Context) {
     private suspend fun permanentlyDeleteHiveLocal(hiveId: Long) {
         db.photos().listForHive(hiveId).forEach { runCatching { java.io.File(it.localPath).delete() } }
         db.events().deleteForHive(hiveId)
-        db.tasks().deleteForHive(hiveId)
         // inspections, feedings, treatments, harvests, photos and NFC assignments cascade.
         db.hives().hardDelete(hiveId)
     }
@@ -286,42 +284,6 @@ class LocalHiveRepository(context: Context) {
         }
     }
 
-    suspend fun saveTask(t: Task) = withContext(Dispatchers.IO) {
-        require(t.title.trim().isNotBlank()) { "Task title cannot be blank" }
-        require(t.dueAt > 0L) { "Task date is invalid" }
-        db.withTransaction {
-            val entity = TaskEntity(t.id, t.hiveId, t.title.trim(), t.dueAt, t.completed, t.kind.trim().ifBlank { "manual" }, t.reminderEnabled, System.currentTimeMillis())
-            db.tasks().upsert(entity)
-            enqueue("task", t.id, "upsert", taskPayload(entity))
-        }
-    }
-
-    suspend fun saveTasks(tasks: List<Task>) = withContext(Dispatchers.IO) {
-        if (tasks.isEmpty()) return@withContext
-        tasks.forEach {
-            require(it.title.trim().isNotBlank()) { "Task title cannot be blank" }
-            require(it.dueAt > 0L) { "Task date is invalid" }
-        }
-        val now = System.currentTimeMillis()
-        db.withTransaction {
-            val entities = tasks.map {
-                TaskEntity(
-                    it.id, it.hiveId, it.title.trim(), it.dueAt, it.completed,
-                    it.kind.trim().ifBlank { "manual" }, it.reminderEnabled, now
-                )
-            }
-            db.tasks().upsertAll(entities)
-            entities.forEach { enqueue("task", it.id, "upsert", taskPayload(it)) }
-        }
-    }
-
-    suspend fun completeTask(id: Long) = withContext(Dispatchers.IO) {
-        db.withTransaction {
-            db.tasks().complete(id, System.currentTimeMillis())
-            db.tasks().get(id)?.let { enqueue("task", id, "update", taskPayload(it)) }
-        }
-    }
-
     suspend fun pendingPhotos(limit: Int = 10): List<PhotoEntity> = db.photos().pending(limit)
     suspend fun markPhotoUploaded(id: Long, cloudPath: String) = db.photos().markUploaded(id, cloudPath)
     suspend fun markPhotoError(id: Long, error: String) = db.photos().markError(id, error)
@@ -340,9 +302,6 @@ class LocalHiveRepository(context: Context) {
                 "hive" -> db.hives().get(doc.entity_id)?.let {
                     // A remote permanent delete only wins over genuinely newer local edits.
                     if (doc.updated_at > it.updatedAt) db.withTransaction { permanentlyDeleteHiveLocal(doc.entity_id) }
-                }
-                "task" -> db.tasks().get(doc.entity_id)?.let {
-                    if (doc.updated_at > it.updatedAt) db.tasks().upsert(it.copy(completed = true, updatedAt = doc.updated_at))
                 }
             }
             return@withContext
@@ -417,14 +376,6 @@ class LocalHiveRepository(context: Context) {
             "feeding" -> if (db.hives().exists(json.optLong("hive_id"))) db.feedings().upsert(FeedingEntity(json.optLong("id",doc.entity_id),json.optLong("hive_id"),json.optLong("created_at",doc.updated_at),json.optString("feed_type"),json.optString("ratio"),json.optDouble("amount").coerceAtLeast(0.0),json.optString("unit"),json.optString("notes"))) else Unit
             "treatment" -> if (db.hives().exists(json.optLong("hive_id"))) db.treatments().upsert(TreatmentEntity(json.optLong("id",doc.entity_id),json.optLong("hive_id"),json.optLong("created_at",doc.updated_at),json.optString("treatment_type"),json.optString("product"),json.longOrNull("inserted_at"),json.longOrNull("removal_at"),json.longOrNull("withdrawal_until"),json.optString("notes"))) else Unit
             "harvest" -> if (db.hives().exists(json.optLong("hive_id"))) db.harvests().upsert(HarvestEntity(json.optLong("id",doc.entity_id),json.optLong("hive_id"),json.optLong("created_at",doc.updated_at),json.optInt("supers_pulled").coerceAtLeast(0),json.optDouble("wet_honey_weight").coerceAtLeast(0.0),json.optDouble("dry_honey_weight").coerceAtLeast(0.0),json.optString("weight_unit","lb"),json.optDouble("wax_weight").coerceAtLeast(0.0),json.optDouble("propolis_weight").coerceAtLeast(0.0),json.optString("notes"))) else Unit
-            "task" -> {
-                val taskHiveId = json.longOrNull("hive_id")
-                if (taskHiveId != null && !db.hives().exists(taskHiveId)) return@withContext
-                val existing = db.tasks().get(doc.entity_id)
-                val incomingUpdatedAt = json.optLong("updated_at", doc.updated_at)
-                if (existing != null && existing.updatedAt >= incomingUpdatedAt) return@withContext
-                db.tasks().upsert(TaskEntity(json.optLong("id",doc.entity_id),taskHiveId,json.optString("title"),json.optLong("due_at"),json.optBoolean("completed"),json.optString("kind","manual"),json.optBoolean("reminder_enabled",true),incomingUpdatedAt))
-            }
             "event" -> if (db.hives().exists(json.optLong("hive_id"))) db.events().upsert(ActivityEventEntity(json.optLong("id",doc.entity_id),json.optLong("hive_id"),json.optLong("created_at",doc.updated_at),json.optString("type"),json.optString("title"),json.optString("detail"))) else Unit
         }
     }
@@ -443,7 +394,7 @@ class LocalHiveRepository(context: Context) {
     }
 
     private suspend fun enqueue(type: String, entityId: Long, operation: String, payload: String) {
-        if (type in setOf("hive", "apiary", "task", "nfc_assignment")) {
+        if (type in setOf("hive", "apiary", "nfc_assignment")) {
             db.outbox().deletePendingForEntity(type, entityId)
         }
         db.outbox().enqueue(SyncOutboxEntity(IdGenerator.nextLong(), type, entityId, operation, payload))
@@ -458,7 +409,6 @@ class LocalHiveRepository(context: Context) {
     private fun feedingPayload(e: FeedingEntity) = JSONObject().put("id",e.id).put("hive_id",e.hiveId).put("created_at",e.createdAt).put("updated_at",e.createdAt).put("feed_type",e.feedType).put("ratio",e.ratio).put("amount",e.amount).put("unit",e.unit).put("notes",e.notes).toString()
     private fun treatmentPayload(e: TreatmentEntity) = JSONObject().put("id",e.id).put("hive_id",e.hiveId).put("created_at",e.createdAt).put("updated_at",e.createdAt).put("treatment_type",e.treatmentType).put("product",e.product).put("inserted_at",e.insertedAt).put("removal_at",e.removalAt).put("withdrawal_until",e.withdrawalUntil).put("notes",e.notes).toString()
     private fun harvestPayload(e: HarvestEntity) = JSONObject().put("id",e.id).put("hive_id",e.hiveId).put("created_at",e.createdAt).put("updated_at",e.createdAt).put("supers_pulled",e.supersPulled).put("wet_honey_weight",e.wetHoneyWeight).put("dry_honey_weight",e.dryHoneyWeight).put("weight_unit",e.weightUnit).put("wax_weight",e.waxWeight).put("propolis_weight",e.propolisWeight).put("notes",e.notes).toString()
-    private fun taskPayload(e: TaskEntity) = JSONObject().put("id",e.id).put("hive_id",e.hiveId).put("title",e.title).put("due_at",e.dueAt).put("completed",e.completed).put("kind",e.kind).put("reminder_enabled",e.reminderEnabled).put("updated_at",e.updatedAt).toString()
     private fun eventPayload(e: ActivityEventEntity) = JSONObject().put("id",e.id).put("hive_id",e.hiveId).put("created_at",e.createdAt).put("updated_at",e.createdAt).put("type",e.type).put("title",e.title).put("detail",e.detail).toString()
 
     private fun JSONObject.doubleOrNull(key: String): Double? = if (has(key) && !isNull(key)) optDouble(key) else null
@@ -472,6 +422,5 @@ class LocalHiveRepository(context: Context) {
     private fun toTreatment(e: TreatmentEntity) = Treatment(e.id, e.hiveId, e.createdAt, e.treatmentType, e.product, e.insertedAt, e.removalAt, e.withdrawalUntil, e.notes)
     private fun toHarvest(e: HarvestEntity) = Harvest(e.id, e.hiveId, e.createdAt, e.supersPulled, e.wetHoneyWeight, e.dryHoneyWeight, e.weightUnit, e.waxWeight, e.propolisWeight, e.notes)
     private fun toApiary(e: ApiaryEntity) = Apiary(e.id, e.name, e.notes, e.latitude, e.longitude, e.forageNotes, e.waterNotes)
-    private fun toTask(e: TaskEntity) = Task(e.id, e.hiveId, e.title, e.dueAt, e.completed, e.kind, e.reminderEnabled)
     private fun toEvent(e: ActivityEventEntity) = ActivityEvent(e.id, e.hiveId, e.createdAt, e.type, e.title, e.detail)
 }

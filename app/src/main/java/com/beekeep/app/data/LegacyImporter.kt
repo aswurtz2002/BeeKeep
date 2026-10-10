@@ -39,11 +39,6 @@ object LegacyImporter {
                             }
                         }
                     }
-                    if (source.hasTable("tasks")) {
-                        source.rawQuery("SELECT id,hive_id,title,due_at,completed,kind FROM tasks", null).use { c ->
-                            while (c.moveToNext()) db.tasks().upsert(TaskEntity(c.getLong(0), if (c.isNull(1)) null else c.getLong(1), c.getString(2), c.getLong(3), c.getInt(4) != 0, c.getString(5)))
-                        }
-                    }
                 }
             }
             prefs.edit().putBoolean(IMPORT_COMPLETE, true).apply()
