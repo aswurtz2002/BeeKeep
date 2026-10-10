@@ -37,14 +37,6 @@ class BeeKeepViewModel(
     val photos: StateFlow<List<PhotoEntity>> = _photos
     private val _ready = MutableStateFlow(false)
     val ready: StateFlow<Boolean> = _ready
-    private val _allInspections = MutableStateFlow<List<Inspection>>(emptyList())
-    val allInspections: StateFlow<List<Inspection>> = _allInspections
-    private val _allFeedings = MutableStateFlow<List<Feeding>>(emptyList())
-    val allFeedings: StateFlow<List<Feeding>> = _allFeedings
-    private val _allTreatments = MutableStateFlow<List<Treatment>>(emptyList())
-    val allTreatments: StateFlow<List<Treatment>> = _allTreatments
-    private val _allHarvests = MutableStateFlow<List<Harvest>>(emptyList())
-    val allHarvests: StateFlow<List<Harvest>> = _allHarvests
 
     private var detailJob: Job? = null
 
@@ -55,10 +47,6 @@ class BeeKeepViewModel(
             launch { repo.observeHives().collect { _hives.value = it } }
             launch { repo.observeDeadHives().collect { _deadHives.value = it } }
             launch { repo.observeApiaries().collect { _apiaries.value = it } }
-            launch { repo.observeAllInspections().collect { _allInspections.value = it } }
-            launch { repo.observeAllFeedings().collect { _allFeedings.value = it } }
-            launch { repo.observeAllTreatments().collect { _allTreatments.value = it } }
-            launch { repo.observeAllHarvests().collect { _allHarvests.value = it } }
         }
     }
 
