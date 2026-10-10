@@ -1531,14 +1531,25 @@ private fun createApiaryMapHtml(apiaries: List<Apiary>, focusedApiaryId: Long?):
                 }
                 body { font-family: Arial, sans-serif; }
                 #map-shell {
-                    position: relative; width: 100%; height: 100%; min-height: 220px;
+                    position: relative; display: block;
+                    width: 100%; height: 100%; min-width: 0; min-height: 220px;
+                    padding: 0; margin: 0;
                     background: #e7e8e4; border-radius: 22px; overflow: hidden;
-                    contain: layout size paint;
                 }
                 /* MapLibre requires its target container to have no child elements. */
                 #map {
-                    position: absolute; inset: 0; width: 100%; height: 100%; min-height: 220px;
+                    position: absolute; left: 0; top: 0; right: 0; bottom: 0;
+                    display: block; width: 100%; height: 100%; min-width: 0; min-height: 220px;
                     padding: 0; margin: 0; background: #e7e8e4; overflow: hidden;
+                }
+                /* Keep the GL canvas and its wrapper aligned to the complete map viewport. */
+                #map .maplibregl-canvas-container,
+                #map .maplibregl-canvas-container canvas,
+                #map canvas.maplibregl-canvas {
+                    position: absolute !important;
+                    left: 0 !important; top: 0 !important;
+                    width: 100% !important; height: 100% !important;
+                    min-width: 100% !important; min-height: 100% !important;
                 }
                 .map-error {
                     position: absolute; inset: 0; z-index: 20;
@@ -1610,9 +1621,10 @@ private fun createApiaryMapHtml(apiaries: List<Apiary>, focusedApiaryId: Long?):
                                 zoom: $initialZoom,
                                 attributionControl: true,
                                 fadeDuration: 0,
-                                // WebView canvas sizes are more predictable at CSS-pixel ratio.
-                                pixelRatio: 1,
-                                maxCanvasSize: [2048, 2048],
+                                // Let MapLibre use the device pixel ratio and its default
+                                // 4096px canvas safety limit; a smaller fixed backing canvas
+                                // can leave part of the viewport unrendered on some devices.
+                                maxCanvasSize: [4096, 4096],
                                 trackResize: true
                             });
                             const markersById = {};
@@ -1656,10 +1668,19 @@ private fun createApiaryMapHtml(apiaries: List<Apiary>, focusedApiaryId: Long?):
                             });
 
                             function resizeMapViewport() {
-                                // Re-measure after Android/Compose has applied the final WebView size.
+                                // Wait for Android/Compose, CSS layout, and the WebGL canvas
+                                // to settle, then remeasure the entire available map viewport.
                                 window.requestAnimationFrame(function () {
+                                    const container = map.getContainer();
+                                    const canvasContainer = map.getCanvasContainer();
+                                    if (container && canvasContainer) {
+                                        canvasContainer.style.width = container.clientWidth + 'px';
+                                        canvasContainer.style.height = container.clientHeight + 'px';
+                                    }
                                     map.resize();
-                                    window.requestAnimationFrame(function () { map.resize(); });
+                                    window.requestAnimationFrame(function () {
+                                        map.resize();
+                                    });
                                 });
                             }
                             window.beekeepResizeMap = resizeMapViewport;
