@@ -1295,17 +1295,19 @@ private fun ApiaryHivesScreen(
 
 @Composable
 private fun HiveRow(hive: Hive, supporting: String? = null, onClick: () -> Unit) {
-    val attention = hive.mitePercent >= 3.0 || hive.queenStatus == "Queenless"
+    // The Apiaries hive list now highlights the colony's strength rather than mite percentage.
+    val attention = hive.queenStatus == "Queenless" || hive.strength <= 3
     Card(onClick = onClick, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(24.dp), border = if (attention) androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = .35f)) else null) {
         Row(Modifier.fillMaxWidth().padding(15.dp), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 Text("Hive ${hive.number}", fontWeight = FontWeight.ExtraBold, style = MaterialTheme.typography.titleMedium)
                 Text(hive.apiary, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Text("Queen ${hive.queenStatus} • Strength ${hive.strength}/10", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+                Text("Queen ${hive.queenStatus}", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
                 supporting?.let { Text(it, color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelMedium) }
             }
             Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text("${String.format(Locale.US, "%.1f", hive.mitePercent)}%", fontWeight = FontWeight.ExtraBold, color = if (attention) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary)
+                Text("STRENGTH", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                Text("${hive.strength}/10", fontWeight = FontWeight.ExtraBold, style = MaterialTheme.typography.titleLarge, color = if (hive.strength <= 3 || hive.queenStatus == "Queenless") MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary)
                 Icon(Icons.Rounded.ChevronRight, "Open hive", tint = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
