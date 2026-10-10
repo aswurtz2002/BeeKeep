@@ -1723,19 +1723,17 @@ private fun InspectionScreen(
                 }
                 override fun onResults(results: Bundle?) {
                     val spoken = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()
-                    if (!spoken.isNullOrBlank()) appendRecognizedSpeech(spoken)
-                    voicePartialText = ""
-                    if (keepVoiceListening && !voiceBlocked) {
-                        voiceHandler.postDelayed({
-                            if (keepVoiceListening && !voiceBlocked) {
-                                runCatching { recognizer.startListening(speechIntent) }
-                                    .onFailure {
-                                        voiceListeningRequested = false
-                                        voiceStatus = "Voice dictation stopped • tap VOICE to restart"
-                                    }
-                            }
-                        }, 250L)
+                    if (!spoken.isNullOrBlank()) {
+                        appendRecognizedSpeech(spoken)
+                        voiceStatus = "Voice note saved • tap VOICE to record another"
+                    } else {
+                        voiceStatus = "No speech detected • tap VOICE to try again"
                     }
+                    voicePartialText = ""
+                    // One dictated phrase per activation. Leave the microphone stopped
+                    // after the recognizer finishes and the note has been saved.
+                    voiceListeningRequested = false
+                    voiceHandler.removeCallbacksAndMessages(null)
                 }
                 override fun onPartialResults(partialResults: Bundle?) {
                     voicePartialText = partialResults
@@ -1743,29 +1741,18 @@ private fun InspectionScreen(
                         ?.firstOrNull().orEmpty()
                 }
                 override fun onError(error: Int) {
-                    if (keepVoiceListening && !voiceBlocked &&
-                        (error == SpeechRecognizer.ERROR_NO_MATCH ||
-                         error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT ||
-                         error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY)) {
-                        voiceStatus = "Still listening…"
-                        voiceHandler.postDelayed({
-                            if (keepVoiceListening && !voiceBlocked) {
-                                runCatching { recognizer.startListening(speechIntent) }
-                                    .onFailure {
-                                        voiceListeningRequested = false
-                                        voiceStatus = "Voice dictation stopped • tap VOICE to restart"
-                                    }
-                            }
-                        }, if (error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY) 700L else 350L)
-                    } else if (keepVoiceListening && !voiceBlocked) {
-                        voiceListeningRequested = false
-                        voicePartialText = ""
-                        voiceStatus = when (error) {
-                            SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "Microphone permission is required"
-                            SpeechRecognizer.ERROR_NETWORK,
-                            SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "Speech service unavailable • tap VOICE to retry"
-                            else -> "Voice dictation stopped • tap VOICE to restart"
-                        }
+                    // Do not automatically reopen the microphone after a timeout,
+                    // silence, or recognition error. The beekeeper can explicitly retry.
+                    voiceListeningRequested = false
+                    voiceHandler.removeCallbacksAndMessages(null)
+                    voicePartialText = ""
+                    voiceStatus = when (error) {
+                        SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "Microphone permission is required"
+                        SpeechRecognizer.ERROR_NO_MATCH,
+                        SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "No speech detected • tap VOICE to try again"
+                        SpeechRecognizer.ERROR_NETWORK,
+                        SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "Speech service unavailable • tap VOICE to retry"
+                        else -> "Voice dictation stopped • tap VOICE to try again"
                     }
                 }
                 override fun onEvent(eventType: Int, params: Bundle?) = Unit
