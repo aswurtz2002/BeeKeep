@@ -144,12 +144,14 @@ import com.beekeep.app.ui.theme.OnNavBar
 import com.beekeep.app.ui.theme.OnNavBarMuted
 import com.beekeep.app.ui.theme.Trail
 import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.text.DateFormat
 import java.util.Date
 import java.util.Locale
 
 private const val PREFS = "beekeep_prefs"
+private const val INSPECTION_NOTE_DRAFTS = "beekeep_inspection_note_drafts"
 
 class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
     private val nfc = NfcController()
@@ -543,6 +545,9 @@ fun BeeKeepApp(
             onSave = { inspection ->
                 val saved = vm.saveInspection(inspection)
                 if (saved) {
+                    // The inspection now permanently contains the note, so the draft is no longer needed.
+                    activity.getSharedPreferences(INSPECTION_NOTE_DRAFTS, android.content.Context.MODE_PRIVATE)
+                        .edit { remove("hive_${inspection.hiveId}") }
                     inspecting = false
                     scope.launch { snackbarHostState.showSnackbar("Inspection saved") }
                 } else {
@@ -1388,7 +1393,24 @@ private fun QueenProfileDialog(
 }
 
 @Composable private fun EventCard(event:ActivityEvent){Card(shape=RoundedCornerShape(16.dp)){Row(Modifier.fillMaxWidth().padding(14.dp),horizontalArrangement=Arrangement.spacedBy(10.dp)){Icon(Icons.Rounded.Yard,null);Column{Text(event.title,fontWeight=FontWeight.Bold);Text(DateFormat.getDateTimeInstance(DateFormat.MEDIUM,DateFormat.SHORT).format(Date(event.createdAt)),color=MaterialTheme.colorScheme.onSurfaceVariant);if(event.detail.isNotBlank())Text(event.detail)}}}}
-@Composable private fun InspectionSnapshot(i:Inspection){Card(shape=RoundedCornerShape(16.dp)){Column(Modifier.padding(14.dp),verticalArrangement=Arrangement.spacedBy(5.dp)){Text("${i.strength}/10 strength • ${i.queenStatus}");Text("Mites ${i.miteCount}/${i.sampleSize} = ${String.format("%.2f",i.mitePercent)}%");Text("Brood: eggs ${i.eggs}, open ${i.openBrood}, capped ${i.cappedBrood}");Text("Stores: honey ${i.honeyStores}, pollen ${i.pollen}");if(i.diseaseFlags.isNotBlank())Text("Flags: ${i.diseaseFlags}",color=MaterialTheme.colorScheme.error)}}}
+@Composable
+private fun InspectionSnapshot(i: Inspection) {
+    Card(shape = RoundedCornerShape(16.dp)) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+            Text("${i.strength}/10 strength • ${i.queenStatus}")
+            Text("Mites ${i.miteCount}/${i.sampleSize} = ${String.format(Locale.US, "%.2f", i.mitePercent)}%")
+            Text("Brood: eggs ${i.eggs}, open ${i.openBrood}, capped ${i.cappedBrood}")
+            Text("Stores: honey ${i.honeyStores}, pollen ${i.pollen}")
+            if (i.diseaseFlags.isNotBlank()) {
+                Text("Flags: ${i.diseaseFlags}", color = MaterialTheme.colorScheme.error)
+            }
+            if (i.notes.isNotBlank()) {
+                Text("FIELD NOTES", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.ExtraBold)
+                Text(i.notes, style = MaterialTheme.typography.bodyMedium)
+            }
+        }
+    }
+}
 
 @Composable
 private fun InspectionScreen(
@@ -1403,13 +1425,21 @@ private fun InspectionScreen(
     val haptic = LocalHapticFeedback.current
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val noteDraftPrefs = remember(context) {
+        context.getSharedPreferences(INSPECTION_NOTE_DRAFTS, android.content.Context.MODE_PRIVATE)
+    }
+    val noteDraftKey = remember(hive.id) { "hive_${hive.id}" }
+    val savedNoteDraft = remember(hive.id) { noteDraftPrefs.getString(noteDraftKey, "").orEmpty() }
     val lastInspection = remember(priorInspections) { priorInspections.maxByOrNull { it.createdAt } }
 
     var strength by rememberSaveable { mutableIntStateOf(hive.strength) }
     var queen by rememberSaveable { mutableStateOf(hive.queenStatus) }
     var mites by rememberSaveable { mutableIntStateOf(lastInspection?.miteCount ?: 0) }
     var sample by rememberSaveable { mutableIntStateOf(lastInspection?.sampleSize ?: 300) }
-    var notes by rememberSaveable { mutableStateOf("") }
+    var notes by rememberSaveable(hive.id) { mutableStateOf(savedNoteDraft) }
+    var noteSaveStatus by rememberSaveable(hive.id) {
+        mutableStateOf(if (savedNoteDraft.isBlank()) "" else "Auto-saved note restored")
+    }
     var eggs by rememberSaveable { mutableIntStateOf(lastInspection?.eggs ?: 0) }
     var openBrood by rememberSaveable { mutableIntStateOf(lastInspection?.openBrood ?: 0) }
     var cappedBrood by rememberSaveable { mutableIntStateOf(lastInspection?.cappedBrood ?: 0) }
@@ -1458,8 +1488,14 @@ private fun InspectionScreen(
         }
     }
     val voiceLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
-        result.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)?.firstOrNull()?.let {
-            notes = if (notes.isBlank()) it else "$notes $it"
+        result.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)?.firstOrNull()?.let { spokenText ->
+            val updatedNotes = if (notes.isBlank()) spokenText else "$notes $spokenText"
+            notes = updatedNotes
+            // Save immediately when Android returns the finished speech transcription.
+            noteDraftPrefs.edit {
+                if (updatedNotes.isBlank()) remove(noteDraftKey) else putString(noteDraftKey, updatedNotes)
+            }
+            noteSaveStatus = "Note auto-saved"
             voiceStatus = "Voice added"
         }
     }
@@ -1471,6 +1507,15 @@ private fun InspectionScreen(
             }
             runCatching { voiceLauncher.launch(intent) }.onFailure { voiceStatus = "Voice input unavailable" }
         } else voiceStatus = "Microphone permission denied"
+    }
+
+    androidx.compose.runtime.LaunchedEffect(hive.id, notes) {
+        // Debounce edits so a longer note is stored when the user pauses typing.
+        delay(400)
+        noteDraftPrefs.edit {
+            if (notes.isBlank()) remove(noteDraftKey) else putString(noteDraftKey, notes)
+        }
+        noteSaveStatus = if (notes.isBlank()) "" else "Note auto-saved"
     }
 
     BackHandler {
@@ -1645,10 +1690,20 @@ private fun InspectionScreen(
                         Text("FIELD NOTES", fontWeight = FontWeight.ExtraBold)
                         OutlinedTextField(
                             value = notes,
-                            onValueChange = { notes = it },
+                            onValueChange = {
+                                notes = it
+                                noteSaveStatus = if (it.isBlank()) "" else "Saving note…"
+                            },
                             modifier = Modifier.fillMaxWidth().height(124.dp),
                             label = { Text("What did you see?") }
                         )
+                        if (noteSaveStatus.isNotBlank()) {
+                            Text(
+                                noteSaveStatus,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             if (voiceStatus.isNotBlank()) Text(voiceStatus, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
                             if (locationStatus != "No GPS captured") Text(locationStatus, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
