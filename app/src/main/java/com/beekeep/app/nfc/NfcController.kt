@@ -24,11 +24,16 @@ data class NfcTagInfo(
     val writable: Boolean?,
     val maxSizeBytes: Int?,
     val ndefType: String?,
-    val storedPayload: String?
+    val storedPayload: String?,
+    val hasBeeKeepLaunchRecord: Boolean = false
 )
 
 sealed interface NfcResult {
-    data class Read(val info: NfcTagInfo, val text: String?) : NfcResult {
+    data class Read(
+        val info: NfcTagInfo,
+        val text: String?,
+        val launchPreparationError: String? = null
+    ) : NfcResult {
         val uid: String get() = info.uid
     }
     data class Written(val info: NfcTagInfo) : NfcResult {
@@ -45,6 +50,8 @@ class NfcController {
     @Volatile private var activityResumed = false
     @Volatile private var passiveReaderActive = false
     @Volatile private var passiveReadListener: ((NfcResult.Read) -> Unit)? = null
+    @Volatile private var knownHiveIdByTagUid: Map<String, Long> = emptyMap()
+    @Volatile private var knownHiveTagsReady: Boolean = false
     private var lastHandledUid: String? = null
     private var lastHandledAt = 0L
 
@@ -88,8 +95,24 @@ class NfcController {
     fun isEnabled(): Boolean = adapter?.isEnabled == true
     fun isScanning(): Boolean = active.get()
 
+    /** Update the local UID-to-hive index before automatic tag writes are allowed. */
+    fun updateKnownHiveTags(hiveIdByTagUid: Map<String, Long>, ready: Boolean) {
+        knownHiveIdByTagUid = hiveIdByTagUid.entries
+            .mapNotNull { (uid, hiveId) -> uid.trim().uppercase(java.util.Locale.ROOT).takeIf { it.isNotBlank() }?.let { it to hiveId } }
+            .toMap()
+        knownHiveTagsReady = ready
+    }
+
     fun startRead(activity: Activity, onResult: (NfcResult) -> Unit) {
         start(activity, { tag -> read(tag) }, onResult)
+    }
+
+    /** Reads the tag, writing BeeKeep launch data immediately for blank/unassigned tags. */
+    fun startReadAndPrepareForBeeKeep(activity: Activity, onResult: (NfcResult) -> Unit) {
+        start(activity, { tag ->
+            val result = read(tag)
+            if (result is NfcResult.Read) prepareTagForBeeKeep(tag, result) else result
+        }, onResult)
     }
 
     /**
@@ -210,7 +233,10 @@ class NfcController {
                     return@enableReaderMode
                 }
                 try {
-                    val result = runCatching { read(tag) }.getOrNull()
+                    val result = runCatching {
+                        val readResult = read(tag)
+                        if (readResult is NfcResult.Read) prepareTagForBeeKeep(tag, readResult) else readResult
+                    }.getOrNull()
                     if (result is NfcResult.Read) {
                         val shouldDeliver = synchronized(passiveLock) {
                             val now = System.currentTimeMillis()
@@ -274,7 +300,8 @@ class NfcController {
                 writable = null,
                 maxSizeBytes = null,
                 ndefType = null,
-                storedPayload = stored
+                storedPayload = stored,
+                hasBeeKeepLaunchRecord = rawMessages.any { message -> message.records.any(::isBeeKeepAppRecord) }
             )
             return NfcResult.Read(info, stored)
         }
@@ -330,7 +357,8 @@ class NfcController {
                 writable = ndef.isWritable,
                 maxSizeBytes = ndef.maxSize,
                 ndefType = ndef.type,
-                storedPayload = stored
+                storedPayload = stored,
+                hasBeeKeepLaunchRecord = message?.records?.any(::isBeeKeepAppRecord) == true
             )
             NfcResult.Read(info, stored)
         } finally {
@@ -390,7 +418,8 @@ class NfcController {
                     writable = true,
                     maxSizeBytes = null,
                     ndefType = null,
-                    storedPayload = text
+                    storedPayload = text,
+                    hasBeeKeepLaunchRecord = true
                 )
                 val verify = Ndef.get(tag)?.let { verification ->
                     runCatching {
@@ -416,8 +445,43 @@ class NfcController {
         writable = ndef.isWritable,
         maxSizeBytes = ndef.maxSize,
         ndefType = ndef.type,
-        storedPayload = text
+        storedPayload = text,
+        hasBeeKeepLaunchRecord = true
     )
+
+    private fun prepareTagForBeeKeep(tag: Tag, result: NfcResult.Read): NfcResult.Read {
+        if (!knownHiveTagsReady) {
+            return result.copy(launchPreparationError = "BeeKeep is still loading hive assignments. Scan the tag again in a moment.")
+        }
+
+        val uidKey = result.uid.trim().uppercase(java.util.Locale.ROOT)
+        val assignedHiveId = knownHiveIdByTagUid[uidKey]
+        val payloadHiveId = BeeKeepNfcPayload.hiveId(result.text)
+
+        // Never replace a valid hive payload when it conflicts with the saved UID assignment.
+        if (assignedHiveId != null && payloadHiveId != null && assignedHiveId != payloadHiveId) {
+            return result.copy(launchPreparationError = "This tag's stored hive payload conflicts with its saved assignment. No data was changed.")
+        }
+
+        val targetPayload = when {
+            assignedHiveId != null -> BeeKeepNfcPayload.forHive(assignedHiveId)
+            payloadHiveId != null -> result.text!!.trim() // preserve a valid hive payload, even if this device has not synced that hive yet
+            else -> BeeKeepNfcPayload.UNASSIGNED_PAYLOAD
+        }
+
+        if (result.info.hasBeeKeepLaunchRecord && result.text?.trim() == targetPayload) return result
+
+        return when (val written = write(tag, targetPayload, allowOverwriteOtherHive = false)) {
+            is NfcResult.Written -> NfcResult.Read(written.info, targetPayload)
+            is NfcResult.Error -> result.copy(launchPreparationError = written.message)
+            is NfcResult.Read -> result
+        }
+    }
+
+    private fun isBeeKeepAppRecord(record: NdefRecord): Boolean =
+        record.tnf == NdefRecord.TNF_EXTERNAL_TYPE &&
+            record.type.toString(StandardCharsets.UTF_8).equals("android.com:pkg", ignoreCase = true) &&
+            record.payload.toString(StandardCharsets.UTF_8).equals("com.beekeep.app", ignoreCase = true)
 
     private fun parseRecord(record: NdefRecord): String? {
         if (record.tnf == NdefRecord.TNF_MIME_MEDIA &&
