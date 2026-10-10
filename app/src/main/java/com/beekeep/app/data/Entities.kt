@@ -50,7 +50,10 @@ data class HiveEntity(
     @ColumnInfo(name = "dead_at") val deadAt: Long? = null,
     // Lifecycle fields merge across devices by this timestamp, not updated_at,
     // so a stale offline edit cannot resurrect a dead colony.
-    @ColumnInfo(name = "status_changed_at", defaultValue = "0") val statusChangedAt: Long = 0L
+    @ColumnInfo(name = "status_changed_at", defaultValue = "0") val statusChangedAt: Long = 0L,
+    // Last known physical position for this individual hive, independent of its apiary.
+    val latitude: Double? = null,
+    val longitude: Double? = null
 )
 
 @Entity(
@@ -217,7 +220,9 @@ data class Hive(
     val mitePercent: Double,
     val tagUid: String?,
     val status: String = HiveStatus.ACTIVE,
-    val deadAt: Long? = null
+    val deadAt: Long? = null,
+    val latitude: Double? = null,
+    val longitude: Double? = null
 ) {
     val isDead: Boolean get() = status != HiveStatus.ACTIVE
 }

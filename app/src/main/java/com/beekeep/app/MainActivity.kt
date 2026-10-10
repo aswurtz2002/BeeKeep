@@ -658,6 +658,9 @@ fun BeeKeepApp(
             onVoiceAutoStartConsumed = {
                 if (pendingAutoStartVoiceHiveId == hiveForInspection.id) pendingAutoStartVoiceHiveId = null
             },
+            onSaveHiveLocation = { hiveId, latitude, longitude, onResult ->
+                vm.updateHiveLocation(hiveId, latitude, longitude, onResult)
+            },
             onBack = { pendingAutoStartVoiceHiveId = null; inspecting = false },
             onSave = { inspection ->
                 val saved = vm.saveInspection(inspection)
@@ -1506,6 +1509,50 @@ private fun HiveDetailScreen(
             }
         }
 
+        val hiveLatitude = hive.latitude
+        val hiveLongitude = hive.longitude
+        Card(shape = RoundedCornerShape(16.dp)) {
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    Text("Hive GPS location", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleSmall)
+                    if (hiveLatitude != null && hiveLongitude != null) {
+                        Text(
+                            "${"%.5f".format(Locale.US, hiveLatitude)}, ${"%.5f".format(Locale.US, hiveLongitude)}",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                        Text("Saved to this hive", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelSmall)
+                    } else {
+                        Text(
+                            "Not saved yet • capture GPS during Inspect",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                }
+                if (hiveLatitude != null && hiveLongitude != null) {
+                    OutlinedButton(
+                        onClick = {
+                            val label = android.net.Uri.encode("Hive ${hive.number}")
+                            val uri = android.net.Uri.parse("geo:$hiveLatitude,$hiveLongitude?q=$hiveLatitude,$hiveLongitude($label)")
+                            runCatching { activity.startActivity(Intent(Intent.ACTION_VIEW, uri)) }
+                        },
+                        modifier = Modifier.height(34.dp),
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Icon(Icons.Rounded.LocationOn, null, modifier = Modifier.size(15.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("MAP", style = MaterialTheme.typography.labelSmall)
+                    }
+                }
+            }
+        }
+
         Card(shape = RoundedCornerShape(16.dp)) {
             Row(
                 Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
@@ -1719,6 +1766,7 @@ private fun InspectionScreen(
     priorInspections: List<Inspection>,
     autoStartVoice: Boolean,
     onVoiceAutoStartConsumed: () -> Unit,
+    onSaveHiveLocation: (Long, Double, Double, (String?) -> Unit) -> Unit,
     onBack: () -> Unit,
     onSave: suspend (Inspection) -> Unit
 ) {
@@ -1798,9 +1846,10 @@ private fun InspectionScreen(
     }
     var photoPath by rememberSaveable { mutableStateOf<String?>(null) }
     var cameraOpen by rememberSaveable { mutableStateOf(false) }
-    var lat by rememberSaveable { mutableStateOf<Double?>(null) }
-    var lon by rememberSaveable { mutableStateOf<Double?>(null) }
-    var locationStatus by rememberSaveable { mutableStateOf("No GPS captured") }
+    var lat by rememberSaveable(hive.id) { mutableStateOf<Double?>(null) }
+    var lon by rememberSaveable(hive.id) { mutableStateOf<Double?>(null) }
+    var locationStatus by rememberSaveable(hive.id) { mutableStateOf("No GPS captured") }
+    var pendingGpsHiveId by rememberSaveable { mutableStateOf<Long?>(null) }
     var voiceStatus by rememberSaveable { mutableStateOf("") }
     var voiceListeningRequested by rememberSaveable(hive.id) { mutableStateOf(false) }
     var voicePartialText by rememberSaveable(hive.id) { mutableStateOf("") }
@@ -1859,18 +1908,38 @@ private fun InspectionScreen(
             cameraStatus = "Camera permission denied"
         }
     }
+    fun captureAndSaveHiveGps(targetHiveId: Long, latitude: Double, longitude: Double) {
+        val coordinates = "${"%.5f".format(Locale.US, latitude)}, ${"%.5f".format(Locale.US, longitude)}"
+        if (hive.id == targetHiveId) {
+            lat = latitude
+            lon = longitude
+            locationStatus = "GPS captured • saving to hive…"
+        }
+        onSaveHiveLocation(targetHiveId, latitude, longitude) { error ->
+            if (hive.id == targetHiveId) {
+                locationStatus = if (error == null) {
+                    "Hive GPS saved • $coordinates"
+                } else {
+                    "Inspection GPS captured; hive GPS save failed: $error"
+                }
+            }
+        }
+    }
+
     val locationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { r ->
+        val targetHiveId = pendingGpsHiveId ?: hive.id
+        pendingGpsHiveId = null
         val granted = r[Manifest.permission.ACCESS_FINE_LOCATION] == true || r[Manifest.permission.ACCESS_COARSE_LOCATION] == true
         if (!granted) {
-            locationStatus = "Location permission denied"
+            if (hive.id == targetHiveId) locationStatus = "Location permission denied"
             return@rememberLauncherForActivityResult
         }
         locationController.current { loc ->
             if (loc != null) {
-                lat = loc.latitude
-                lon = loc.longitude
-                locationStatus = "GPS captured • ${"%.5f".format(Locale.US, loc.latitude)}, ${"%.5f".format(Locale.US, loc.longitude)}"
-            } else locationStatus = "Could not get a location"
+                captureAndSaveHiveGps(targetHiveId, loc.latitude, loc.longitude)
+            } else if (hive.id == targetHiveId) {
+                locationStatus = "Could not get a location"
+            }
         }
     }
     val voiceHandler = remember { Handler(Looper.getMainLooper()) }
@@ -2147,15 +2216,19 @@ private fun InspectionScreen(
                         }
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             FieldActionButton(Icons.Rounded.GpsFixed, "GPS", Modifier.weight(1f)) {
+                                val targetHiveId = hive.id
                                 if (locationController.hasPermission()) {
                                     locationController.current { loc ->
                                         if (loc != null) {
-                                            lat = loc.latitude
-                                            lon = loc.longitude
-                                            locationStatus = "GPS captured • ${"%.5f".format(Locale.US, loc.latitude)}, ${"%.5f".format(Locale.US, loc.longitude)}"
-                                        } else locationStatus = "Could not get a location"
+                                            captureAndSaveHiveGps(targetHiveId, loc.latitude, loc.longitude)
+                                        } else if (hive.id == targetHiveId) {
+                                            locationStatus = "Could not get a location"
+                                        }
                                     }
-                                } else locationPermission.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
+                                } else {
+                                    pendingGpsHiveId = targetHiveId
+                                    locationPermission.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
+                                }
                             }
                             Button(
                                 onClick = {

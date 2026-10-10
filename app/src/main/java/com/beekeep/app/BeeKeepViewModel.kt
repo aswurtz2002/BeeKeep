@@ -98,6 +98,22 @@ class BeeKeepViewModel(
         }
     }
 
+    fun updateHiveLocation(
+        hiveId: Long,
+        latitude: Double,
+        longitude: Double,
+        onResult: (String?) -> Unit = {}
+    ) {
+        viewModelScope.launch {
+            runCatching { repo.updateHiveLocation(hiveId, latitude, longitude) }
+                .onSuccess {
+                    if (_selected.value?.id == hiveId) _selected.value = repo.getHive(hiveId)
+                    onResult(null)
+                }
+                .onFailure { onResult(it.message ?: "Could not save this hive's GPS location.") }
+        }
+    }
+
     fun markHiveDead(hiveId: Long, onResult: (Boolean, String?) -> Unit = { _, _ -> }) {
         viewModelScope.launch {
             runCatching {

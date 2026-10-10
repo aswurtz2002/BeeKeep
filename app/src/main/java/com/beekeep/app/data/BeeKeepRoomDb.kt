@@ -9,7 +9,7 @@ import androidx.room.RoomDatabase
 
 @Database(
     entities = [ApiaryEntity::class, HiveEntity::class, InspectionEntity::class, FeedingEntity::class, TreatmentEntity::class, HarvestEntity::class, ActivityEventEntity::class, SyncOutboxEntity::class, TaskEntity::class, PhotoEntity::class, NfcTagAssignmentEntity::class],
-    version = 8,
+    version = 9,
     exportSchema = false
 )
 abstract class BeeKeepRoomDb : RoomDatabase() {
@@ -140,10 +140,36 @@ abstract class BeeKeepRoomDb : RoomDatabase() {
             }
         }
 
+        val MIGRATION_8_9 = object : Migration(8, 9) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE hives ADD COLUMN latitude REAL")
+                db.execSQL("ALTER TABLE hives ADD COLUMN longitude REAL")
+                // Promote each hive's most recent inspection GPS to its initial permanent location.
+                // The Apiary coordinates stay on their separate apiaries row.
+                db.execSQL("""
+                    UPDATE hives
+                    SET latitude = (
+                        SELECT i.latitude FROM inspections i
+                        WHERE i.hive_id = hives.id AND i.latitude IS NOT NULL AND i.longitude IS NOT NULL
+                        ORDER BY i.created_at DESC LIMIT 1
+                    ),
+                    longitude = (
+                        SELECT i.longitude FROM inspections i
+                        WHERE i.hive_id = hives.id AND i.latitude IS NOT NULL AND i.longitude IS NOT NULL
+                        ORDER BY i.created_at DESC LIMIT 1
+                    )
+                    WHERE EXISTS (
+                        SELECT 1 FROM inspections i
+                        WHERE i.hive_id = hives.id AND i.latitude IS NOT NULL AND i.longitude IS NOT NULL
+                    )
+                """.trimIndent())
+            }
+        }
+
         @Volatile private var INSTANCE: BeeKeepRoomDb? = null
         fun get(context: Context): BeeKeepRoomDb = INSTANCE ?: synchronized(this) {
             INSTANCE ?: Room.databaseBuilder(context.applicationContext, BeeKeepRoomDb::class.java, "beekeep_room.db")
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9)
                 .setJournalMode(RoomDatabase.JournalMode.WRITE_AHEAD_LOGGING)
                 .fallbackToDestructiveMigrationOnDowngrade(true)
                 .build()
