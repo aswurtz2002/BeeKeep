@@ -149,6 +149,7 @@ import com.beekeep.app.nfc.BeeKeepNfcPayload
 import com.beekeep.app.nfc.NfcResult
 import com.beekeep.app.ui.camera.CameraCaptureView
 import com.beekeep.app.ui.theme.BeeKeepTheme
+import com.beekeep.app.ui.theme.BeeKeepAccent
 import com.beekeep.app.ui.theme.NavBarDark
 import com.beekeep.app.ui.theme.NavBarLight
 import com.beekeep.app.ui.theme.NavIndicator
