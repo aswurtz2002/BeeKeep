@@ -282,9 +282,18 @@ fun BeeKeepApp(
     val harvests by vm.harvests.collectAsStateWithLifecycle()
     val ready by vm.ready.collectAsStateWithLifecycle()
 
-    androidx.compose.runtime.LaunchedEffect(ready, incomingNfc?.uid) {
+    androidx.compose.runtime.LaunchedEffect(ready, incomingNfc?.uid, screen) {
         val result = incomingNfc ?: return@LaunchedEffect
         if (!ready) return@LaunchedEffect
+
+        // Manual NFC management and scan screens own their tag reads. Ignore
+        // passive-reader notifications there, otherwise a just-assigned tag can
+        // navigate away to its hive before the write prompt becomes visible.
+        if (screen == Screen.TAG_MANAGER || screen == Screen.SCAN) {
+            (activity as? MainActivity)?.pendingNfcResult?.value = null
+            return@LaunchedEffect
+        }
+
         val payloadHiveId = BeeKeepNfcPayload.hiveId(result.text)
         val resolvedId = vm.findHiveByTag(result.uid)?.id
             ?: payloadHiveId?.takeIf { id -> hives.any { it.id == id } }
@@ -1768,6 +1777,10 @@ private fun TagManagementScreen(
     var status by rememberSaveable { mutableStateOf("") }
     var assigningHiveId by rememberSaveable { mutableStateOf<Long?>(null) }
     var reassignPrompt by rememberSaveable { mutableStateOf<Pair<Long, String>?>(null) }
+    var launchWriteHiveId by rememberSaveable { mutableStateOf<Long?>(null) }
+    var launchWriteUid by rememberSaveable { mutableStateOf<String?>(null) }
+    var launchWriteOverwrite by rememberSaveable { mutableStateOf(false) }
+    var launchWriteStatusHandler by remember { mutableStateOf<((String) -> Unit)?>(null) }
     BackHandler { onBack() }
     val assigned = hives.count { !it.tagUid.isNullOrBlank() }
 
@@ -1777,18 +1790,68 @@ private fun TagManagementScreen(
         allowOverwriteOtherHive: Boolean = false,
         updateStatus: (String) -> Unit
     ) {
-        updateStatus("Tag $uid assigned. Tap the same tag again to write BeeKeep launch data.")
-        nfc.startWrite(
-            activity = activity,
-            text = BeeKeepNfcPayload.forHive(hiveId),
-            allowOverwriteOtherHive = allowOverwriteOtherHive,
-            expectedUid = uid,
-            onResult = { result ->
-                when (result) {
-                    is NfcResult.Written -> updateStatus("Tag assigned and written. Tapping it with BeeKeep closed can now open this hive.")
-                    is NfcResult.Error -> updateStatus("Tag $uid is assigned, but launch data was not written: ${result.message} Open this hive and use WRITE TAG to retry.")
-                    is NfcResult.Read -> Unit
+        // Do not immediately re-arm the NFC reader here: the user's first tap
+        // may still be against the phone. Show an explicit prompt first, then
+        // start a fresh write scan only after they confirm they are ready.
+        updateStatus("Tag $uid assigned. One more tap is needed to write BeeKeep launch data.")
+        launchWriteHiveId = hiveId
+        launchWriteUid = uid
+        launchWriteOverwrite = allowOverwriteOtherHive
+        launchWriteStatusHandler = updateStatus
+    }
+
+    if (launchWriteHiveId != null && launchWriteUid != null) {
+        val targetHive = hives.firstOrNull { it.id == launchWriteHiveId }
+        val targetNumber = targetHive?.number ?: launchWriteHiveId.toString()
+        AlertDialog(
+            onDismissRequest = {
+                nfc.stop(activity)
+                launchWriteStatusHandler?.invoke("Tag ${launchWriteUid} is assigned, but launch data was not written. Open the hive and use WRITE TAG to retry.")
+                launchWriteHiveId = null
+                launchWriteUid = null
+                launchWriteStatusHandler = null
+            },
+            title = { Text("One more tap needed", fontWeight = FontWeight.ExtraBold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Hive $targetNumber has been assigned to tag $launchWriteUid.")
+                    Text("The first tap saved the tag's UID only. To open this hive when BeeKeep is closed, its launch data must also be written.")
+                    Text("Remove the tag from the phone if it is still touching it. Then choose CONTINUE and tap the SAME physical tag again. Hold it still until BeeKeep confirms the write.")
                 }
+            },
+            confirmButton = {
+                Button(onClick = {
+                    val hiveId = launchWriteHiveId
+                    val uid = launchWriteUid
+                    val allowOverwrite = launchWriteOverwrite
+                    val updateStatus = launchWriteStatusHandler
+                    launchWriteHiveId = null
+                    launchWriteUid = null
+                    launchWriteStatusHandler = null
+                    if (hiveId != null && uid != null) {
+                        nfc.startWrite(
+                            activity = activity,
+                            text = BeeKeepNfcPayload.forHive(hiveId),
+                            allowOverwriteOtherHive = allowOverwrite,
+                            expectedUid = uid,
+                            onResult = { result ->
+                                when (result) {
+                                    is NfcResult.Written -> updateStatus?.invoke("Tag assigned and written. Tapping it with BeeKeep closed can now open Hive $targetNumber.")
+                                    is NfcResult.Error -> updateStatus?.invoke("Tag $uid is assigned, but launch data was not written: ${result.message} Open this hive and use WRITE TAG to retry.")
+                                    is NfcResult.Read -> Unit
+                                }
+                            }
+                        )
+                    }
+                }) { Text("CONTINUE TO TAG WRITE") }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    launchWriteStatusHandler?.invoke("Tag $launchWriteUid is assigned, but launch data was not written. Open the hive and use WRITE TAG to retry.")
+                    launchWriteHiveId = null
+                    launchWriteUid = null
+                    launchWriteStatusHandler = null
+                }) { Text("NOT NOW") }
             }
         )
     }
