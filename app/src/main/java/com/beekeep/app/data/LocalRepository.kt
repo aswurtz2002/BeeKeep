@@ -278,9 +278,21 @@ class LocalHiveRepository(context: Context) {
             if (existingByName != null && existingByName.id != a.id) {
                 throw IllegalArgumentException("Apiary $cleanName already exists.")
             }
-            val entity = ApiaryEntity(a.id, cleanName, a.notes.trim(), a.latitude, a.longitude, a.forageNotes.trim(), a.waterNotes.trim(), System.currentTimeMillis(), false)
+            val previous = db.apiaries().get(a.id)
+            val now = System.currentTimeMillis()
+            val entity = ApiaryEntity(a.id, cleanName, a.notes.trim(), a.latitude, a.longitude, a.forageNotes.trim(), a.waterNotes.trim(), now, false)
             db.apiaries().upsert(entity)
             enqueue("apiary", entity.id, "upsert", apiaryPayload(entity))
+
+            // Keep existing hives attached when the apiary is renamed, including
+            // older records that predate apiary_id.
+            if (previous != null && !previous.name.equals(cleanName, ignoreCase = true)) {
+                db.hives().forApiaryRename(previous.id, previous.name).forEach { hive ->
+                    val renamedHive = hive.copy(apiaryName = cleanName, apiaryId = entity.id, updatedAt = now)
+                    db.hives().upsert(renamedHive)
+                    enqueue("hive", renamedHive.id, "upsert", hivePayload(renamedHive))
+                }
+            }
         }
     }
 
