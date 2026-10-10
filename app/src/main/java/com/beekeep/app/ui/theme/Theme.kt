@@ -75,6 +75,8 @@ private val Dark = darkColorScheme(
     onError = Color(0xFF3B1110)
 )
 
+val BeeKeepAccent = Color(0xFFF59E0B)
+
 val NavBarLight = Color(0xFF2A2421)
 val NavBarDark = Color(0xFF171311)
 val OnNavBar = Color(0xFFFFF8EF)

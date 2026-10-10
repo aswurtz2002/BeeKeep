@@ -43,7 +43,6 @@ import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -974,11 +973,11 @@ private fun HoneybeeGlyph(modifier: Modifier = Modifier) {
 }
 
 private val HoneycombButtonShape = GenericShape { size, _ ->
-    moveTo(size.width * 0.24f, 0f)
-    lineTo(size.width * 0.76f, 0f)
+    moveTo(size.width * 0.25f, 0f)
+    lineTo(size.width * 0.75f, 0f)
     lineTo(size.width, size.height * 0.5f)
-    lineTo(size.width * 0.76f, size.height)
-    lineTo(size.width * 0.24f, size.height)
+    lineTo(size.width * 0.75f, size.height)
+    lineTo(size.width * 0.25f, size.height)
     lineTo(0f, size.height * 0.5f)
     close()
 }
@@ -1015,15 +1014,15 @@ private fun HoneycombPattern(modifier: Modifier = Modifier) {
             row++
         }
         val edge = Path().apply {
-            moveTo(size.width * 0.24f, 1f)
-            lineTo(size.width * 0.76f, 1f)
+            moveTo(size.width * 0.25f, 1f)
+            lineTo(size.width * 0.75f, 1f)
             lineTo(size.width - 1f, size.height / 2f)
-            lineTo(size.width * 0.76f, size.height - 1f)
-            lineTo(size.width * 0.24f, size.height - 1f)
+            lineTo(size.width * 0.75f, size.height - 1f)
+            lineTo(size.width * 0.25f, size.height - 1f)
             lineTo(1f, size.height / 2f)
             close()
         }
-        drawPath(edge, Color(0xFFB45309).copy(alpha = 0.72f), style = Stroke(width = 1.5.dp.toPx()))
+        drawPath(edge, BeeKeepAccent.copy(alpha = 0.82f), style = Stroke(width = 1.5.dp.toPx()))
     }
 }
 
@@ -1031,14 +1030,13 @@ private fun HoneycombPattern(modifier: Modifier = Modifier) {
 private fun HoneycombScanButton(onClick: () -> Unit) {
     Box(
         modifier = Modifier
-            .widthIn(max = 340.dp)
-            .fillMaxWidth(0.92f)
-            .height(148.dp)
+            .width(208.dp)
+            .height(180.dp)
             .shadow(8.dp, HoneycombButtonShape)
             .clip(HoneycombButtonShape)
             .background(
                 Brush.verticalGradient(
-                    colors = listOf(Color(0xFFFBBF24), Color(0xFFD97706))
+                    colors = listOf(BeeKeepAccent, Color(0xFFD97706))
                 )
             )
             .clickable(onClick = onClick),
@@ -1076,8 +1074,8 @@ private fun HomeScreen(
             }
         }.getOrNull()
     }
-    // The supplied logo art has a pure-black tile baked into the image. Crop to
-    // the inner mark and key out that black so the hero gradient shows through.
+    // Crop to the inner logo mark and key out the near-black tile so the cream
+    // screen background remains visible through the transparent parts.
     val bannerLogoBitmap = remember(bannerBitmap) {
         bannerBitmap?.let { bitmap ->
             runCatching {
@@ -1089,8 +1087,6 @@ private fun HomeScreen(
                     val red = (pixel ushr 16) and 0xFF
                     val green = (pixel ushr 8) and 0xFF
                     val blue = pixel and 0xFF
-                    // Remove the nearly-black background, but retain the logo's
-                    // dark brown strokes and gold linework.
                     if (maxOf(red, green, blue) <= 22 && maxOf(red, green, blue) - minOf(red, green, blue) <= 12) {
                         pixels[index] = 0x00000000
                     }
@@ -1101,81 +1097,47 @@ private fun HomeScreen(
     }
 
     LazyColumn(
-        Modifier.fillMaxSize().padding(padding).padding(horizontal = 16.dp),
-        contentPadding = androidx.compose.foundation.layout.PaddingValues(top = 16.dp, bottom = 28.dp),
+        Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
+            .padding(padding),
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(
+            horizontal = 16.dp,
+            top = 16.dp,
+            bottom = 28.dp
+        ),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
         item {
-            Card(
-                modifier = Modifier.fillMaxWidth().height(168.dp),
-                shape = RoundedCornerShape(24.dp),
-                colors = CardDefaults.cardColors(containerColor = Color(0xFF2A2421)),
-                elevation = CardDefaults.cardElevation(defaultElevation = 3.dp)
+            // Integrated header: no separate card or dark backdrop.
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 112.dp)
+                    .padding(vertical = 8.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Box(
-                    Modifier
-                        .fillMaxSize()
-                        .background(
-                            Brush.verticalGradient(
-                                colors = listOf(Color(0xFF3A2D26), Color(0xFF241E1A))
-                            )
-                        )
-                ) {
-                    // Fine honeycomb lines add texture without competing with the title.
-                    Canvas(Modifier.fillMaxSize()) {
-                        val radius = 15.dp.toPx()
-                        val halfHeight = radius * 0.8660254f
-                        val columnStep = radius * 1.7320508f
-                        val rowStep = radius * 1.5f
-                        val line = Color(0xFFF59E0B).copy(alpha = 0.10f)
-                        var row = -1
-                        while (row * rowStep < size.height + radius) {
-                            val cy = radius + row * rowStep
-                            val offset = if (row % 2 == 0) 0f else columnStep / 2f
-                            var col = 3
-                            while (col * columnStep + offset < size.width + radius) {
-                                val cx = col * columnStep + offset
-                                val hex = Path().apply {
-                                    moveTo(cx + radius, cy)
-                                    lineTo(cx + radius / 2f, cy + halfHeight)
-                                    lineTo(cx - radius / 2f, cy + halfHeight)
-                                    lineTo(cx - radius, cy)
-                                    lineTo(cx - radius / 2f, cy - halfHeight)
-                                    lineTo(cx + radius / 2f, cy - halfHeight)
-                                    close()
-                                }
-                                drawPath(hex, line, style = Stroke(width = 1.dp.toPx()))
-                                col++
-                            }
-                            row++
-                        }
-                    }
-                    Row(
-                        modifier = Modifier.fillMaxSize().padding(horizontal = 22.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = "BeeKeep",
-                            modifier = Modifier.weight(1f),
-                            style = MaterialTheme.typography.headlineLarge,
-                            color = Color(0xFFF59E0B),
-                            fontWeight = FontWeight.ExtraBold,
-                            maxLines = 1,
-                            softWrap = false
-                        )
-                        Spacer(Modifier.width(12.dp))
-                        if (bannerLogoBitmap != null) {
-                            Image(
-                                bitmap = bannerLogoBitmap.asImageBitmap(),
-                                contentDescription = "BeeKeep bee logo",
-                                contentScale = ContentScale.Fit,
-                                modifier = Modifier.size(width = 84.dp, height = 100.dp)
-                            )
-                        } else {
-                            HoneybeeGlyph(Modifier.size(72.dp))
-                        }
-                    }
+                Text(
+                    text = "BeeKeep",
+                    modifier = Modifier.weight(1f),
+                    style = MaterialTheme.typography.headlineLarge,
+                    color = BeeKeepAccent,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    softWrap = false
+                )
+                Spacer(Modifier.width(12.dp))
+                if (bannerLogoBitmap != null) {
+                    Image(
+                        bitmap = bannerLogoBitmap.asImageBitmap(),
+                        contentDescription = "BeeKeep bee logo",
+                        contentScale = ContentScale.Fit,
+                        colorFilter = androidx.compose.ui.graphics.ColorFilter.tint(BeeKeepAccent),
+                        modifier = Modifier.size(width = 82.dp, height = 98.dp)
+                    )
+                } else {
+                    HoneybeeGlyph(Modifier.size(72.dp))
                 }
             }
         }
@@ -1190,7 +1152,7 @@ private fun HomeScreen(
         }
         item {
             Row(
-                Modifier.fillMaxWidth().padding(top = 58.dp, bottom = 36.dp),
+                Modifier.fillMaxWidth().padding(top = 48.dp, bottom = 30.dp),
                 horizontalArrangement = Arrangement.Center
             ) {
                 HoneycombScanButton(onClick = onScan)
