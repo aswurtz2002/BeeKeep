@@ -3473,6 +3473,7 @@ private fun AddApiaryScreen(
                     )
                 ),
                 focusedApiaryId = existingApiary?.id ?: Long.MIN_VALUE,
+                currentLocation = null,
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(260.dp)
