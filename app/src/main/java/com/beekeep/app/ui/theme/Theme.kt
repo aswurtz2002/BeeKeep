@@ -13,73 +13,73 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
 object Trail {
-    val Cream = Color(0xFFF5EFE0)
-    val Paper = Color(0xFFFBF7EC)
-    val Sand = Color(0xFFEDE1C8)
-    val Clay = Color(0xFF9C6B3F)
-    val Rust = Color(0xFF7C4A26)
+    val Cream = Color(0xFFFAF8F5)
+    val Paper = Color(0xFFFFFDF9)
+    val Sand = Color(0xFFF0ECE1)
+    val Clay = Color(0xFFD97706)
+    val Rust = Color(0xFFB45309)
     val Moss = Color(0xFF7C7F4E)
     val Pine = Color(0xFF4A5A3C)
     val Sage = Color(0xFFADB08C)
-    val Bark = Color(0xFF3A2B1C)
-    val BarkDeep = Color(0xFF221811)
-    val Ink = Color(0xFF33261A)
-    val DuskInk = Color(0xFFEDE2CB)
+    val Bark = Color(0xFF2A2421)
+    val BarkDeep = Color(0xFF1C1917)
+    val Ink = Color(0xFF2A2421)
+    val DuskInk = Color(0xFFF1E9DF)
 }
 
 private val Light = lightColorScheme(
-    primary = Trail.Clay,
-    onPrimary = Trail.Paper,
-    primaryContainer = Trail.Sand,
-    onPrimaryContainer = Trail.Bark,
-    secondary = Trail.Moss,
-    onSecondary = Trail.Paper,
-    secondaryContainer = Color(0xFFE1DEC2),
-    onSecondaryContainer = Color(0xFF38391F),
+    primary = Color(0xFFD97706),
+    onPrimary = Color(0xFFFFFDF9),
+    primaryContainer = Color(0xFFF0ECE1),
+    onPrimaryContainer = Color(0xFF2A2421),
+    secondary = Color(0xFFF59E0B),
+    onSecondary = Color(0xFF2A2421),
+    secondaryContainer = Color(0xFFFFE8C2),
+    onSecondaryContainer = Color(0xFF593208),
     tertiary = Trail.Pine,
     onTertiary = Trail.Paper,
-    tertiaryContainer = Color(0xFFDBE0C6),
+    tertiaryContainer = Color(0xFFE4E7D4),
     onTertiaryContainer = Color(0xFF2E3A24),
-    background = Trail.Cream,
-    onBackground = Trail.Ink,
-    surface = Trail.Paper,
-    onSurface = Trail.Ink,
-    surfaceVariant = Color(0xFFE7DFCB),
-    onSurfaceVariant = Color(0xFF6E5C44),
-    outline = Color(0xFFAC9A7A),
-    error = Color(0xFFA3402A),
-    onError = Trail.Paper
+    background = Color(0xFFFAF8F5),
+    onBackground = Color(0xFF2A2421),
+    surface = Color(0xFFFFFDF9),
+    onSurface = Color(0xFF2A2421),
+    surfaceVariant = Color(0xFFF0ECE1),
+    onSurfaceVariant = Color(0xFF66594D),
+    outline = Color(0xFFD3C9BC),
+    error = Color(0xFF9F3525),
+    onError = Color(0xFFFFFDF9)
 )
 
 private val Dark = darkColorScheme(
-    primary = Color(0xFFD9A56C),
-    onPrimary = Color(0xFF3A2410),
-    primaryContainer = Color(0xFF5C4123),
-    onPrimaryContainer = Color(0xFFF1DFC2),
-    secondary = Color(0xFFB7BA83),
-    onSecondary = Color(0xFF2C2E15),
-    secondaryContainer = Color(0xFF484A2C),
-    onSecondaryContainer = Color(0xFFE0E2C2),
+    primary = Color(0xFFF59E0B),
+    onPrimary = Color(0xFF2A2421),
+    primaryContainer = Color(0xFF573719),
+    onPrimaryContainer = Color(0xFFFFE4BD),
+    secondary = Color(0xFFD97706),
+    onSecondary = Color(0xFF211A15),
+    secondaryContainer = Color(0xFF4B3322),
+    onSecondaryContainer = Color(0xFFFFE3C1),
     tertiary = Color(0xFFAAB18B),
     onTertiary = Color(0xFF20291A),
     tertiaryContainer = Color(0xFF3C4630),
     onTertiaryContainer = Color(0xFFDCE3C8),
-    background = Trail.BarkDeep,
-    onBackground = Trail.DuskInk,
-    surface = Color(0xFF2C2015),
-    onSurface = Trail.DuskInk,
-    surfaceVariant = Color(0xFF473722),
-    onSurfaceVariant = Color(0xFFC4B297),
-    outline = Color(0xFF8C7A5E),
-    error = Color(0xFFE08B72),
-    onError = Color(0xFF3A1408)
+    background = Color(0xFF1C1917),
+    onBackground = Color(0xFFF1E9DF),
+    surface = Color(0xFF2A2421),
+    onSurface = Color(0xFFF1E9DF),
+    surfaceVariant = Color(0xFF403832),
+    onSurfaceVariant = Color(0xFFD0C4B8),
+    outline = Color(0xFF85766A),
+    error = Color(0xFFFFB4A5),
+    onError = Color(0xFF3B1110)
 )
 
-val NavBarLight = Trail.Bark
-val NavBarDark = Color(0xFF1B1109)
-val OnNavBar = Color(0xFFF1E6CF)
-val OnNavBarMuted = Color(0xFFBCA886)
-val NavIndicator = Color(0xFFD9A56C)
+val NavBarLight = Color(0xFF2A2421)
+val NavBarDark = Color(0xFF171311)
+val OnNavBar = Color(0xFFFFF8EF)
+val OnNavBarMuted = Color(0xFFD0C0B0)
+val NavIndicator = Color(0xFFF59E0B)
 
 class LandscapePalette(
     val sky: Color,

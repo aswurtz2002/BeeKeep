@@ -43,6 +43,7 @@ import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -73,6 +74,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -832,7 +834,12 @@ fun BeeKeepApp(
     Scaffold(
         snackbarHost = { androidx.compose.material3.SnackbarHost(snackbarHostState) },
         bottomBar = {
-            NavigationBar(containerColor = if (darkMode) NavBarDark else NavBarLight, contentColor = OnNavBar, tonalElevation = 0.dp) {
+            NavigationBar(
+                modifier = Modifier.clip(RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp)),
+                containerColor = if (darkMode) NavBarDark else NavBarLight,
+                contentColor = OnNavBar,
+                tonalElevation = 0.dp
+            ) {
                 NavItem("Home", Icons.Rounded.Home, screen == Screen.HOME) { screen = Screen.HOME }
                 NavItem("Apiaries", Icons.Rounded.Yard, screen == Screen.APIARIES || screen == Screen.APIARY_HIVES) { selectedApiaryName = null; screen = Screen.APIARIES }
                 NavItem("Scan", Icons.Rounded.Nfc, screen == Screen.SCAN) { screen = Screen.SCAN }
@@ -895,15 +902,33 @@ private fun androidx.compose.foundation.layout.RowScope.NavItem(label: String, i
 
 @Composable
 private fun MetricCard(title: String, value: String, modifier: Modifier = Modifier, supporting: String? = null) {
-    Card(
+    ElevatedCard(
         modifier = modifier,
-        shape = RoundedCornerShape(24.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.elevatedCardColors(
+            containerColor = MaterialTheme.colorScheme.primaryContainer
+        ),
+        elevation = CardDefaults.elevatedCardElevation(defaultElevation = 2.dp)
     ) {
-        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(value, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.ExtraBold)
-            Text(title, color = MaterialTheme.colorScheme.onPrimaryContainer, style = MaterialTheme.typography.labelLarge)
-            supporting?.let { Text(it, color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = .75f), style = MaterialTheme.typography.bodySmall) }
+        Column(
+            Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 14.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp)
+        ) {
+            Text(
+                value,
+                style = MaterialTheme.typography.headlineLarge,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                maxLines = 1
+            )
+            Text(
+                title,
+                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                style = MaterialTheme.typography.bodyMedium
+            )
+            supporting?.let {
+                Text(it, color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.75f), style = MaterialTheme.typography.bodySmall)
+            }
         }
     }
 }
@@ -965,7 +990,7 @@ private fun HoneycombPattern(modifier: Modifier = Modifier) {
         val halfHeight = radius * 0.8660254f
         val columnStep = radius * 1.7320508f
         val rowStep = radius * 1.5f
-        val lineColor = Color(0xFFD99C0C).copy(alpha = 0.48f)
+        val lineColor = Color(0xFFB45309).copy(alpha = 0.34f)
         val lineWidth = 1.25.dp.toPx()
 
         var row = -2
@@ -998,7 +1023,7 @@ private fun HoneycombPattern(modifier: Modifier = Modifier) {
             lineTo(1f, size.height / 2f)
             close()
         }
-        drawPath(edge, Color(0xFFE5A400).copy(alpha = 0.9f), style = Stroke(width = 2.dp.toPx()))
+        drawPath(edge, Color(0xFFB45309).copy(alpha = 0.72f), style = Stroke(width = 1.5.dp.toPx()))
     }
 }
 
@@ -1006,13 +1031,14 @@ private fun HoneycombPattern(modifier: Modifier = Modifier) {
 private fun HoneycombScanButton(onClick: () -> Unit) {
     Box(
         modifier = Modifier
-            .width(260.dp)
+            .widthIn(max = 340.dp)
+            .fillMaxWidth(0.92f)
             .height(148.dp)
             .shadow(8.dp, HoneycombButtonShape)
             .clip(HoneycombButtonShape)
             .background(
                 Brush.verticalGradient(
-                    colors = listOf(Color(0xFFFFD64D), Color(0xFFF6B914))
+                    colors = listOf(Color(0xFFFBBF24), Color(0xFFD97706))
                 )
             )
             .clickable(onClick = onClick),
@@ -1029,7 +1055,7 @@ private fun HoneycombScanButton(onClick: () -> Unit) {
                 "SCAN",
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.ExtraBold,
-                color = Color(0xFF26190B)
+                color = Color(0xFF2A2421)
             )
         }
     }
@@ -1050,11 +1076,26 @@ private fun HomeScreen(
             }
         }.getOrNull()
     }
-    // Reuse the existing logo artwork but crop away its decorative gold outer frame.
+    // The supplied logo art has a pure-black tile baked into the image. Crop to
+    // the inner mark and key out that black so the hero gradient shows through.
     val bannerLogoBitmap = remember(bannerBitmap) {
         bannerBitmap?.let { bitmap ->
             runCatching {
-                Bitmap.createBitmap(bitmap, 467, 38, 220, 238)
+                val cropped = Bitmap.createBitmap(bitmap, 467, 38, 220, 238)
+                val pixels = IntArray(cropped.width * cropped.height)
+                cropped.getPixels(pixels, 0, cropped.width, 0, 0, cropped.width, cropped.height)
+                for (index in pixels.indices) {
+                    val pixel = pixels[index]
+                    val red = (pixel ushr 16) and 0xFF
+                    val green = (pixel ushr 8) and 0xFF
+                    val blue = pixel and 0xFF
+                    // Remove the nearly-black background, but retain the logo's
+                    // dark brown strokes and gold linework.
+                    if (maxOf(red, green, blue) <= 22 && maxOf(red, green, blue) - minOf(red, green, blue) <= 12) {
+                        pixels[index] = 0x00000000
+                    }
+                }
+                Bitmap.createBitmap(pixels, cropped.width, cropped.height, Bitmap.Config.ARGB_8888)
             }.getOrNull()
         }
     }
@@ -1062,97 +1103,86 @@ private fun HomeScreen(
     LazyColumn(
         Modifier.fillMaxSize().padding(padding).padding(horizontal = 16.dp),
         contentPadding = androidx.compose.foundation.layout.PaddingValues(top = 16.dp, bottom = 28.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
+        verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
         item {
-            Box(
-                Modifier.fillMaxWidth().height(168.dp)
-                    .clip(RoundedCornerShape(26.dp))
-                    .background(Color(0xFF2B1F15))
+            Card(
+                modifier = Modifier.fillMaxWidth().height(168.dp),
+                shape = RoundedCornerShape(24.dp),
+                colors = CardDefaults.cardColors(containerColor = Color(0xFF2A2421)),
+                elevation = CardDefaults.cardElevation(defaultElevation = 3.dp)
             ) {
-                // A brighter, warm charcoal-to-amber backdrop keeps the banner readable
-                // without the gold trim baked into the previous logo framing.
-                Canvas(Modifier.fillMaxSize()) {
-                    val w = size.width
-                    val h = size.height
-                    drawRect(
-                        Brush.horizontalGradient(
-                            colors = listOf(
-                                Color(0xFF241912),
-                                Color(0xFF342519),
-                                Color(0xFF49331F)
-                            ),
-                            startX = 0f,
-                            endX = w
+                Box(
+                    Modifier
+                        .fillMaxSize()
+                        .background(
+                            Brush.verticalGradient(
+                                colors = listOf(Color(0xFF3A2D26), Color(0xFF241E1A))
+                            )
                         )
-                    )
-                    drawRect(
-                        Brush.radialGradient(
-                            colors = listOf(
-                                Color(0xFF6A4825).copy(alpha = 0.28f),
-                                Color(0xFF49331F).copy(alpha = 0.04f),
-                                Color.Transparent
-                            ),
-                            center = Offset(w * 0.78f, h * 0.48f),
-                            radius = w * 0.60f
-                        )
-                    )
-
-                    val radius = h * 0.105f
-                    val halfHeight = radius * 0.8660254f
-                    val columnStep = radius * 1.7320508f
-                    val rowStep = radius * 1.5f
-                    val hexColor = Color(0xFFB68A4A).copy(alpha = 0.13f)
-                    var row = -1
-                    while (row * rowStep < h + radius) {
-                        val cy = radius + row * rowStep
-                        val offset = if (row % 2 == 0) 0f else columnStep / 2f
-                        var col = -1
-                        while (col * columnStep + offset < w * 0.65f) {
-                            val cx = col * columnStep + offset
-                            val hex = Path().apply {
-                                moveTo(cx + radius, cy)
-                                lineTo(cx + radius / 2f, cy + halfHeight)
-                                lineTo(cx - radius / 2f, cy + halfHeight)
-                                lineTo(cx - radius, cy)
-                                lineTo(cx - radius / 2f, cy - halfHeight)
-                                lineTo(cx + radius / 2f, cy - halfHeight)
-                                close()
-                            }
-                            drawPath(hex, hexColor, style = Stroke(width = 1.dp.toPx()))
-                            col++
-                        }
-                        row++
-                    }
-                }
-                if (bannerLogoBitmap != null) {
-                    Image(
-                        bitmap = bannerLogoBitmap.asImageBitmap(),
-                        contentDescription = "BeeKeep logo",
-                        contentScale = ContentScale.FillBounds,
-                        modifier = Modifier
-                            .align(Alignment.CenterEnd)
-                            .padding(end = 14.dp)
-                            .size(width = 100.dp, height = 108.dp)
-                    )
-                }
-                Column(
-                    Modifier.align(Alignment.CenterStart).padding(start = 24.dp, end = 140.dp),
-                    verticalArrangement = Arrangement.Center
                 ) {
-                    Text(
-                        "BeeKeep",
-                        style = MaterialTheme.typography.headlineLarge,
-                        color = Color(0xFFFFC754),
-                        fontWeight = FontWeight.ExtraBold
-                    )
+                    // Fine honeycomb lines add texture without competing with the title.
+                    Canvas(Modifier.fillMaxSize()) {
+                        val radius = 15.dp.toPx()
+                        val halfHeight = radius * 0.8660254f
+                        val columnStep = radius * 1.7320508f
+                        val rowStep = radius * 1.5f
+                        val line = Color(0xFFF59E0B).copy(alpha = 0.10f)
+                        var row = -1
+                        while (row * rowStep < size.height + radius) {
+                            val cy = radius + row * rowStep
+                            val offset = if (row % 2 == 0) 0f else columnStep / 2f
+                            var col = 3
+                            while (col * columnStep + offset < size.width + radius) {
+                                val cx = col * columnStep + offset
+                                val hex = Path().apply {
+                                    moveTo(cx + radius, cy)
+                                    lineTo(cx + radius / 2f, cy + halfHeight)
+                                    lineTo(cx - radius / 2f, cy + halfHeight)
+                                    lineTo(cx - radius, cy)
+                                    lineTo(cx - radius / 2f, cy - halfHeight)
+                                    lineTo(cx + radius / 2f, cy - halfHeight)
+                                    close()
+                                }
+                                drawPath(hex, line, style = Stroke(width = 1.dp.toPx()))
+                                col++
+                            }
+                            row++
+                        }
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxSize().padding(horizontal = 22.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "BeeKeep",
+                            modifier = Modifier.weight(1f),
+                            style = MaterialTheme.typography.headlineLarge,
+                            color = Color(0xFFF59E0B),
+                            fontWeight = FontWeight.ExtraBold,
+                            maxLines = 1,
+                            softWrap = false
+                        )
+                        Spacer(Modifier.width(12.dp))
+                        if (bannerLogoBitmap != null) {
+                            Image(
+                                bitmap = bannerLogoBitmap.asImageBitmap(),
+                                contentDescription = "BeeKeep bee logo",
+                                contentScale = ContentScale.Fit,
+                                modifier = Modifier.size(width = 84.dp, height = 100.dp)
+                            )
+                        } else {
+                            HoneybeeGlyph(Modifier.size(72.dp))
+                        }
+                    }
                 }
             }
         }
         item {
             Row(
-                Modifier.fillMaxWidth().padding(top = 16.dp),
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                Modifier.fillMaxWidth().padding(top = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 MetricCard("Hives", hives.size.toString(), Modifier.weight(1f))
                 MetricCard("Apiaries", apiaries.size.toString(), Modifier.weight(1f))
@@ -1160,7 +1190,7 @@ private fun HomeScreen(
         }
         item {
             Row(
-                Modifier.fillMaxWidth().padding(top = 72.dp, bottom = 42.dp),
+                Modifier.fillMaxWidth().padding(top = 58.dp, bottom = 36.dp),
                 horizontalArrangement = Arrangement.Center
             ) {
                 HoneycombScanButton(onClick = onScan)
