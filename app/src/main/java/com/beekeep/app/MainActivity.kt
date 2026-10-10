@@ -251,8 +251,9 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
             lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) {
                 runCatching {
                     val assignedHive = repository.findHiveByNfc(result.uid)
-                    val payloadHive = BeeKeepNfcPayload.hiveId(result.text)?.let { repository.getHive(it) }
-                    if (assignedHive != null || payloadHive != null ||
+                    val payloadHiveId = BeeKeepNfcPayload.hiveId(result.text)
+                    val payloadHive = payloadHiveId?.let { repository.getHive(it) }
+                    if (assignedHive != null || payloadHive != null || payloadHiveId != null ||
                         BeeKeepNfcPayload.isUnassignedPayload(result.text) || result.launchPreparationError != null) {
                         pendingNfcResult.value = result
                     }
