@@ -1560,7 +1560,14 @@ private fun InspectionScreen(
         context.getSharedPreferences(INSPECTION_FORM_DRAFTS, android.content.Context.MODE_PRIVATE)
     }
     val noteDraftKey = remember(hive.id) { "hive_${hive.id}" }
-    val lastInspection = remember(priorInspections) { priorInspections.maxByOrNull { it.createdAt } }
+    // The inspection list may briefly still contain the previous hive while NFC
+    // switches the selected hive. Never let another hive's latest inspection seed this form.
+    val lastInspection = remember(hive.id, priorInspections) {
+        priorInspections
+            .asSequence()
+            .filter { it.hiveId == hive.id }
+            .maxByOrNull { it.createdAt }
+    }
     // Load unfinished field values for this specific hive; if none exist, use the last saved inspection.
     val formDraft = remember(hive.id) { readInspectionFormDraft(formDraftPrefs, hive.id) }
     val formStateKey = formDraft?.updatedAt ?: 0L
@@ -1648,7 +1655,13 @@ private fun InspectionScreen(
         diseaseFlags = diseasesCsv,
         updatedAt = formStateKey
     )
-    val latestFormDraft by rememberUpdatedState(currentFormDraft)
+    // Keep a separate latest-draft state per hive. A single rememberUpdatedState
+    // here was shared while the screen stayed open during NFC cycling, allowing the
+    // next hive's values to be written under the previous hive's key on disposal.
+    val latestFormDraft = remember(hive.id) { mutableStateOf(currentFormDraft) }
+    androidx.compose.runtime.SideEffect {
+        latestFormDraft.value = currentFormDraft
+    }
 
     androidx.compose.runtime.LaunchedEffect(
         hive.id, strength, queen, mites, sample, eggs, openBrood, cappedBrood,
@@ -1657,8 +1670,10 @@ private fun InspectionScreen(
         saveInspectionFormDraft(formDraftPrefs, hive.id, currentFormDraft)
     }
     DisposableEffect(hive.id) {
+        val hiveIdForDraft = hive.id
+        val formDraftForThisHive = latestFormDraft
         onDispose {
-            saveInspectionFormDraft(formDraftPrefs, hive.id, latestFormDraft)
+            saveInspectionFormDraft(formDraftPrefs, hiveIdForDraft, formDraftForThisHive.value)
         }
     }
 
