@@ -5,7 +5,11 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
+import android.speech.SpeechRecognizer
 import android.speech.tts.TextToSpeech
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
@@ -517,15 +521,15 @@ fun BeeKeepApp(
             checkHiveLocation(resolvedHive)
             // Announce every accepted tag read, even when this hive is already open.
             onSpeakHiveNumber(resolvedHive.number)
-            // A tag may be seen repeatedly while held near the phone. Do not
-            // reload the same hive detail screen if it is already open.
+            // Field NFC scans go directly to Inspect so the beekeeper can keep gloves on.
             val alreadyOpen = selectedHiveOpen && selected?.id == resolvedHive.id
             if (!alreadyOpen) {
                 vm.openHive(resolvedHive.id)
                 selectedHiveOpen = true
-                screen = Screen.HOME
-                scope.launch { snackbarHostState.showSnackbar("Hive ${resolvedHive.number} recognized") }
             }
+            screen = Screen.HOME
+            inspecting = true
+            if (!alreadyOpen) scope.launch { snackbarHostState.showSnackbar("Hive ${resolvedHive.number} recognized • inspection ready") }
         } else {
             screen = Screen.SCAN
             unassignedTagUid = result.uid
@@ -761,7 +765,8 @@ fun BeeKeepApp(
                                     vm.openHive(resolvedHive.id)
                                     selectedHiveOpen = true
                                     screen = Screen.HOME
-                                    snackbarHostState.showSnackbar("Hive ${resolvedHive.number} recognized")
+                                    inspecting = true
+                                    snackbarHostState.showSnackbar("Hive ${resolvedHive.number} recognized • inspection ready")
                                 } else {
                                     unassignedTagUid = result.uid
                                 }
@@ -1585,6 +1590,8 @@ private fun InspectionScreen(
     var lon by rememberSaveable { mutableStateOf<Double?>(null) }
     var locationStatus by rememberSaveable { mutableStateOf("No GPS captured") }
     var voiceStatus by rememberSaveable { mutableStateOf("") }
+    var voiceListeningRequested by rememberSaveable(hive.id) { mutableStateOf(false) }
+    var voicePartialText by rememberSaveable(hive.id) { mutableStateOf("") }
     var cameraStatus by rememberSaveable { mutableStateOf("") }
     var saving by rememberSaveable { mutableStateOf(false) }
     var photoCaptured by rememberSaveable { mutableStateOf(false) }
@@ -1646,26 +1653,148 @@ private fun InspectionScreen(
             } else locationStatus = "Could not get a location"
         }
     }
-    val voiceLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
-        result.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)?.firstOrNull()?.let { spokenText ->
-            // Each completed dictation is a separate note entry. Keep earlier notes and add this one below.
-            val cleanSpokenText = spokenText.trim()
-            val updatedNotes = if (notes.isBlank()) cleanSpokenText else "${notes.trimEnd()}\n$cleanSpokenText"
-            notes = updatedNotes
-            // Save immediately when Android returns the finished speech transcription.
-            noteDraftPrefs.edit { putString(noteDraftKey, updatedNotes) }
-            noteSaveStatus = "Note auto-saved"
-            voiceStatus = "Voice added"
+    val voiceHandler = remember { Handler(Looper.getMainLooper()) }
+    val speechRecognizer = remember(context) {
+        if (SpeechRecognizer.isRecognitionAvailable(context)) {
+            runCatching { SpeechRecognizer.createSpeechRecognizer(context) }.getOrNull()
+        } else null
+    }
+    val speechIntent = remember(hive.id, hive.number) {
+        Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            putExtra(RecognizerIntent.EXTRA_PROMPT, "Speak inspection notes for Hive ${hive.number}")
+            putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
+            putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+            putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
         }
     }
+    val latestNotes by rememberUpdatedState(notes)
+    val keepVoiceListening by rememberUpdatedState(voiceListeningRequested)
+    val voiceBlocked by rememberUpdatedState(cameraOpen || saving)
+    val appendRecognizedSpeech by rememberUpdatedState<(String) -> Unit>({ spokenText ->
+        val cleanSpokenText = spokenText.trim()
+        if (cleanSpokenText.isNotBlank()) {
+            val updatedNotes = if (latestNotes.isBlank()) cleanSpokenText else "${latestNotes.trimEnd()}\n$cleanSpokenText"
+            notes = updatedNotes
+            noteDraftPrefs.edit { putString(noteDraftKey, updatedNotes) }
+            noteSaveStatus = "Note auto-saved"
+            voicePartialText = ""
+            voiceStatus = "Saved • continuing to listen"
+        }
+    })
     val voicePermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) {
-            val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-                putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-                putExtra(RecognizerIntent.EXTRA_PROMPT, "Describe what you see in Hive ${hive.number}")
+            voiceStatus = "Starting hands-free dictation…"
+            voiceListeningRequested = true
+        } else {
+            voiceListeningRequested = false
+            voiceStatus = "Microphone permission denied • tap VOICE to try again"
+        }
+    }
+
+    DisposableEffect(speechRecognizer) {
+        val recognizer = speechRecognizer
+        if (recognizer != null) {
+            recognizer.setRecognitionListener(object : RecognitionListener {
+                override fun onReadyForSpeech(params: Bundle?) {
+                    voiceStatus = "Listening • speak your notes"
+                }
+                override fun onBeginningOfSpeech() {
+                    voiceStatus = "Listening • capturing speech"
+                }
+                override fun onRmsChanged(rmsdB: Float) = Unit
+                override fun onBufferReceived(buffer: ByteArray?) = Unit
+                override fun onEndOfSpeech() {
+                    voiceStatus = "Processing speech…"
+                }
+                override fun onResults(results: Bundle?) {
+                    val spoken = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()
+                    if (!spoken.isNullOrBlank()) appendRecognizedSpeech(spoken)
+                    voicePartialText = ""
+                    if (keepVoiceListening && !voiceBlocked) {
+                        voiceHandler.postDelayed({
+                            if (keepVoiceListening && !voiceBlocked) {
+                                runCatching { recognizer.startListening(speechIntent) }
+                                    .onFailure {
+                                        voiceListeningRequested = false
+                                        voiceStatus = "Voice dictation stopped • tap VOICE to restart"
+                                    }
+                            }
+                        }, 250L)
+                    }
+                }
+                override fun onPartialResults(partialResults: Bundle?) {
+                    voicePartialText = partialResults
+                        ?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                        ?.firstOrNull().orEmpty()
+                }
+                override fun onError(error: Int) {
+                    if (keepVoiceListening && !voiceBlocked &&
+                        (error == SpeechRecognizer.ERROR_NO_MATCH ||
+                         error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT ||
+                         error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY)) {
+                        voiceStatus = "Still listening…"
+                        voiceHandler.postDelayed({
+                            if (keepVoiceListening && !voiceBlocked) {
+                                runCatching { recognizer.startListening(speechIntent) }
+                                    .onFailure {
+                                        voiceListeningRequested = false
+                                        voiceStatus = "Voice dictation stopped • tap VOICE to restart"
+                                    }
+                            }
+                        }, if (error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY) 700L else 350L)
+                    } else if (keepVoiceListening && !voiceBlocked) {
+                        voiceListeningRequested = false
+                        voicePartialText = ""
+                        voiceStatus = when (error) {
+                            SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "Microphone permission is required"
+                            SpeechRecognizer.ERROR_NETWORK,
+                            SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "Speech service unavailable • tap VOICE to retry"
+                            else -> "Voice dictation stopped • tap VOICE to restart"
+                        }
+                    }
+                }
+                override fun onEvent(eventType: Int, params: Bundle?) = Unit
+            })
+        }
+        onDispose {
+            voiceHandler.removeCallbacksAndMessages(null)
+            if (recognizer != null) {
+                runCatching { recognizer.cancel() }
+                recognizer.destroy()
             }
-            runCatching { voiceLauncher.launch(intent) }.onFailure { voiceStatus = "Voice input unavailable" }
-        } else voiceStatus = "Microphone permission denied"
+        }
+    }
+
+    androidx.compose.runtime.LaunchedEffect(hive.id) {
+        // On entry, request permission once and immediately begin hands-free notes.
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+            voiceStatus = "Starting hands-free dictation…"
+            voiceListeningRequested = true
+        } else {
+            voicePermission.launch(Manifest.permission.RECORD_AUDIO)
+        }
+    }
+
+    androidx.compose.runtime.LaunchedEffect(voiceListeningRequested, cameraOpen, saving, speechRecognizer) {
+        val recognizer = speechRecognizer
+        if (!voiceListeningRequested || cameraOpen || saving) {
+            voiceHandler.removeCallbacksAndMessages(null)
+            runCatching { recognizer?.cancel() }
+            if (!voiceListeningRequested && voiceStatus.startsWith("Listening")) voiceStatus = "Voice dictation paused"
+            return@LaunchedEffect
+        }
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) return@LaunchedEffect
+        if (recognizer == null) {
+            voiceListeningRequested = false
+            voiceStatus = "Speech recognition isn't available on this device"
+            return@LaunchedEffect
+        }
+        runCatching { recognizer.startListening(speechIntent) }
+            .onFailure {
+                voiceListeningRequested = false
+                voiceStatus = "Couldn't start voice dictation • tap VOICE to retry"
+            }
     }
 
     androidx.compose.runtime.LaunchedEffect(hive.id, notes) {
@@ -1769,14 +1898,21 @@ private fun InspectionScreen(
                                     cameraOpen = true
                                 } else cameraPermission.launch(Manifest.permission.CAMERA)
                             }
-                            FieldActionButton(Icons.Rounded.Mic, "VOICE", Modifier.weight(1f)) {
-                                if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
-                                    val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-                                        putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-                                        putExtra(RecognizerIntent.EXTRA_PROMPT, "Describe Hive ${hive.number}")
-                                    }
-                                    runCatching { voiceLauncher.launch(intent) }.onFailure { voiceStatus = "Voice input unavailable" }
-                                } else voicePermission.launch(Manifest.permission.RECORD_AUDIO)
+                            FieldActionButton(
+                                Icons.Rounded.Mic,
+                                if (voiceListeningRequested) "STOP VOICE" else "VOICE",
+                                Modifier.weight(1f)
+                            ) {
+                                if (voiceListeningRequested) {
+                                    voiceListeningRequested = false
+                                    voicePartialText = ""
+                                    voiceStatus = "Voice dictation paused"
+                                } else if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+                                    voiceListeningRequested = true
+                                    voiceStatus = "Starting hands-free dictation…"
+                                } else {
+                                    voicePermission.launch(Manifest.permission.RECORD_AUDIO)
+                                }
                             }
                         }
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1860,6 +1996,13 @@ private fun InspectionScreen(
                                 noteSaveStatus,
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                        if (voicePartialText.isNotBlank()) {
+                            Text(
+                                "Hearing: $voicePartialText",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
