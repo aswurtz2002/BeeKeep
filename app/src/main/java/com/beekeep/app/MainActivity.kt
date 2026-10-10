@@ -1771,6 +1771,28 @@ private fun TagManagementScreen(
     BackHandler { onBack() }
     val assigned = hives.count { !it.tagUid.isNullOrBlank() }
 
+    fun writeLaunchDataAfterAssignment(
+        hiveId: Long,
+        uid: String,
+        allowOverwriteOtherHive: Boolean = false,
+        updateStatus: (String) -> Unit
+    ) {
+        updateStatus("Tag $uid assigned. Tap the same tag again to write BeeKeep launch data.")
+        nfc.startWrite(
+            activity = activity,
+            text = BeeKeepNfcPayload.forHive(hiveId),
+            allowOverwriteOtherHive = allowOverwriteOtherHive,
+            expectedUid = uid,
+            onResult = { result ->
+                when (result) {
+                    is NfcResult.Written -> updateStatus("Tag assigned and written. Tapping it with BeeKeep closed can now open this hive.")
+                    is NfcResult.Error -> updateStatus("Tag $uid is assigned, but launch data was not written: ${result.message} Open this hive and use WRITE TAG to retry.")
+                    is NfcResult.Read -> Unit
+                }
+            }
+        )
+    }
+
     reassignPrompt?.let { (targetHiveId, tagUid) ->
         AlertDialog(
             onDismissRequest = { reassignPrompt = null },
@@ -1779,8 +1801,12 @@ private fun TagManagementScreen(
             confirmButton = {
                 TextButton(onClick = {
                     onAssignTag(targetHiveId, tagUid, true) { success, error ->
-                        status = if (success) "Tag $tagUid reassigned" else (error ?: "Could not reassign tag.")
-                        if (success && pendingUid != null) onPendingUidConsumed()
+                        if (success) {
+                            if (pendingUid != null) onPendingUidConsumed()
+                            writeLaunchDataAfterAssignment(targetHiveId, tagUid, allowOverwriteOtherHive = true) { status = it }
+                        } else {
+                            status = error ?: "Could not reassign tag."
+                        }
                     }
                     reassignPrompt = null
                 }) { Text("REASSIGN", fontWeight = FontWeight.ExtraBold) }
@@ -1801,7 +1827,7 @@ private fun TagManagementScreen(
         Card(shape = RoundedCornerShape(24.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("How BeeKeep tags work", fontWeight = FontWeight.Bold)
-                Text("Each physical tag has a unique UID. BeeKeep stores that UID with the hive and writes a small BeeKeep NDEF payload to the tag. Your hive history stays in BeeKeep, not on the tag.", color = MaterialTheme.colorScheme.onPrimaryContainer)
+                Text("Assign links the tag UID to a hive. BeeKeep then asks you to tap the same tag again to write its launch data. That small NDEF payload lets Android open BeeKeep directly when the app is closed; hive history stays in BeeKeep, not on the tag.", color = MaterialTheme.colorScheme.onPrimaryContainer)
                 Text("Tags are reusable: when a colony dies its tag is released and can be assigned to another hive. Scanning always opens the colony the tag is currently assigned to.", color = MaterialTheme.colorScheme.onPrimaryContainer, style = MaterialTheme.typography.bodySmall)
                 Text("Use durable, weather-resistant NFC tags on the hive lid or another protected surface.", color = MaterialTheme.colorScheme.onPrimaryContainer, style = MaterialTheme.typography.bodySmall)
             }
@@ -1868,8 +1894,8 @@ private fun TagManagementScreen(
                                 if (pendingUid != null) {
                                     onAssignTag(hive.id, pendingUid, false) { success, error ->
                                         if (success) {
-                                            verifyText = "Assigned $pendingUid"
                                             onPendingUidConsumed()
+                                            writeLaunchDataAfterAssignment(hive.id, pendingUid) { verifyText = it }
                                         } else if (error?.contains("already assigned") == true) {
                                             reassignPrompt = hive.id to pendingUid
                                         } else {
@@ -1889,7 +1915,7 @@ private fun TagManagementScreen(
                                             } else {
                                                 onAssignTag(hive.id, result.uid, false) { success, error ->
                                                     if (success) {
-                                                        verifyText = "Assigned ${result.uid}"
+                                                        writeLaunchDataAfterAssignment(hive.id, result.uid) { verifyText = it }
                                                     } else if (error?.contains("already assigned") == true) {
                                                         reassignPrompt = hive.id to result.uid
                                                     } else {
@@ -1915,7 +1941,12 @@ private fun TagManagementScreen(
                                     when (result) {
                                         is NfcResult.Read -> {
                                             val payloadId = BeeKeepNfcPayload.hiveId(result.text)
-                                            verifyText = if (result.uid.equals(hive.tagUid, true) && (payloadId == null || payloadId == hive.id)) "✓ Physical tag matches Hive ${hive.number}" else "⚠ Tag ${result.uid} does not match Hive ${hive.number}"
+                                            verifyText = when {
+                                                !result.uid.equals(hive.tagUid, true) -> "⚠ Tag ${result.uid} does not match Hive ${hive.number}"
+                                                payloadId == hive.id -> "✓ Tag matches Hive ${hive.number} and has BeeKeep launch data"
+                                                payloadId == null -> "UID matches, but this tag has no BeeKeep launch data. Use WRITE TAG from hive details."
+                                                else -> "⚠ Tag payload belongs to another hive"
+                                            }
                                         }
                                         is NfcResult.Error -> verifyText = result.message
                                         is NfcResult.Written -> Unit

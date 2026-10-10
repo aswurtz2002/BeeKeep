@@ -1,19 +1,18 @@
 # NFC physical test checklist
 
-## One-time setup for each tag
+## Set up a tag
 
-1. Install the debug build on a phone with NFC enabled.
+1. Install the latest debug build on an NFC-capable phone and enable NFC.
 2. Open BeeKeep → More → NFC tag management.
-3. Choose an unassigned hive and tap ASSIGN, then tap the physical tag to save its UID.
-4. Use that hive's WRITE/REPLACE action and tap the same tag again. This writes BeeKeep's own `application/vnd.beekeep.hive` NDEF record, which lets Android launch BeeKeep directly when the app is not already open.
-5. Confirm the UID appears beside the hive, then tap VERIFY and confirm the tag matches.
-6. If the tag previously contained a website link or other recognized NDEF data, WRITE/REPLACE replaces the old on-tag payload with BeeKeep's hive record. Android can route recognized NDEF content to a matching app before its technology fallback, so a UID assignment alone does not change what is stored on the tag.
+3. Choose a hive and tap ASSIGN, then hold the physical tag to save its UID.
+4. When BeeKeep asks, tap the same tag again to write its launch payload. Wait for the write confirmation.
+5. Alternatively, from a hive detail page, use WRITE TAG; this writes the payload and assigns the UID after the write succeeds.
+6. Tap VERIFY. A correctly prepared tag should show that its UID matches and it contains BeeKeep launch data.
+7. Existing tags assigned by UID alone need a one-time payload write. A UID is only stored in BeeKeep and is not enough for Android to know which app to open when BeeKeep is closed.
 
 ## Behaviour checks
 
-1. With BeeKeep open on Home, Apiaries, or a hive detail screen, tap an assigned tag. BeeKeep should stay in the foreground and open the assigned hive detail screen.
-2. Repeat with BeeKeep open but no hive detail currently displayed.
-3. Return to the home screen or close BeeKeep normally, then tap a tag written with BeeKeep's payload. Android should open BeeKeep and navigate directly to the assigned hive.
-4. Scan a different/unassigned tag while BeeKeep is open. It should not switch to another app or show an assignment prompt unless you deliberately use the Scan workflow.
-5. Test a read-only tag and confirm writing fails with a useful message.
-6. Test with NFC disabled and confirm the manual Scan action reports that NFC must be enabled.
+1. With BeeKeep open on Home, Apiaries, or a hive detail screen, tap an assigned and written tag. BeeKeep should stay in the foreground and open the assigned hive.
+2. Close or background BeeKeep, then tap the same written tag. Android should launch BeeKeep and open that hive without offering the generic system tag scanner.
+3. Tap an unprogrammed/empty tag while BeeKeep is closed. It should not launch an app chooser; open BeeKeep and use ASSIGN/WRITE TAG to prepare it first.
+4. Test a read-only tag and confirm BeeKeep shows a clear write failure.

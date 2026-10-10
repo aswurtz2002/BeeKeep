@@ -96,9 +96,17 @@ class NfcController {
         activity: Activity,
         text: String,
         onResult: (NfcResult) -> Unit,
-        allowOverwriteOtherHive: Boolean = false
+        allowOverwriteOtherHive: Boolean = false,
+        expectedUid: String? = null
     ) {
-        start(activity, { tag -> write(tag, text, allowOverwriteOtherHive) }, onResult)
+        start(activity, { tag ->
+            val scannedUid = uid(tag)
+            if (expectedUid != null && !scannedUid.equals(expectedUid, ignoreCase = true)) {
+                NfcResult.Error("This is tag $scannedUid, not the assigned tag $expectedUid. Hold the same tag to write BeeKeep launch data.")
+            } else {
+                write(tag, text, allowOverwriteOtherHive)
+            }
+        }, onResult)
     }
 
     private fun start(
@@ -130,8 +138,8 @@ class NfcController {
                         if (!active.get() || activity.isFinishing || activity.isDestroyed) {
                             stop(activity)
                         } else {
-                            onResult(result)
                             stop(activity)
+                            onResult(result)
                         }
                     }
                 }
