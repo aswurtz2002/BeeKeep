@@ -282,9 +282,18 @@ fun BeeKeepApp(
     val harvests by vm.harvests.collectAsStateWithLifecycle()
     val ready by vm.ready.collectAsStateWithLifecycle()
 
-    androidx.compose.runtime.LaunchedEffect(ready, incomingNfc?.uid) {
+    androidx.compose.runtime.LaunchedEffect(ready, incomingNfc?.uid, screen) {
         val result = incomingNfc ?: return@LaunchedEffect
         if (!ready) return@LaunchedEffect
+
+        // Manual NFC management and scan screens own their tag reads. Ignore
+        // passive-reader notifications there, otherwise a just-assigned tag can
+        // navigate away to its hive before the write prompt becomes visible.
+        if (screen == Screen.TAG_MANAGER || screen == Screen.SCAN) {
+            (activity as? MainActivity)?.pendingNfcResult?.value = null
+            return@LaunchedEffect
+        }
+
         val payloadHiveId = BeeKeepNfcPayload.hiveId(result.text)
         val resolvedId = vm.findHiveByTag(result.uid)?.id
             ?: payloadHiveId?.takeIf { id -> hives.any { it.id == id } }
