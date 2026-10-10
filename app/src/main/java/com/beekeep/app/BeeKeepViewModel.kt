@@ -238,6 +238,19 @@ class BeeKeepViewModel(
         }
     }
 
+    fun moveHiveToApiary(hiveId: Long, apiaryName: String, onResult: (Boolean, String?) -> Unit = { _, _ -> }) {
+        val target = apiaryName.trim()
+        if (target.isBlank()) { onResult(false, "Choose an apiary first."); return }
+        viewModelScope.launch {
+            runCatching {
+                val hive = repo.getHive(hiveId) ?: throw IllegalArgumentException("Hive not found.")
+                repo.saveHive(hive.copy(apiary = target))
+                if (_selected.value?.id == hiveId) _selected.value = repo.getHive(hiveId)
+            }.onSuccess { onResult(true, null) }
+                .onFailure { onResult(false, it.message ?: "Could not move the hive.") }
+        }
+    }
+
     fun updateApiary(id: Long, name: String, notes: String, lat: Double?, lon: Double?, forage: String, water: String, onResult: (Boolean, String?) -> Unit = { _, _ -> }) {
         val clean = name.trim()
         if (clean.isBlank()) { onResult(false, "Enter an apiary name."); return }
