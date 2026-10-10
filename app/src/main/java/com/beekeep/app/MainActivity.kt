@@ -128,6 +128,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.core.content.edit
 import androidx.core.view.WindowCompat
@@ -1111,35 +1112,97 @@ private fun HomeScreen(
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
         item {
-            // Integrated header: no separate card or dark backdrop.
-            Row(
+            // Integrated header: the cream background stays visible, with an ambient
+            // amber glow and barely-there honeycomb watermark for depth.
+            Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .heightIn(min = 112.dp)
-                    .padding(vertical = 8.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+                    .height(142.dp)
             ) {
-                Text(
-                    text = "BeeKeep",
-                    modifier = Modifier.weight(1f),
-                    style = MaterialTheme.typography.headlineLarge,
-                    color = BeeKeepAccent,
-                    fontWeight = FontWeight.Bold,
-                    maxLines = 1,
-                    softWrap = false
-                )
-                Spacer(Modifier.width(12.dp))
-                if (bannerLogoBitmap != null) {
-                    Image(
-                        bitmap = bannerLogoBitmap.asImageBitmap(),
-                        contentDescription = "BeeKeep bee logo",
-                        contentScale = ContentScale.Fit,
-                        colorFilter = androidx.compose.ui.graphics.ColorFilter.tint(BeeKeepAccent),
-                        modifier = Modifier.size(width = 82.dp, height = 98.dp)
+                Canvas(Modifier.fillMaxSize()) {
+                    val w = size.width
+                    val h = size.height
+                    drawRect(
+                        Brush.radialGradient(
+                            colors = listOf(
+                                BeeKeepAccent.copy(alpha = 0.14f),
+                                BeeKeepAccent.copy(alpha = 0.055f),
+                                Color.Transparent
+                            ),
+                            center = Offset(w * 0.78f, h * 0.46f),
+                            radius = w * 0.56f
+                        )
                     )
-                } else {
-                    HoneybeeGlyph(Modifier.size(72.dp))
+
+                    // Fine outline cells are deliberately faint, acting as a watermark.
+                    val radius = 12.dp.toPx()
+                    val halfHeight = radius * 0.8660254f
+                    val columnStep = radius * 1.7320508f
+                    val rowStep = radius * 1.5f
+                    val lineColor = BeeKeepAccent.copy(alpha = 0.055f)
+                    var row = -1
+                    while (row * rowStep < h + radius) {
+                        val cy = radius + row * rowStep
+                        val offset = if (row % 2 == 0) 0f else columnStep / 2f
+                        var col = 5
+                        while (col * columnStep + offset < w + radius) {
+                            val cx = col * columnStep + offset
+                            val hex = Path().apply {
+                                moveTo(cx + radius, cy)
+                                lineTo(cx + radius / 2f, cy + halfHeight)
+                                lineTo(cx - radius / 2f, cy + halfHeight)
+                                lineTo(cx - radius, cy)
+                                lineTo(cx - radius / 2f, cy - halfHeight)
+                                lineTo(cx + radius / 2f, cy - halfHeight)
+                                close()
+                            }
+                            drawPath(hex, lineColor, style = Stroke(width = 1.dp.toPx()))
+                            col++
+                        }
+                        row++
+                    }
+                }
+                Row(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(vertical = 10.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(
+                        modifier = Modifier.weight(1f),
+                        verticalArrangement = Arrangement.spacedBy(5.dp)
+                    ) {
+                        Text(
+                            text = "BeeKeep",
+                            style = MaterialTheme.typography.headlineLarge,
+                            color = BeeKeepAccent,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            softWrap = false
+                        )
+                        Text(
+                            text = "APIARY DASHBOARD",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = Color(0xFF524B45),
+                            fontWeight = FontWeight.SemiBold,
+                            letterSpacing = 1.25.sp,
+                            maxLines = 1,
+                            softWrap = false
+                        )
+                    }
+                    Spacer(Modifier.width(12.dp))
+                    if (bannerLogoBitmap != null) {
+                        Image(
+                            bitmap = bannerLogoBitmap.asImageBitmap(),
+                            contentDescription = "BeeKeep bee logo",
+                            contentScale = ContentScale.Fit,
+                            colorFilter = androidx.compose.ui.graphics.ColorFilter.tint(BeeKeepAccent),
+                            modifier = Modifier.size(width = 82.dp, height = 98.dp)
+                        )
+                    } else {
+                        HoneybeeGlyph(Modifier.size(72.dp))
+                    }
                 }
             }
         }
