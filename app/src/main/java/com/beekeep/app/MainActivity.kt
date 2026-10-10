@@ -545,9 +545,9 @@ fun BeeKeepApp(
             onSave = { inspection ->
                 val saved = vm.saveInspection(inspection)
                 if (saved) {
-                    // The note is now in the saved inspection. The next Inspect session reloads it from the saved record.
+                    // Keep the full note log (including an intentional empty value) available for the next Inspect session.
                     activity.getSharedPreferences(INSPECTION_NOTE_DRAFTS, android.content.Context.MODE_PRIVATE)
-                        .edit { remove("hive_${inspection.hiveId}") }
+                        .edit { putString("hive_${inspection.hiveId}", inspection.notes) }
                     inspecting = false
                     scope.launch { snackbarHostState.showSnackbar("Inspection saved") }
                 } else {
@@ -1430,10 +1430,11 @@ private fun InspectionScreen(
     }
     val noteDraftKey = remember(hive.id) { "hive_${hive.id}" }
     val lastInspection = remember(priorInspections) { priorInspections.maxByOrNull { it.createdAt } }
+    val hasSavedNoteDraft = remember(hive.id) { noteDraftPrefs.contains(noteDraftKey) }
     val savedNoteDraft = remember(hive.id) { noteDraftPrefs.getString(noteDraftKey, "").orEmpty() }
-    // A draft takes priority while editing; otherwise resume the saved note log from the last inspection.
-    val startingNotes = remember(hive.id, savedNoteDraft, lastInspection?.id, lastInspection?.notes) {
-        savedNoteDraft.ifBlank { lastInspection?.notes.orEmpty() }
+    // A stored empty string means the beekeeper deliberately cleared the notes; don't restore older text.
+    val startingNotes = remember(hive.id, hasSavedNoteDraft, savedNoteDraft, lastInspection?.id, lastInspection?.notes) {
+        if (hasSavedNoteDraft) savedNoteDraft else lastInspection?.notes.orEmpty()
     }
 
     var strength by rememberSaveable { mutableIntStateOf(hive.strength) }
@@ -1442,7 +1443,7 @@ private fun InspectionScreen(
     var sample by rememberSaveable { mutableIntStateOf(lastInspection?.sampleSize ?: 300) }
     var notes by rememberSaveable(hive.id) { mutableStateOf(startingNotes) }
     var noteSaveStatus by rememberSaveable(hive.id) {
-        mutableStateOf(if (startingNotes.isBlank()) "" else if (savedNoteDraft.isNotBlank()) "Auto-saved note restored" else "Saved notes loaded")
+        mutableStateOf(if (startingNotes.isBlank()) "" else if (hasSavedNoteDraft) "Auto-saved note restored" else "Saved notes loaded")
     }
     var eggs by rememberSaveable { mutableIntStateOf(lastInspection?.eggs ?: 0) }
     var openBrood by rememberSaveable { mutableIntStateOf(lastInspection?.openBrood ?: 0) }
@@ -1498,9 +1499,7 @@ private fun InspectionScreen(
             val updatedNotes = if (notes.isBlank()) cleanSpokenText else "${notes.trimEnd()}\n$cleanSpokenText"
             notes = updatedNotes
             // Save immediately when Android returns the finished speech transcription.
-            noteDraftPrefs.edit {
-                if (updatedNotes.isBlank()) remove(noteDraftKey) else putString(noteDraftKey, updatedNotes)
-            }
+            noteDraftPrefs.edit { putString(noteDraftKey, updatedNotes) }
             noteSaveStatus = "Note auto-saved"
             voiceStatus = "Voice added"
         }
@@ -1518,9 +1517,8 @@ private fun InspectionScreen(
     androidx.compose.runtime.LaunchedEffect(hive.id, notes) {
         // Debounce edits so a longer note is stored when the user pauses typing.
         delay(400)
-        noteDraftPrefs.edit {
-            if (notes.isBlank()) remove(noteDraftKey) else putString(noteDraftKey, notes)
-        }
+        // Store blank too: it records an intentional manual clear rather than reviving old notes later.
+        noteDraftPrefs.edit { putString(noteDraftKey, notes) }
         noteSaveStatus = if (notes.isBlank()) "" else "Note auto-saved"
     }
 
