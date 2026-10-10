@@ -354,8 +354,10 @@ fun BeeKeepApp(
         )
         return
     }
-    if (logType != null && selected != null) {
-        when (logType) {
+    val currentLogType = logType
+    val currentSelected = selected
+    if (currentLogType != null && currentSelected != null) {
+        when (currentLogType) {
             HiveLogType.FEED -> FeedDialog({ logType = null }) { type, ratio, amount, unit, notes ->
                 vm.saveFeeding(type, ratio, amount, unit, notes) { success, error ->
                     if (success) logType = null
