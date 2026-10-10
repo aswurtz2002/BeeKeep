@@ -1427,10 +1427,12 @@ private fun ApiaryMapScreen(
         } else {
             Row(
                 modifier = Modifier
-                    .align(Alignment.BottomStart)
+                    .align(Alignment.TopStart)
                     .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState())
-                    .padding(start = 10.dp, end = 10.dp, top = 8.dp, bottom = 10.dp),
+                    // Place apiary cards immediately below the floating title bar so
+                    // they never cover MapLibre's bottom attribution control.
+                    .padding(start = 10.dp, end = 10.dp, top = 82.dp, bottom = 8.dp)
+                    .horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
