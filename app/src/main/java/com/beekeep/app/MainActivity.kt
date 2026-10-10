@@ -1814,6 +1814,22 @@ private fun InspectionScreen(
             }
     }
 
+    // Do not leave the microphone active if the beekeeper backgrounds BeeKeep or locks the phone.
+    val voiceLifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(voiceLifecycleOwner, speechRecognizer) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_PAUSE && voiceListeningRequested) {
+                voiceListeningRequested = false
+                voicePartialText = ""
+                voiceHandler.removeCallbacksAndMessages(null)
+                runCatching { speechRecognizer?.cancel() }
+                voiceStatus = "Voice dictation paused while BeeKeep is in the background"
+            }
+        }
+        voiceLifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { voiceLifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
     androidx.compose.runtime.LaunchedEffect(hive.id, notes) {
         // Debounce edits so a longer note is stored when the user pauses typing.
         delay(400)
