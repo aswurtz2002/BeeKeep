@@ -1558,27 +1558,25 @@ private fun createApiaryMapHtml(apiaries: List<Apiary>, focusedApiaryId: Long?):
                   onerror="this.onerror=null;this.href='https://cdn.jsdelivr.net/npm/maplibre-gl@5.12.0/dist/maplibre-gl.css';">
             <style>
                 /*
-                 * WebView percentage heights can collapse to the content's intrinsic height.
-                 * Anchor the page, shell, and map to the actual viewport edges instead of
-                 * depending on a percentage-height chain. Do not impose a small min-height.
+                 * Use the standard full-viewport sizing expected by MapLibre GL JS.
+                 * The native AndroidView already sizes this WebView to the map box;
+                 * a fixed child anchored to the WebView viewport then fills that box.
                  */
                 html, body {
-                    position: absolute;
-                    left: 0; top: 0; right: 0; bottom: 0;
-                    width: auto; height: auto; min-width: 0; min-height: 0;
+                    width: 100%; height: 100%;
                     padding: 0; margin: 0; overflow: hidden;
                 }
                 body { font-family: Arial, sans-serif; }
                 #map-shell {
-                    position: absolute; left: 0; top: 0; right: 0; bottom: 0;
-                    display: block; width: auto; height: auto; min-width: 0; min-height: 0;
+                    position: fixed; left: 0; top: 0; right: 0; bottom: 0;
+                    display: block; width: 100%; height: 100%;
                     padding: 0; margin: 0;
                     background: #e7e8e4; border-radius: 22px; overflow: hidden;
                 }
                 /* MapLibre requires its target container to have no child elements. */
                 #map {
                     position: absolute; left: 0; top: 0; right: 0; bottom: 0;
-                    display: block; width: auto; height: auto; min-width: 0; min-height: 0;
+                    display: block; width: 100%; height: 100%;
                     padding: 0; margin: 0; background: #e7e8e4; overflow: hidden;
                 }
                 .map-error {
@@ -1702,12 +1700,12 @@ private fun createApiaryMapHtml(apiaries: List<Apiary>, focusedApiaryId: Long?):
                                 // to settle, then remeasure the entire available map viewport.
                                 window.requestAnimationFrame(function () {
                                     const container = map.getContainer();
-                                    const canvasContainer = map.getCanvasContainer();
-                                    if (container && canvasContainer) {
-                                        canvasContainer.style.width = container.clientWidth + 'px';
-                                        canvasContainer.style.height = container.clientHeight + 'px';
+                                    // Let MapLibre size its internal canvas from the measured
+                                    // container. Manually setting its wrapper can prevent style
+                                    // reloads and responsive sizing from recovering correctly.
+                                    if (container && container.clientWidth > 0 && container.clientHeight > 0) {
+                                        map.resize();
                                     }
-                                    map.resize();
                                     window.requestAnimationFrame(function () {
                                         map.resize();
                                     });
