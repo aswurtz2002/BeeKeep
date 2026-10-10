@@ -1557,31 +1557,29 @@ private fun createApiaryMapHtml(apiaries: List<Apiary>, focusedApiaryId: Long?):
                   href="https://unpkg.com/maplibre-gl@5.12.0/dist/maplibre-gl.css"
                   onerror="this.onerror=null;this.href='https://cdn.jsdelivr.net/npm/maplibre-gl@5.12.0/dist/maplibre-gl.css';">
             <style>
-                html, body, #map-shell {
-                    width: 100%; height: 100%; min-height: 220px;
+                /*
+                 * WebView percentage heights can collapse to the content's intrinsic height.
+                 * Anchor the page, shell, and map to the actual viewport edges instead of
+                 * depending on a percentage-height chain. Do not impose a small min-height.
+                 */
+                html, body {
+                    position: absolute;
+                    left: 0; top: 0; right: 0; bottom: 0;
+                    width: auto; height: auto; min-width: 0; min-height: 0;
                     padding: 0; margin: 0; overflow: hidden;
                 }
                 body { font-family: Arial, sans-serif; }
                 #map-shell {
-                    position: relative; display: block;
-                    width: 100%; height: 100%; min-width: 0; min-height: 220px;
+                    position: absolute; left: 0; top: 0; right: 0; bottom: 0;
+                    display: block; width: auto; height: auto; min-width: 0; min-height: 0;
                     padding: 0; margin: 0;
                     background: #e7e8e4; border-radius: 22px; overflow: hidden;
                 }
                 /* MapLibre requires its target container to have no child elements. */
                 #map {
                     position: absolute; left: 0; top: 0; right: 0; bottom: 0;
-                    display: block; width: 100%; height: 100%; min-width: 0; min-height: 220px;
+                    display: block; width: auto; height: auto; min-width: 0; min-height: 0;
                     padding: 0; margin: 0; background: #e7e8e4; overflow: hidden;
-                }
-                /* Keep the GL canvas and its wrapper aligned to the complete map viewport. */
-                #map .maplibregl-canvas-container,
-                #map .maplibregl-canvas-container canvas,
-                #map canvas.maplibregl-canvas {
-                    position: absolute !important;
-                    left: 0 !important; top: 0 !important;
-                    width: 100% !important; height: 100% !important;
-                    min-width: 100% !important; min-height: 100% !important;
                 }
                 .map-error {
                     position: absolute; inset: 0; z-index: 20;
