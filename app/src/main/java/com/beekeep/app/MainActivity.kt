@@ -2393,9 +2393,7 @@ private fun HiveRow(hive: Hive, supporting: String? = null, onClick: () -> Unit)
                 supporting?.let { Text(it, color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelMedium) }
             }
             Column(
-                Modifier.clip(RoundedCornerShape(14.dp))
-                    .background(Color(0xFFFFF1D6))
-                    .padding(horizontal = 10.dp, vertical = 8.dp),
+                Modifier.padding(horizontal = 4.dp, vertical = 4.dp),
                 horizontalAlignment = Alignment.End,
                 verticalArrangement = Arrangement.spacedBy(2.dp)
             ) {
