@@ -50,6 +50,8 @@ interface NfcTagAssignmentDao {
     suspend fun activeByTag(uid: String): NfcTagAssignmentEntity?
     @Query("SELECT * FROM nfc_tag_assignments WHERE hive_id = :hiveId AND unassigned_at IS NULL ORDER BY assigned_at DESC, id DESC LIMIT 1")
     suspend fun activeForHive(hiveId: Long): NfcTagAssignmentEntity?
+    @Query("SELECT * FROM nfc_tag_assignments WHERE hive_id = :hiveId AND unassigned_at IS NULL ORDER BY assigned_at DESC, id DESC")
+    suspend fun activeAssignmentsForHive(hiveId: Long): List<NfcTagAssignmentEntity>
     @Query("SELECT * FROM nfc_tag_assignments WHERE id = :id")
     suspend fun get(id: Long): NfcTagAssignmentEntity?
     @Query("SELECT * FROM nfc_tag_assignments WHERE hive_id = :hiveId")

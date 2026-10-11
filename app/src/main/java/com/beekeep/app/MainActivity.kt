@@ -839,7 +839,7 @@ fun BeeKeepApp(
             onTreat = { logType = HiveLogType.TREAT },
             onHarvest = { logType = HiveLogType.HARVEST },
             onTag = { uid, onResult -> vm.assignTag(uid, onResult) },
-            onClearTag = { vm.clearTag() },
+            onClearTag = { hiveId, onResult -> vm.clearTagForHive(hiveId, onResult) },
             onVerifyTag = {
                 nfc.startRead(activity) { result ->
                     when (result) {
@@ -1043,7 +1043,7 @@ fun BeeKeepApp(
                     pendingInspectionHiveId = hiveId
                 },
                 onAssignTag = { hiveId, uid, reassign, onResult -> vm.assignTagToHive(hiveId, uid, reassign, onResult) },
-                onClearTag = { hiveId -> vm.clearTagForHive(hiveId) },
+                onClearTag = { hiveId, onResult -> vm.clearTagForHive(hiveId, onResult) },
                 onUnassignedTag = { uid ->
                     unassignedTagOrigin = Screen.TAG_MANAGER
                     unassignedTagUid = uid
@@ -2474,13 +2474,14 @@ private fun HiveDetailScreen(
     onTreat: () -> Unit,
     onHarvest: () -> Unit,
     onTag: (String, (Boolean, String?) -> Unit) -> Unit,
-    onClearTag: () -> Unit,
+    onClearTag: (Long, (Boolean, String?) -> Unit) -> Unit,
     onVerifyTag: () -> Unit,
     onMarkDead: () -> Unit,
     onRestore: () -> Unit,
     onDelete: () -> Unit
 ) {
     var writeStatus by rememberSaveable { mutableStateOf("") }
+    var removingTag by rememberSaveable(hive.id) { mutableStateOf(false) }
     var showRecentActivity by rememberSaveable(hive.id) { mutableStateOf(false) }
     var confirmDead by rememberSaveable { mutableStateOf(false) }
     var confirmDelete by rememberSaveable { mutableStateOf(false) }
@@ -2815,9 +2816,32 @@ private fun HiveDetailScreen(
                         ) { Text(if (hive.tagUid == null) "WRITE TAG" else "REPLACE", style = MaterialTheme.typography.labelMedium) }
                     }
                     if (hive.tagUid != null) {
-                        TextButton(onClick = onClearTag, modifier = Modifier.fillMaxWidth().height(36.dp)) { Text("REMOVE TAG", style = MaterialTheme.typography.labelSmall) }
+                        TextButton(
+                            onClick = {
+                                removingTag = true
+                                writeStatus = "Removing NFC tag…"
+                                onClearTag(hive.id) { success, error ->
+                                    removingTag = false
+                                    writeStatus = if (success) {
+                                        "NFC tag removed • available for reuse"
+                                    } else {
+                                        error ?: "Could not remove the NFC tag."
+                                    }
+                                }
+                            },
+                            enabled = !removingTag,
+                            modifier = Modifier.fillMaxWidth().height(36.dp)
+                        ) {
+                            Text(if (removingTag) "REMOVING…" else "REMOVE TAG", style = MaterialTheme.typography.labelSmall)
+                        }
                     }
-                    if (writeStatus.isNotBlank()) Text(writeStatus, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+                    if (writeStatus.isNotBlank()) {
+                        Text(
+                            writeStatus,
+                            color = if (writeStatus.startsWith("Could not") || writeStatus.startsWith("This hive has no")) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
                 }
             }
         }
@@ -4242,7 +4266,7 @@ private fun TagManagementScreen(
     onOpenHive: (Long) -> Unit,
     onScanOpenHive: (Long) -> Unit,
     onAssignTag: (Long, String, Boolean, (Boolean, String?) -> Unit) -> Unit,
-    onClearTag: (Long) -> Unit,
+    onClearTag: (Long, (Boolean, String?) -> Unit) -> Unit,
     onUnassignedTag: (String) -> Unit
 ) {
     val context = LocalContext.current
@@ -4506,7 +4530,15 @@ private fun TagManagementScreen(
                                     }
                                 }
                             }, modifier = Modifier.weight(1f)) { Text("VERIFY") }
-                            TextButton(onClick = { onClearTag(hive.id); verifyText = "Tag removed" }, modifier = Modifier.weight(1f)) { Text("REMOVE") }
+                            TextButton(
+                                onClick = {
+                                    verifyText = "Removing NFC tag…"
+                                    onClearTag(hive.id) { success, error ->
+                                        verifyText = if (success) "Tag removed • available for reuse" else (error ?: "Could not remove tag.")
+                                    }
+                                },
+                                modifier = Modifier.weight(1f)
+                            ) { Text("REMOVE") }
                         }
                     }
                     verifyText.takeIf { it.isNotBlank() }?.let { Text(it, color = if (it.startsWith("⚠")) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant) }

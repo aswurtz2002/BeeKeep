@@ -267,17 +267,47 @@ class LocalHiveRepository(context: Context) {
         }
     }
 
-    suspend fun unassignNfcTag(hiveId: Long) = withContext(Dispatchers.IO) {
+    suspend fun unassignNfcTag(hiveId: Long): Boolean = withContext(Dispatchers.IO) {
         db.withTransaction {
-            val assignment = db.nfcTagAssignments().activeForHive(hiveId) ?: return@withTransaction
+            val hive = db.hives().get(hiveId)
+                ?: throw IllegalArgumentException("Hive not found.")
+            val activeAssignments = db.nfcTagAssignments().activeAssignmentsForHive(hiveId)
+            val cachedTag = hive.tagUid?.trim()?.takeIf { it.isNotBlank() }
+
+            // Older app builds could save the tag only in hives.tag_uid without
+            // creating a row in nfc_tag_assignments. Treat that cached UID as an
+            // assignment too, otherwise Remove Tag would silently do nothing.
+            if (activeAssignments.isEmpty() && cachedTag == null) {
+                return@withTransaction false
+            }
+
             val now = System.currentTimeMillis()
-            val closed = assignment.copy(unassignedAt = now)
-            db.nfcTagAssignments().upsert(closed)
+            activeAssignments.forEach { assignment ->
+                val closed = assignment.copy(unassignedAt = now)
+                db.nfcTagAssignments().upsert(closed)
+                enqueue("nfc_assignment", closed.id, "upsert", nfcAssignmentPayload(closed))
+            }
+
+            // Clear both the assignment ledger and the cached UID on the hive.
+            // The explicit hive upsert also syncs legacy-cache cleanup to cloud.
             db.hives().refreshTagCache(hiveId)
-            enqueue("nfc_assignment", closed.id, "upsert", nfcAssignmentPayload(closed))
-            val event = ActivityEventEntity(IdGenerator.nextLong(), hiveId, now, "tag", "NFC tag removed", "Tag ${assignment.tagUid} unassigned")
+            val refreshedHive = db.hives().get(hiveId)
+                ?: throw IllegalArgumentException("Hive not found.")
+            val clearedHive = refreshedHive.copy(tagUid = null, updatedAt = now)
+            db.hives().upsert(clearedHive)
+            enqueue("hive", hiveId, "upsert", hivePayload(clearedHive))
+
+            val releasedTags = (activeAssignments.map { it.tagUid } + listOfNotNull(cachedTag))
+                .distinctBy { it.trim().uppercase() }
+            val detail = when (releasedTags.size) {
+                0 -> "NFC tag assignment cleared and available for reuse"
+                1 -> "Tag ${releasedTags.first()} unassigned and available for reuse"
+                else -> "Tags ${releasedTags.joinToString()} unassigned and available for reuse"
+            }
+            val event = ActivityEventEntity(IdGenerator.nextLong(), hiveId, now, "tag", "NFC tag removed", detail)
             db.events().upsert(event)
             enqueue("event", event.id, "upsert", eventPayload(event))
+            true
         }
     }
 

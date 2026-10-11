@@ -165,10 +165,22 @@ class BeeKeepViewModel(
         clearTagForHive(h.id)
     }
 
-    fun clearTagForHive(hiveId: Long) {
+    fun clearTagForHive(
+        hiveId: Long,
+        onResult: (Boolean, String?) -> Unit = { _, _ -> }
+    ) {
         viewModelScope.launch {
-            repo.unassignNfcTag(hiveId)
-            if (_selected.value?.id == hiveId) _selected.value = repo.getHive(hiveId)
+            runCatching { repo.unassignNfcTag(hiveId) }
+                .onSuccess { removed ->
+                    if (_selected.value?.id == hiveId) _selected.value = repo.getHive(hiveId)
+                    onResult(
+                        removed,
+                        if (removed) null else "This hive has no NFC tag assigned to remove."
+                    )
+                }
+                .onFailure { error ->
+                    onResult(false, error.message ?: "Could not remove the NFC tag.")
+                }
         }
     }
 
