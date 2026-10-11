@@ -271,7 +271,7 @@ class SupabaseGateway(
     private suspend fun deleteCloudPhotos(rows: List<CloudDocumentRow>, userId: String) {
         val supabase = client ?: return
         for (row in rows) {
-            if (!row.deleted || row.entity_type != "photo") continue
+            if (row.user_id != userId || !row.deleted || row.entity_type != "photo") continue
             val payload = runCatching { JSONObject(row.payload) }.getOrNull() ?: continue
             if (payload.optBoolean("cloud_deleted", false)) continue
             val path = payload.optString("cloud_path").takeIf { it.isNotBlank() } ?: continue

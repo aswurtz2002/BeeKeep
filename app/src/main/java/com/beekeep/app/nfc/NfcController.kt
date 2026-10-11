@@ -193,7 +193,11 @@ class NfcController {
                 if (delivered.compareAndSet(false, true)) {
                     val result = runCatching { operation(tag) }
                         .getOrElse { e -> NfcResult.Error(friendlyError(e)) }
-                    if (result is NfcResult.Read) rememberHandledUid(result.uid)
+                    when (result) {
+                        is NfcResult.Read -> rememberHandledUid(result.uid)
+                        is NfcResult.Written -> rememberHandledUid(result.uid)
+                        is NfcResult.Error -> Unit
+                    }
                     activity.runOnUiThread {
                         if (!active.get() || activity.isFinishing || activity.isDestroyed) {
                             stop(activity)
