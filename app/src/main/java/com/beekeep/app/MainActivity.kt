@@ -3412,11 +3412,12 @@ private fun InspectionScreen(
                                 verticalArrangement = Arrangement.spacedBy(1.dp)
                             ) {
                                 Text(
-                                    "AUTO ON NFC",
+                                    "Auto Voice Toggle",
                                     style = MaterialTheme.typography.labelSmall,
                                     fontWeight = FontWeight.Bold,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    maxLines = 1
+                                    maxLines = 2,
+                                    softWrap = true
                                 )
                                 Switch(
                                     checked = autoVoiceEnabled,
