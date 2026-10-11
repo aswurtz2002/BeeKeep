@@ -2,7 +2,7 @@ package com.beekeep.app
 
 /**
  * The database and existing cloud payloads keep the original 0..10 strength value.
- * UI grades use 1..5; this keeps old records readable and preserves analytics compatibility.
+ * UI grades use 1..5 while existing database and cloud records remain on the original 0..10 scale.
  */
 internal object ColonyStrength {
     private val labels = listOf("Very Weak", "Weak", "Moderate", "Strong", "Very strong")
