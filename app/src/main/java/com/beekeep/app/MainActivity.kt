@@ -3992,7 +3992,7 @@ private fun AddHiveScreen(
         }
         Text("Queen status", fontWeight = FontWeight.Bold)
         Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            for (status in listOf("Laying", "Spotted", "Unspotted", "Queenless", "Virgin")) {
+            for (status in listOf("Laying", "Queenless", "Virgin")) {
                 FilterChip(queen == status, { queen = status }, { Text(status) })
             }
         }
