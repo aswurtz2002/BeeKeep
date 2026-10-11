@@ -46,6 +46,7 @@ import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.ui.viewinterop.AndroidView
@@ -73,6 +74,7 @@ import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.TaskAlt
 import androidx.compose.material.icons.rounded.Yard
 import androidx.compose.material.icons.rounded.ChevronRight
+import androidx.compose.material.icons.rounded.ArrowDropDown
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -83,6 +85,8 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Divider
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -3922,7 +3926,14 @@ private fun AddHiveScreen(
 ) {
     BackHandler { onBack() }
     var number by rememberSaveable { mutableStateOf("") }
-    var apiary by rememberSaveable(initialApiary) { mutableStateOf(initialApiary ?: apiaries.firstOrNull()?.name ?: "Home Yard") }
+    val apiaryOptionsKey = apiaries.joinToString("|") { "${it.id}:${it.name}" }
+    var apiary by rememberSaveable(initialApiary, apiaryOptionsKey) {
+        mutableStateOf(
+            initialApiary?.let { selected -> apiaries.firstOrNull { it.name.equals(selected, ignoreCase = true) }?.name }
+                ?: apiaries.firstOrNull()?.name.orEmpty()
+        )
+    }
+    var apiaryMenuExpanded by rememberSaveable { mutableStateOf(false) }
     var queen by rememberSaveable { mutableStateOf("Laying") }
     var strength by rememberSaveable { mutableIntStateOf(3) }
 
@@ -3935,14 +3946,50 @@ private fun AddHiveScreen(
             Text("Add Hive", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.ExtraBold)
         }
         OutlinedTextField(number, { number = it }, Modifier.fillMaxWidth(), label = { Text("Hive number") }, singleLine = true)
-        OutlinedTextField(
-            apiary,
-            { if (initialApiary == null) apiary = it },
-            Modifier.fillMaxWidth(),
-            label = { Text("Apiary / Yard") },
-            singleLine = true,
-            readOnly = initialApiary != null
-        )
+        Box(Modifier.fillMaxWidth()) {
+            OutlinedTextField(
+                value = apiary,
+                onValueChange = {},
+                modifier = Modifier.fillMaxWidth().clickable(enabled = apiaries.isNotEmpty()) {
+                    apiaryMenuExpanded = true
+                },
+                label = { Text("Apiary / Yard") },
+                trailingIcon = {
+                    IconButton(
+                        onClick = { apiaryMenuExpanded = !apiaryMenuExpanded },
+                        enabled = apiaries.isNotEmpty()
+                    ) {
+                        Icon(Icons.Rounded.ArrowDropDown, contentDescription = "Choose an apiary")
+                    }
+                },
+                singleLine = true,
+                readOnly = true,
+                enabled = apiaries.isNotEmpty()
+            )
+            DropdownMenu(
+                expanded = apiaryMenuExpanded && apiaries.isNotEmpty(),
+                onDismissRequest = { apiaryMenuExpanded = false },
+                modifier = Modifier.widthIn(min = 220.dp, max = 320.dp).heightIn(max = 320.dp)
+            ) {
+                apiaries.forEach { option ->
+                    DropdownMenuItem(
+                        text = { Text(option.name) },
+                        onClick = {
+                            apiary = option.name
+                            apiaryMenuExpanded = false
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            }
+        }
+        if (apiaries.isEmpty()) {
+            Text(
+                "Create an apiary first before adding a hive.",
+                color = MaterialTheme.colorScheme.error,
+                style = MaterialTheme.typography.bodySmall
+            )
+        }
         Text("Queen status", fontWeight = FontWeight.Bold)
         Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             for (status in listOf("Laying", "Spotted", "Unspotted", "Queenless", "Virgin")) {
@@ -3958,7 +4005,7 @@ private fun AddHiveScreen(
         Button(
             { onCreate(number, apiary, queen, ColonyStrength.storedFromGrade(strength)) },
             Modifier.fillMaxWidth().height(60.dp),
-            enabled = number.isNotBlank(),
+            enabled = number.isNotBlank() && apiaries.any { it.name == apiary },
             shape = RoundedCornerShape(24.dp)
         ) { Text("CREATE HIVE", fontWeight = FontWeight.ExtraBold) }
     }
