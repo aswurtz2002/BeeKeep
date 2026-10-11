@@ -17,6 +17,16 @@ jobs:
           cache: gradle
       - name: Run unit tests and lint
         run: bash ./gradlew :app:testDebugUnitTest :app:lintDebug --stacktrace
+      - name: Print lint report on failure
+        if: failure()
+        shell: bash
+        run: |
+          report="app/build/intermediates/lint_intermediate_text_report/debug/lintReportDebug/lint-results-debug.txt"
+          if [ -f "$report" ]; then
+            cat "$report"
+          else
+            echo "No lint text report was generated."
+          fi
       - name: Build debug APK
         run: bash ./gradlew :app:assembleDebug --stacktrace
       - name: Upload debug APK
