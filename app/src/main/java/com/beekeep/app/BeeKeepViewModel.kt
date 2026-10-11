@@ -283,6 +283,22 @@ class BeeKeepViewModel(
         }
     }
 
+    fun deleteApiaryPermanently(id: Long, onResult: (Boolean, String?) -> Unit = { _, _ -> }) {
+        val deletedApiaryName = _apiaries.value.firstOrNull { it.id == id }?.name
+        viewModelScope.launch {
+            runCatching { repo.deleteApiaryPermanently(id) }
+                .onSuccess {
+                    if (deletedApiaryName != null &&
+                        _selected.value?.apiary?.equals(deletedApiaryName, ignoreCase = true) == true
+                    ) {
+                        clearHive()
+                    }
+                    onResult(true, null)
+                }
+                .onFailure { onResult(false, it.message ?: "Could not delete apiary.") }
+        }
+    }
+
     private fun localPlusDays(timestamp: Long, days: Long): Long =
         java.time.Instant.ofEpochMilli(timestamp)
             .atZone(ZoneId.systemDefault())

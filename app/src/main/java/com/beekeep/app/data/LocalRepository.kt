@@ -152,6 +152,32 @@ class LocalHiveRepository(context: Context) {
         db.hives().hardDelete(hiveId)
     }
 
+    suspend fun deleteApiaryPermanently(apiaryId: Long) = withContext(Dispatchers.IO) {
+        db.withTransaction {
+            val apiary = db.apiaries().get(apiaryId)
+                ?: throw IllegalArgumentException("Apiary not found.")
+
+            // Include both current and legacy hives linked by apiary name.
+            val apiaryHives = db.hives().forApiaryRename(apiary.id, apiary.name)
+            val deletionTime = System.currentTimeMillis()
+            apiaryHives.forEach { hive ->
+                permanentlyDeleteHiveLocal(hive.id)
+                enqueue(
+                    "hive",
+                    hive.id,
+                    "delete",
+                    JSONObject().put("id", hive.id).put("updated_at", deletionTime).toString()
+                )
+            }
+
+            // Remove the map pin locally and sync a tombstone so connected devices
+            // delete the same apiary instead of restoring it on their next sync.
+            val tombstone = apiary.copy(deleted = true, updatedAt = deletionTime)
+            enqueue("apiary", apiary.id, "delete", apiaryPayload(tombstone))
+            db.apiaries().hardDelete(apiary.id)
+        }
+    }
+
     suspend fun assignNfcTag(hiveId: Long, uid: String, reassign: Boolean = false) = withContext(Dispatchers.IO) {
         val normalized = uid.trim().uppercase()
         require(normalized.isNotBlank()) { "The NFC tag has no readable UID." }
@@ -312,7 +338,9 @@ class LocalHiveRepository(context: Context) {
         if (doc.deleted) {
             when (doc.entity_type) {
                 "apiary" -> db.apiaries().get(doc.entity_id)?.let {
-                    if (doc.updated_at > it.updatedAt) db.apiaries().upsert(it.copy(deleted = true, updatedAt = doc.updated_at))
+                    // A newer cloud tombstone removes the row locally as well, freeing
+                    // the apiary name and ensuring the map pin disappears on this device.
+                    if (doc.updated_at > it.updatedAt) db.withTransaction { db.apiaries().hardDelete(doc.entity_id) }
                 }
                 "hive" -> db.hives().get(doc.entity_id)?.let {
                     // A remote permanent delete only wins over genuinely newer local edits.

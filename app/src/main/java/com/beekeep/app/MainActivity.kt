@@ -684,12 +684,32 @@ fun BeeKeepApp(
     }
     if (editingApiary != null) {
         val apiaryToEdit = editingApiary!!
-        AddApiaryScreen(locationController, apiaryToEdit, { editingApiary = null }) { id, name, notes, lat, lon, forage, water ->
-            vm.updateApiary(id ?: apiaryToEdit.id, name, notes, lat, lon, forage, water) { success, error ->
-                scope.launch { snackbarHostState.showSnackbar(error ?: "Apiary updated") }
-                if (success) editingApiary = null
+        AddApiaryScreen(
+            locationController = locationController,
+            existingApiary = apiaryToEdit,
+            onBack = { editingApiary = null },
+            onDelete = { apiaryId, onResult ->
+                vm.deleteApiaryPermanently(apiaryId) { success, error ->
+                    scope.launch {
+                        snackbarHostState.showSnackbar(error ?: "Apiary and its hives deleted")
+                    }
+                    if (success) {
+                        if (selectedApiaryName?.equals(apiaryToEdit.name, ignoreCase = true) == true) {
+                            selectedApiaryName = null
+                            if (screen == Screen.APIARY_HIVES) screen = Screen.APIARIES
+                        }
+                        editingApiary = null
+                    }
+                    onResult(success, error)
+                }
+            },
+            onSave = { id, name, notes, lat, lon, forage, water ->
+                vm.updateApiary(id ?: apiaryToEdit.id, name, notes, lat, lon, forage, water) { success, error ->
+                    scope.launch { snackbarHostState.showSnackbar(error ?: "Apiary updated") }
+                    if (success) editingApiary = null
+                }
             }
-        }
+        )
         return
     }
     if (addApiary) {
@@ -3907,6 +3927,7 @@ private fun AddApiaryScreen(
     locationController: LocationController,
     existingApiary: Apiary?,
     onBack: () -> Unit,
+    onDelete: ((Long, (Boolean, String?) -> Unit) -> Unit)? = null,
     onSave: (Long?, String, String, Double?, Double?, String, String) -> Unit
 ) {
     var name by rememberSaveable(existingApiary?.id) { mutableStateOf(existingApiary?.name.orEmpty()) }
@@ -3916,8 +3937,20 @@ private fun AddApiaryScreen(
     var lat by rememberSaveable(existingApiary?.id) { mutableStateOf(existingApiary?.latitude) }
     var lon by rememberSaveable(existingApiary?.id) { mutableStateOf(existingApiary?.longitude) }
     var gpsStatus by rememberSaveable { mutableStateOf("") }
+    var showDeleteConfirmation by rememberSaveable(existingApiary?.id) { mutableStateOf(false) }
+    var deletingApiary by rememberSaveable(existingApiary?.id) { mutableStateOf(false) }
+    var deleteError by rememberSaveable(existingApiary?.id) { mutableStateOf<String?>(null) }
     val context = LocalContext.current
-    BackHandler { onBack() }
+    BackHandler {
+        if (showDeleteConfirmation) {
+            if (!deletingApiary) {
+                showDeleteConfirmation = false
+                deleteError = null
+            }
+        } else if (!deletingApiary) {
+            onBack()
+        }
+    }
     val locationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
         if (result[Manifest.permission.ACCESS_FINE_LOCATION] == true || result[Manifest.permission.ACCESS_COARSE_LOCATION] == true) {
             locationController.current { r ->
@@ -3963,6 +3996,84 @@ private fun AddApiaryScreen(
         }
         if(gpsStatus.isNotBlank()) Text(gpsStatus,color=if(gpsStatus.startsWith("Could") || gpsStatus.startsWith("Location permission denied"))MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,fontWeight=FontWeight.Bold)
         Button({onSave(existingApiary?.id, name.trim(),notes.trim(),lat,lon,forage.trim(),water.trim())},Modifier.fillMaxWidth().height(60.dp),enabled=name.isNotBlank(),shape=RoundedCornerShape(24.dp)){Text(if (existingApiary == null) "SAVE APIARY" else "SAVE CHANGES",fontWeight=FontWeight.ExtraBold)}
+
+        if (existingApiary != null && onDelete != null) {
+            Spacer(Modifier.height(12.dp))
+            androidx.compose.material3.HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            Spacer(Modifier.height(8.dp))
+            OutlinedButton(
+                onClick = {
+                    deleteError = null
+                    showDeleteConfirmation = true
+                },
+                modifier = Modifier.fillMaxWidth().height(54.dp),
+                enabled = !deletingApiary,
+                colors = androidx.compose.material3.ButtonDefaults.outlinedButtonColors(
+                    contentColor = MaterialTheme.colorScheme.error
+                )
+            ) {
+                Text("DELETE APIARY", fontWeight = FontWeight.ExtraBold)
+            }
+        }
+    }
+
+    if (showDeleteConfirmation && existingApiary != null && onDelete != null) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = {
+                if (!deletingApiary) {
+                    showDeleteConfirmation = false
+                    deleteError = null
+                }
+            },
+            title = { Text("Permanently delete apiary?") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        "Deleting \"${existingApiary.name}\" will permanently delete this apiary, its map pin, and every hive assigned to it, including their inspection history, feeding records, treatments, harvests, and photos."
+                    )
+                    Text(
+                        "This action cannot be undone.",
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                    deleteError?.let {
+                        Text(it, color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Medium)
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        if (!deletingApiary) {
+                            deletingApiary = true
+                            deleteError = null
+                            onDelete(existingApiary.id) { success, error ->
+                                deletingApiary = false
+                                if (success) showDeleteConfirmation = false
+                                else deleteError = error ?: "Could not delete apiary."
+                            }
+                        }
+                    },
+                    enabled = !deletingApiary,
+                    colors = androidx.compose.material3.ButtonDefaults.textButtonColors(
+                        contentColor = MaterialTheme.colorScheme.error
+                    )
+                ) {
+                    Text(if (deletingApiary) "DELETING…" else "DELETE APIARY", fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        if (!deletingApiary) {
+                            showDeleteConfirmation = false
+                            deleteError = null
+                        }
+                    },
+                    enabled = !deletingApiary
+                ) { Text("CANCEL") }
+            }
+        )
     }
 }
 

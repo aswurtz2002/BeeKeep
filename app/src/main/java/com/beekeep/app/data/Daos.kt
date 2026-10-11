@@ -16,6 +16,8 @@ interface ApiaryDao {
     suspend fun byName(name: String): ApiaryEntity?
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(entity: ApiaryEntity)
+    @Query("DELETE FROM apiaries WHERE id = :id")
+    suspend fun hardDelete(id: Long)
 }
 
 @Dao
