@@ -239,6 +239,7 @@ class SupabaseGateway(
             }
 
             val remote = client.from("beekeep_documents").select().decodeList<CloudDocumentRow>()
+            deleteCloudPhotos(remote, userId)
             remote.forEach { repository.applyCloudDocument(it) }
 
             // Photos are synchronized after their inspection metadata. Local inspection saves never depend on this.
@@ -264,6 +265,30 @@ class SupabaseGateway(
         } catch (t: Throwable) {
             _account.value = _account.value.copy(syncing = false, error = t.message ?: "Sync failed")
             CloudResult.Failure(t.message ?: "Sync failed")
+        }
+    }
+
+    private suspend fun deleteCloudPhotos(rows: List<CloudDocumentRow>, userId: String) {
+        val supabase = client ?: return
+        for (row in rows) {
+            if (!row.deleted || row.entity_type != "photo") continue
+            val payload = runCatching { JSONObject(row.payload) }.getOrNull() ?: continue
+            if (payload.optBoolean("cloud_deleted", false)) continue
+            val path = payload.optString("cloud_path").takeIf { it.isNotBlank() } ?: continue
+            try {
+                supabase.storage["inspection-photos"].delete(path)
+                val marked = row.copy(
+                    payload = payload.put("cloud_deleted", true).toString()
+                )
+                supabase.from("beekeep_documents").upsert(listOf(marked)) {
+                    onConflict = "user_id,entity_type,entity_id"
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Throwable) {
+                // Leave the tombstone unmarked. The next sync retries storage cleanup
+                // without blocking synchronization of the remaining hive data.
+            }
         }
     }
 

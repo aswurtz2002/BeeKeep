@@ -4530,7 +4530,17 @@ private fun MoreScreen(
                             enabled = !account.syncing
                         ) { Text("SYNC NOW") }
                         OutlinedButton(
-                            onClick = { scope.launch { cloud.signOut(); authMessage = "Signed out. Your phone data is still available offline." } },
+                            onClick = {
+                                scope.launch {
+                                    authMessage = ""
+                                    authMessage = when (val result = cloud.signOut()) {
+                                        CloudResult.Success -> "Signed out. Your phone data is still available offline."
+                                        CloudResult.NotConfigured -> "Cloud is not configured."
+                                        CloudResult.NotSignedIn -> "You are already signed out."
+                                        is CloudResult.Failure -> result.message
+                                    }
+                                }
+                            },
                             modifier = Modifier.weight(1f)
                         ) { Text("SIGN OUT") }
                     }

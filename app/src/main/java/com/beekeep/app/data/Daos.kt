@@ -52,6 +52,10 @@ interface NfcTagAssignmentDao {
     suspend fun activeForHive(hiveId: Long): NfcTagAssignmentEntity?
     @Query("SELECT * FROM nfc_tag_assignments WHERE id = :id")
     suspend fun get(id: Long): NfcTagAssignmentEntity?
+    @Query("SELECT * FROM nfc_tag_assignments WHERE hive_id = :hiveId")
+    suspend fun listForHiveForDelete(hiveId: Long): List<NfcTagAssignmentEntity>
+    @Query("DELETE FROM nfc_tag_assignments WHERE id = :id")
+    suspend fun hardDelete(id: Long)
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(entity: NfcTagAssignmentEntity)
 }
@@ -64,6 +68,12 @@ interface InspectionDao {
     fun observeAll(): Flow<List<InspectionEntity>>
     @Query("SELECT * FROM inspections WHERE hive_id = :hiveId ORDER BY created_at DESC LIMIT 1")
     suspend fun latest(hiveId: Long): InspectionEntity?
+    @Query("SELECT * FROM inspections WHERE id = :id")
+    suspend fun get(id: Long): InspectionEntity?
+    @Query("SELECT * FROM inspections WHERE hive_id = :hiveId")
+    suspend fun listForHiveForDelete(hiveId: Long): List<InspectionEntity>
+    @Query("DELETE FROM inspections WHERE id = :id")
+    suspend fun hardDelete(id: Long)
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(entity: InspectionEntity)
 }
@@ -74,6 +84,12 @@ interface FeedingDao {
     fun observeForHive(hiveId: Long): Flow<List<FeedingEntity>>
     @Query("SELECT * FROM feeding_entries ORDER BY created_at DESC")
     fun observeAll(): Flow<List<FeedingEntity>>
+    @Query("SELECT * FROM feeding_entries WHERE id = :id")
+    suspend fun get(id: Long): FeedingEntity?
+    @Query("SELECT * FROM feeding_entries WHERE hive_id = :hiveId")
+    suspend fun listForHiveForDelete(hiveId: Long): List<FeedingEntity>
+    @Query("DELETE FROM feeding_entries WHERE id = :id")
+    suspend fun hardDelete(id: Long)
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(entity: FeedingEntity)
 }
@@ -84,6 +100,12 @@ interface TreatmentDao {
     fun observeForHive(hiveId: Long): Flow<List<TreatmentEntity>>
     @Query("SELECT * FROM treatment_entries ORDER BY created_at DESC")
     fun observeAll(): Flow<List<TreatmentEntity>>
+    @Query("SELECT * FROM treatment_entries WHERE id = :id")
+    suspend fun get(id: Long): TreatmentEntity?
+    @Query("SELECT * FROM treatment_entries WHERE hive_id = :hiveId")
+    suspend fun listForHiveForDelete(hiveId: Long): List<TreatmentEntity>
+    @Query("DELETE FROM treatment_entries WHERE id = :id")
+    suspend fun hardDelete(id: Long)
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(entity: TreatmentEntity)
 }
@@ -94,6 +116,12 @@ interface HarvestDao {
     fun observeForHive(hiveId: Long): Flow<List<HarvestEntity>>
     @Query("SELECT * FROM harvest_entries ORDER BY created_at DESC")
     fun observeAll(): Flow<List<HarvestEntity>>
+    @Query("SELECT * FROM harvest_entries WHERE id = :id")
+    suspend fun get(id: Long): HarvestEntity?
+    @Query("SELECT * FROM harvest_entries WHERE hive_id = :hiveId")
+    suspend fun listForHiveForDelete(hiveId: Long): List<HarvestEntity>
+    @Query("DELETE FROM harvest_entries WHERE id = :id")
+    suspend fun hardDelete(id: Long)
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(entity: HarvestEntity)
 }
@@ -102,6 +130,12 @@ interface HarvestDao {
 interface EventDao {
     @Query("SELECT * FROM activity_events WHERE hive_id = :hiveId ORDER BY created_at DESC")
     fun observeForHive(hiveId: Long): Flow<List<ActivityEventEntity>>
+    @Query("SELECT * FROM activity_events WHERE hive_id = :hiveId")
+    suspend fun listForHiveForDelete(hiveId: Long): List<ActivityEventEntity>
+    @Query("SELECT * FROM activity_events WHERE id = :id")
+    suspend fun get(id: Long): ActivityEventEntity?
+    @Query("DELETE FROM activity_events WHERE id = :id")
+    suspend fun hardDelete(id: Long)
     @Query("DELETE FROM activity_events WHERE hive_id = :hiveId")
     suspend fun deleteForHive(hiveId: Long)
     @Insert(onConflict = OnConflictStrategy.REPLACE)

@@ -142,8 +142,56 @@ class LocalHiveRepository(context: Context) {
     suspend fun deleteHivePermanently(hiveId: Long) = withContext(Dispatchers.IO) {
         db.withTransaction {
             db.hives().get(hiveId) ?: throw IllegalArgumentException("Hive not found.")
+            val deletionTime = System.currentTimeMillis()
+            enqueueHiveHistoryDeletions(hiveId, deletionTime)
             permanentlyDeleteHiveLocal(hiveId)
-            enqueue("hive", hiveId, "delete", JSONObject().put("id", hiveId).toString())
+            enqueue("hive", hiveId, "delete", JSONObject().put("id", hiveId).put("updated_at", deletionTime).toString())
+        }
+    }
+
+
+    /**
+     * Keep cloud history and uploaded photos in sync with a permanent local deletion.
+     * Tombstones contain identifiers and timestamps only, not the deleted record's notes.
+     */
+    private suspend fun enqueueHiveHistoryDeletions(hiveId: Long, deletionTime: Long) {
+        fun tombstone(id: Long) = JSONObject()
+            .put("id", id)
+            .put("hive_id", hiveId)
+            .put("updated_at", deletionTime)
+            .toString()
+
+        db.inspections().listForHiveForDelete(hiveId).forEach {
+            enqueue("inspection", it.id, "delete", tombstone(it.id))
+        }
+        db.feedings().listForHiveForDelete(hiveId).forEach {
+            enqueue("feeding", it.id, "delete", tombstone(it.id))
+        }
+        db.treatments().listForHiveForDelete(hiveId).forEach {
+            enqueue("treatment", it.id, "delete", tombstone(it.id))
+        }
+        db.harvests().listForHiveForDelete(hiveId).forEach {
+            enqueue("harvest", it.id, "delete", tombstone(it.id))
+        }
+        db.events().listForHiveForDelete(hiveId).forEach {
+            enqueue("event", it.id, "delete", tombstone(it.id))
+        }
+        db.nfcTagAssignments().listForHiveForDelete(hiveId).forEach {
+            enqueue("nfc_assignment", it.id, "delete", tombstone(it.id))
+        }
+        db.photos().listForHive(hiveId).forEach { photo ->
+            val cloudPath = photo.cloudPath?.takeIf { it.isNotBlank() } ?: return@forEach
+            enqueue(
+                "photo",
+                photo.id,
+                "delete",
+                JSONObject()
+                    .put("id", photo.id)
+                    .put("hive_id", hiveId)
+                    .put("cloud_path", cloudPath)
+                    .put("updated_at", deletionTime)
+                    .toString()
+            )
         }
     }
 
@@ -165,6 +213,7 @@ class LocalHiveRepository(context: Context) {
             val apiaryHives = db.hives().forApiaryRename(apiary.id, apiary.name)
             val deletionTime = System.currentTimeMillis()
             apiaryHives.forEach { hive ->
+                enqueueHiveHistoryDeletions(hive.id, deletionTime)
                 permanentlyDeleteHiveLocal(hive.id)
                 enqueue(
                     "hive",
@@ -346,11 +395,34 @@ class LocalHiveRepository(context: Context) {
                 "apiary" -> db.apiaries().get(doc.entity_id)?.let {
                     // A newer cloud tombstone removes the row locally as well, freeing
                     // the apiary name and ensuring the map pin disappears on this device.
-                    if (doc.updated_at > it.updatedAt) db.withTransaction { db.apiaries().hardDelete(doc.entity_id) }
+                    if (doc.updated_at >= it.updatedAt) db.withTransaction { db.apiaries().hardDelete(doc.entity_id) }
                 }
                 "hive" -> db.hives().get(doc.entity_id)?.let {
                     // A remote permanent delete only wins over genuinely newer local edits.
-                    if (doc.updated_at > it.updatedAt) db.withTransaction { permanentlyDeleteHiveLocal(doc.entity_id) }
+                    if (doc.updated_at >= it.updatedAt) db.withTransaction { permanentlyDeleteHiveLocal(doc.entity_id) }
+                }
+                "inspection" -> db.inspections().get(doc.entity_id)?.let {
+                    if (doc.updated_at >= it.updatedAt) db.withTransaction { db.inspections().hardDelete(doc.entity_id) }
+                }
+                "feeding" -> db.feedings().get(doc.entity_id)?.let {
+                    if (doc.updated_at >= it.createdAt) db.withTransaction { db.feedings().hardDelete(doc.entity_id) }
+                }
+                "treatment" -> db.treatments().get(doc.entity_id)?.let {
+                    if (doc.updated_at >= it.createdAt) db.withTransaction { db.treatments().hardDelete(doc.entity_id) }
+                }
+                "harvest" -> db.harvests().get(doc.entity_id)?.let {
+                    if (doc.updated_at >= it.createdAt) db.withTransaction { db.harvests().hardDelete(doc.entity_id) }
+                }
+                "event" -> db.events().get(doc.entity_id)?.let {
+                    if (doc.updated_at >= it.createdAt) db.withTransaction { db.events().hardDelete(doc.entity_id) }
+                }
+                "nfc_assignment" -> db.nfcTagAssignments().get(doc.entity_id)?.let { assignment ->
+                    if (doc.updated_at >= maxOf(assignment.assignedAt, assignment.unassignedAt ?: 0L)) {
+                        db.withTransaction {
+                            db.nfcTagAssignments().hardDelete(doc.entity_id)
+                            db.hives().refreshTagCache(assignment.hiveId)
+                        }
+                    }
                 }
             }
             return@withContext
@@ -445,9 +517,7 @@ class LocalHiveRepository(context: Context) {
     }
 
     private suspend fun enqueue(type: String, entityId: Long, operation: String, payload: String) {
-        if (type in setOf("hive", "apiary", "nfc_assignment")) {
-            db.outbox().deletePendingForEntity(type, entityId)
-        }
+        db.outbox().deletePendingForEntity(type, entityId)
         db.outbox().enqueue(SyncOutboxEntity(IdGenerator.nextLong(), type, entityId, operation, payload))
     }
 
