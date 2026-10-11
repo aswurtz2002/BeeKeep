@@ -147,8 +147,10 @@ class LocalHiveRepository(context: Context) {
 
     private suspend fun permanentlyDeleteHiveLocal(hiveId: Long) {
         db.photos().listForHive(hiveId).forEach { runCatching { java.io.File(it.localPath).delete() } }
+        // Photo rows do not have a Room foreign key to hives, so remove them explicitly.
+        db.photos().deleteForHive(hiveId)
         db.events().deleteForHive(hiveId)
-        // inspections, feedings, treatments, harvests, photos and NFC assignments cascade.
+        // inspections, feedings, treatments, harvests and NFC assignments cascade.
         db.hives().hardDelete(hiveId)
     }
 

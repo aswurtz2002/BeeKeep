@@ -137,6 +137,8 @@ interface PhotoDao {
     suspend fun markError(id: Long, error: String)
     @Query("SELECT * FROM inspection_photos WHERE hive_id = :hiveId")
     suspend fun listForHive(hiveId: Long): List<PhotoEntity>
+    @Query("DELETE FROM inspection_photos WHERE hive_id = :hiveId")
+    suspend fun deleteForHive(hiveId: Long)
 }
 
 @Dao
