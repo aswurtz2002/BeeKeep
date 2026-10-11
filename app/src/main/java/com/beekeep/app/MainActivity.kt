@@ -122,6 +122,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
@@ -413,6 +415,13 @@ fun BeeKeepApp(
     onSpeakHiveNumber: (String) -> Unit,
     onDarkModeChange: (Boolean) -> Unit
 ) {
+    val context = LocalContext.current
+    val autoVoicePrefs = remember(context) {
+        context.getSharedPreferences(PREFS, android.content.Context.MODE_PRIVATE)
+    }
+    var autoVoiceEnabled by rememberSaveable {
+        mutableStateOf(autoVoicePrefs.getBoolean("auto_voice_on_nfc", true))
+    }
     var screen by rememberSaveable { mutableStateOf(Screen.HOME) }
     var selectedHiveOpen by rememberSaveable { mutableStateOf(false) }
     var selectedApiaryName by rememberSaveable { mutableStateOf<String?>(null) }
@@ -724,6 +733,11 @@ fun BeeKeepApp(
             activity, locationController, hiveForInspection,
             priorInspections = inspections,
             autoStartVoice = pendingAutoStartVoiceHiveId == hiveForInspection.id,
+            autoVoiceEnabled = autoVoiceEnabled,
+            onAutoVoiceEnabledChange = { enabled ->
+                autoVoiceEnabled = enabled
+                autoVoicePrefs.edit { putBoolean("auto_voice_on_nfc", enabled) }
+            },
             onVoiceAutoStartConsumed = {
                 if (pendingAutoStartVoiceHiveId == hiveForInspection.id) pendingAutoStartVoiceHiveId = null
             },
@@ -2968,6 +2982,8 @@ private fun InspectionScreen(
     hive: Hive,
     priorInspections: List<Inspection>,
     autoStartVoice: Boolean,
+    autoVoiceEnabled: Boolean,
+    onAutoVoiceEnabledChange: (Boolean) -> Unit,
     onVoiceAutoStartConsumed: () -> Unit,
     onSaveHiveLocation: (Long, Double, Double, (String?) -> Unit) -> Unit,
     onBack: () -> Unit,
@@ -3253,6 +3269,10 @@ private fun InspectionScreen(
         // an explicit scan-to-open request and is consumed once for this hive.
         if (!autoStartVoice) return@LaunchedEffect
         onVoiceAutoStartConsumed()
+        if (!autoVoiceEnabled) {
+            voiceStatus = "Auto voice is off • tap VOICE to record manually"
+            return@LaunchedEffect
+        }
         // NFC entry announces the hive number with text-to-speech. Let that finish
         // before opening the microphone so the announcement is not dictated into notes.
         delay(1_800L)
@@ -3365,20 +3385,46 @@ private fun InspectionScreen(
                         Modifier.fillMaxWidth().padding(10.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        FieldActionButton(
-                            Icons.Rounded.Mic,
-                            if (voiceListeningRequested) "STOP VOICE" else "VOICE",
-                            Modifier.fillMaxWidth()
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            if (voiceListeningRequested) {
-                                voiceListeningRequested = false
-                                voicePartialText = ""
-                                voiceStatus = "Voice dictation paused"
-                            } else if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
-                                voiceListeningRequested = true
-                                voiceStatus = "Starting hands-free dictation…"
-                            } else {
-                                voicePermission.launch(Manifest.permission.RECORD_AUDIO)
+                            FieldActionButton(
+                                Icons.Rounded.Mic,
+                                if (voiceListeningRequested) "STOP VOICE" else "VOICE",
+                                Modifier.weight(1f)
+                            ) {
+                                if (voiceListeningRequested) {
+                                    voiceListeningRequested = false
+                                    voicePartialText = ""
+                                    voiceStatus = "Voice dictation paused"
+                                } else if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+                                    voiceListeningRequested = true
+                                    voiceStatus = "Starting hands-free dictation…"
+                                } else {
+                                    voicePermission.launch(Manifest.permission.RECORD_AUDIO)
+                                }
+                            }
+                            Column(
+                                modifier = Modifier.width(108.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(1.dp)
+                            ) {
+                                Text(
+                                    "AUTO ON NFC",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1
+                                )
+                                Switch(
+                                    checked = autoVoiceEnabled,
+                                    onCheckedChange = onAutoVoiceEnabledChange,
+                                    modifier = Modifier.semantics {
+                                        contentDescription = "Automatically start voice recording when opening a hive with NFC"
+                                    }
+                                )
                             }
                         }
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
