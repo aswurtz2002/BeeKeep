@@ -47,6 +47,8 @@ class LocalHiveRepository(context: Context) {
 
     suspend fun saveHive(h: Hive) = withContext(Dispatchers.IO) {
         require(h.number.trim().isNotBlank()) { "Hive number cannot be blank" }
+        require(h.mitePercent.isFinite() && h.mitePercent >= 0.0) { "Mite percentage must be a valid non-negative number." }
+        requireValidCoordinates(h.latitude, h.longitude, "Hive")
         db.withTransaction {
         val existing = db.hives().get(h.id)
         val cleanApiary = h.apiary.trim()
@@ -231,6 +233,7 @@ class LocalHiveRepository(context: Context) {
     }
 
     suspend fun saveInspection(i: Inspection) = withContext(Dispatchers.IO) {
+        requireValidCoordinates(i.latitude, i.longitude, "Inspection")
         db.withTransaction {
             val safeSample = i.sampleSize.coerceAtLeast(1)
             val safeMites = i.miteCount.coerceIn(0, safeSample)
@@ -304,6 +307,7 @@ class LocalHiveRepository(context: Context) {
     suspend fun saveApiary(a: Apiary) = withContext(Dispatchers.IO) {
         val cleanName = a.name.trim()
         require(cleanName.isNotBlank()) { "Apiary name cannot be blank" }
+        requireValidCoordinates(a.latitude, a.longitude, "Apiary")
         db.withTransaction {
             val existingByName = db.apiaries().byName(cleanName)
             if (existingByName != null && existingByName.id != a.id) {
@@ -470,4 +474,18 @@ class LocalHiveRepository(context: Context) {
     private fun toHarvest(e: HarvestEntity) = Harvest(e.id, e.hiveId, e.createdAt, e.supersPulled, e.wetHoneyWeight, e.dryHoneyWeight, e.weightUnit, e.waxWeight, e.propolisWeight, e.notes)
     private fun toApiary(e: ApiaryEntity) = Apiary(e.id, e.name, e.notes, e.latitude, e.longitude, e.forageNotes, e.waterNotes)
     private fun toEvent(e: ActivityEventEntity) = ActivityEvent(e.id, e.hiveId, e.createdAt, e.type, e.title, e.detail)
+}
+
+private fun requireValidCoordinates(latitude: Double?, longitude: Double?, subject: String) {
+    require((latitude == null) == (longitude == null)) {
+        "$subject coordinates must include both latitude and longitude."
+    }
+    if (latitude != null && longitude != null) {
+        require(latitude.isFinite() && latitude in -90.0..90.0) {
+            "$subject latitude is outside the valid range."
+        }
+        require(longitude.isFinite() && longitude in -180.0..180.0) {
+            "$subject longitude is outside the valid range."
+        }
+    }
 }

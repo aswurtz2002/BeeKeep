@@ -37,16 +37,20 @@ object NfcAssignmentResolver {
             .distinctBy { it.id }
             .filter { it.id != incoming.id && it.isActive }
 
-        val toClose = mutableListOf<NfcTagAssignmentEntity>()
-        var resolved = incoming
-        for (local in conflicts) {
-            if (!resolved.isActive) break
-            if (winsOver(resolved, local)) {
-                toClose += local.copy(unassignedAt = resolved.assignedAt)
-            } else {
-                resolved = resolved.copy(unassignedAt = local.assignedAt)
-            }
+        // Resolve the entire conflict set before changing any incumbent. If the
+        // incoming assignment beats the tag owner but loses to the hive's current
+        // tag, partially closing the first conflict would leave both hives wrong.
+        val losingConflict = conflicts
+            .filterNot { winsOver(incoming, it) }
+            .maxWithOrNull(compareBy<NfcTagAssignmentEntity> { it.assignedAt }.thenBy { it.id })
+
+        if (losingConflict != null) {
+            return MergeResult(incoming.copy(unassignedAt = losingConflict.assignedAt), emptyList())
         }
-        return MergeResult(resolved, toClose)
+
+        return MergeResult(
+            incoming,
+            conflicts.map { it.copy(unassignedAt = incoming.assignedAt) }
+        )
     }
 }

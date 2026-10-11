@@ -81,7 +81,7 @@ class SupabaseGateway(
             _account.value = CloudAccountState(configured = false, signedIn = false)
             return
         }
-        runCatching {
+        try {
             val session = supabase.auth.currentSessionOrNull()
             _account.value = CloudAccountState(
                 configured = true,
@@ -89,8 +89,10 @@ class SupabaseGateway(
                 email = session?.user?.email ?: ""
             )
             if (enableRealtime && session != null) startRealtime()
-        }.onFailure {
-            _account.value = CloudAccountState(configured = true, signedIn = false, error = it.message)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Throwable) {
+            _account.value = CloudAccountState(configured = true, signedIn = false, error = error.message)
         }
     }
 
@@ -116,7 +118,10 @@ class SupabaseGateway(
         supabase.auth.signOut()
         refreshAccount()
         CloudResult.Success
+    } catch (cancelled: CancellationException) {
+        throw cancelled
     } catch (t: Throwable) {
+        _account.value = _account.value.copy(syncing = false, error = t.message ?: "Sign out failed")
         CloudResult.Failure(t.message ?: "Sign out failed")
     }
 
@@ -194,9 +199,12 @@ class SupabaseGateway(
             refreshAccount()
             return@withLock CloudResult.NotSignedIn
         }
+        val userId = session.user?.id ?: run {
+            _account.value = _account.value.copy(syncing = false, signedIn = false, error = "Your cloud session has no user ID. Sign in again.")
+            return@withLock CloudResult.NotSignedIn
+        }
         _account.value = _account.value.copy(syncing = true, error = null)
         try {
-            val userId = session.user?.id ?: return@withLock CloudResult.NotSignedIn
 
             // Pull first. This prevents an older offline outbox entry from overwriting a newer cloud record.
             val remoteBefore = client.from("beekeep_documents").select().decodeList<CloudDocumentRow>()
@@ -266,6 +274,8 @@ class SupabaseGateway(
             refreshAccount()
             if (enableRealtime && _account.value.signedIn) startRealtime()
             CloudResult.Success
+        } catch (cancelled: CancellationException) {
+            throw cancelled
         } catch (t: Throwable) {
             val message = t.message ?: "Authentication failed"
             _account.value = _account.value.copy(error = message)

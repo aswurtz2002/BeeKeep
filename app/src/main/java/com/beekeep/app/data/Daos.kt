@@ -28,7 +28,7 @@ interface HiveDao {
     fun observeDead(): Flow<List<HiveEntity>>
     @Query("SELECT * FROM hives WHERE id = :id AND deleted = 0")
     suspend fun get(id: Long): HiveEntity?
-    @Query("SELECT * FROM hives WHERE apiary_id = :apiaryId OR apiary = :oldName COLLATE NOCASE")
+    @Query("SELECT * FROM hives WHERE apiary_id = :apiaryId OR (apiary_id IS NULL AND apiary = :oldName COLLATE NOCASE)")
     suspend fun forApiaryRename(apiaryId: Long, oldName: String): List<HiveEntity>
     @Query("SELECT * FROM hives WHERE tag_uid = :tag COLLATE NOCASE AND deleted = 0 LIMIT 1")
     suspend fun byTag(tag: String): HiveEntity?
@@ -38,7 +38,7 @@ interface HiveDao {
     suspend fun exists(id: Long): Boolean
     @Query("DELETE FROM hives WHERE id = :id")
     suspend fun hardDelete(id: Long)
-    @Query("UPDATE hives SET tag_uid = (SELECT tag_uid FROM nfc_tag_assignments WHERE hive_id = :hiveId AND unassigned_at IS NULL LIMIT 1) WHERE id = :hiveId")
+    @Query("UPDATE hives SET tag_uid = (SELECT tag_uid FROM nfc_tag_assignments WHERE hive_id = :hiveId AND unassigned_at IS NULL ORDER BY assigned_at DESC, id DESC LIMIT 1) WHERE id = :hiveId")
     suspend fun refreshTagCache(hiveId: Long)
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(entity: HiveEntity)
@@ -46,9 +46,9 @@ interface HiveDao {
 
 @Dao
 interface NfcTagAssignmentDao {
-    @Query("SELECT * FROM nfc_tag_assignments WHERE tag_uid = :uid COLLATE NOCASE AND unassigned_at IS NULL LIMIT 1")
+    @Query("SELECT * FROM nfc_tag_assignments WHERE tag_uid = :uid COLLATE NOCASE AND unassigned_at IS NULL ORDER BY assigned_at DESC, id DESC LIMIT 1")
     suspend fun activeByTag(uid: String): NfcTagAssignmentEntity?
-    @Query("SELECT * FROM nfc_tag_assignments WHERE hive_id = :hiveId AND unassigned_at IS NULL LIMIT 1")
+    @Query("SELECT * FROM nfc_tag_assignments WHERE hive_id = :hiveId AND unassigned_at IS NULL ORDER BY assigned_at DESC, id DESC LIMIT 1")
     suspend fun activeForHive(hiveId: Long): NfcTagAssignmentEntity?
     @Query("SELECT * FROM nfc_tag_assignments WHERE id = :id")
     suspend fun get(id: Long): NfcTagAssignmentEntity?
@@ -110,7 +110,7 @@ interface EventDao {
 
 @Dao
 interface OutboxDao {
-    @Query("SELECT * FROM sync_outbox WHERE state = 'pending' ORDER BY created_at LIMIT :limit")
+    @Query("SELECT * FROM sync_outbox WHERE state = 'pending' ORDER BY created_at, id LIMIT :limit")
     suspend fun pending(limit: Int = 50): List<SyncOutboxEntity>
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun enqueue(entity: SyncOutboxEntity)

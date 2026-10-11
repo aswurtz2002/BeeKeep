@@ -84,4 +84,34 @@ class NfcAssignmentResolverTest {
         assertTrue(result.incoming.isActive)
         assertTrue(result.toClose.isEmpty())
     }
+    @Test
+    fun `incoming loses one of two conflicts without closing either incumbent`() {
+        val currentTagOwner = assignment(5, "A123", 47, at = 50)
+        val currentHiveTag = assignment(20, "OTHER9", 83, at = 100)
+        val incoming = assignment(10, "A123", 83, at = 70)
+
+        val result = NfcAssignmentResolver.merge(currentTagOwner, currentHiveTag, incoming)
+
+        assertEquals(100L, result.incoming.unassignedAt)
+        assertTrue(result.toClose.isEmpty())
+    }
+
+    @Test
+    fun `incoming closes every incumbent only when it wins all conflicts`() {
+        val currentTagOwner = assignment(5, "A123", 47, at = 50)
+        val currentHiveTag = assignment(20, "OTHER9", 83, at = 60)
+        val incoming = assignment(30, "A123", 83, at = 70)
+
+        val result = NfcAssignmentResolver.merge(currentTagOwner, currentHiveTag, incoming)
+
+        assertTrue(result.incoming.isActive)
+        assertEquals(
+            listOf(
+                currentTagOwner.copy(unassignedAt = 70),
+                currentHiveTag.copy(unassignedAt = 70)
+            ),
+            result.toClose
+        )
+    }
 }
+

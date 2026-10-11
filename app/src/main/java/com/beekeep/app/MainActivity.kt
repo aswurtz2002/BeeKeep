@@ -3067,6 +3067,7 @@ private fun InspectionScreen(
     var voiceListeningRequested by rememberSaveable(hive.id) { mutableStateOf(false) }
     var voicePartialText by rememberSaveable(hive.id) { mutableStateOf("") }
     var saving by rememberSaveable { mutableStateOf(false) }
+    var saveError by rememberSaveable(hive.id) { mutableStateOf("") }
 
     val currentFormDraft = InspectionFormDraft(
         strength = strength,
@@ -3315,8 +3316,12 @@ private fun InspectionScreen(
     BackHandler { onBack() }
 
     val miteRate = if (sample > 0) mites * 100.0 / sample else 0.0
-    val previousForComparison = remember(priorInspections) {
-        priorInspections.sortedByDescending { it.createdAt }.getOrNull(1)
+    // A new inspection has not been added to history yet; compare against the
+    // latest saved inspection, not the second-latest one.
+    val previousForComparison = remember(priorInspections, hive.id) {
+        priorInspections.asSequence()
+            .filter { it.hiveId == hive.id }
+            .maxByOrNull { it.createdAt }
     }
 
     Scaffold(
@@ -3397,6 +3402,7 @@ private fun InspectionScreen(
                                     if (!saving) {
                                         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                                         saving = true
+                                        saveError = ""
                                         val now = System.currentTimeMillis()
                                         val inspection = Inspection(
                                             IdGenerator.nextLong(), hive.id, now, ColonyStrength.storedFromGrade(strength), queen, mites,
@@ -3405,8 +3411,15 @@ private fun InspectionScreen(
                                             honey, pollen, emptyComb, diseasesCsv
                                         )
                                         scope.launch {
-                                            onSave(inspection)
-                                            saving = false
+                                            try {
+                                                onSave(inspection)
+                                            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                                                throw cancelled
+                                            } catch (error: Exception) {
+                                                saveError = error.message ?: "Could not save the inspection. Please try again."
+                                            } finally {
+                                                saving = false
+                                            }
                                         }
                                     }
                                 },
@@ -3430,6 +3443,16 @@ private fun InspectionScreen(
                 }
             }
 
+            if (saveError.isNotBlank()) {
+                item {
+                    Text(
+                        saveError,
+                        modifier = Modifier.padding(horizontal = 4.dp),
+                        color = MaterialTheme.colorScheme.error,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
             item {
                 SectionHeader("QUEEN")
                 Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
