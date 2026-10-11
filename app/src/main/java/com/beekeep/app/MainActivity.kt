@@ -2,6 +2,8 @@ package com.beekeep.app
 
 import android.Manifest
 import android.content.Intent
+import android.media.AudioManager
+import android.media.ToneGenerator
 import android.content.pm.PackageManager
 import android.os.Bundle
 import android.os.Handler
@@ -3161,6 +3163,14 @@ private fun InspectionScreen(
         }
     }
     val voiceHandler = remember { Handler(Looper.getMainLooper()) }
+    // A short confirmation ping plays only once the recognizer is ready to listen.
+    // This is shared by manual recording and NFC-triggered auto voice.
+    val voiceStartTone = remember(context) {
+        runCatching { ToneGenerator(AudioManager.STREAM_NOTIFICATION, 80) }.getOrNull()
+    }
+    DisposableEffect(voiceStartTone) {
+        onDispose { runCatching { voiceStartTone?.release() } }
+    }
     val speechRecognizer = remember(context) {
         if (SpeechRecognizer.isRecognitionAvailable(context)) {
             runCatching { SpeechRecognizer.createSpeechRecognizer(context) }.getOrNull()
@@ -3208,6 +3218,7 @@ private fun InspectionScreen(
         if (recognizer != null) {
             recognizer.setRecognitionListener(object : RecognitionListener {
                 override fun onReadyForSpeech(params: Bundle?) {
+                    runCatching { voiceStartTone?.startTone(ToneGenerator.TONE_PROP_BEEP, 140) }
                     voiceStatus = "Listening • speak your notes"
                 }
                 override fun onBeginningOfSpeech() {
