@@ -2657,7 +2657,18 @@ private fun HiveDetailScreen(
                         )
                     }
                     CompactStatItem("Mites", "${String.format(Locale.US, "%.2f", hive.mitePercent)}%", Modifier.weight(1f))
-                    CompactStatItem("Inspections", inspections.size.toString(), Modifier.weight(1f))
+                    Column(
+                        Modifier.weight(1f),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(2.dp)
+                    ) {
+                        Text(
+                            "Queen ${hive.queenStatus}",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.ExtraBold,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                        )
+                    }
                 }
             }
         }
@@ -3472,7 +3483,7 @@ private fun InspectionScreen(
             item {
                 SectionHeader("QUEEN")
                 Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    for (option in listOf("Laying", "Spotted", "Unspotted", "Queenless", "Virgin")) {
+                    for (option in listOf("Laying", "Queenless", "Virgin")) {
                         FilterChip(
                             selected = queen == option,
                             onClick = {
