@@ -3,8 +3,6 @@ package com.beekeep.app
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -119,7 +117,6 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
-import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
@@ -1257,49 +1254,6 @@ private fun HomeScreen(
     onScan: () -> Unit,
     onCancelScan: () -> Unit
 ) {
-    val context = LocalContext.current
-    val lifecycleOwner = LocalLifecycleOwner.current
-    val scanningNow by rememberUpdatedState(scanning)
-    val cancelScanNow by rememberUpdatedState(onCancelScan)
-    DisposableEffect(lifecycleOwner) {
-        val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_PAUSE && scanningNow) cancelScanNow()
-        }
-        lifecycleOwner.lifecycle.addObserver(observer)
-        onDispose {
-            lifecycleOwner.lifecycle.removeObserver(observer)
-            if (scanningNow) cancelScanNow()
-        }
-    }
-    val bannerBitmap = remember(context) {
-        runCatching {
-            context.assets.open("beekeep_home_banner.webp").use { input ->
-                BitmapFactory.decodeStream(input)
-            }
-        }.getOrNull()
-    }
-    // Crop to the inner logo mark and key out the near-black tile so the cream
-    // screen background remains visible through the transparent parts.
-    val bannerLogoBitmap = remember(bannerBitmap) {
-        bannerBitmap?.let { bitmap ->
-            runCatching {
-                val cropped = Bitmap.createBitmap(bitmap, 467, 38, 220, 238)
-                val pixels = IntArray(cropped.width * cropped.height)
-                cropped.getPixels(pixels, 0, cropped.width, 0, 0, cropped.width, cropped.height)
-                for (index in pixels.indices) {
-                    val pixel = pixels[index]
-                    val red = (pixel ushr 16) and 0xFF
-                    val green = (pixel ushr 8) and 0xFF
-                    val blue = pixel and 0xFF
-                    if (maxOf(red, green, blue) <= 22 && maxOf(red, green, blue) - minOf(red, green, blue) <= 12) {
-                        pixels[index] = 0x00000000
-                    }
-                }
-                Bitmap.createBitmap(pixels, cropped.width, cropped.height, Bitmap.Config.ARGB_8888)
-            }.getOrNull()
-        }
-    }
-
     LazyColumn(
         Modifier
             .fillMaxSize()
@@ -1394,17 +1348,12 @@ private fun HomeScreen(
                         )
                     }
                     Spacer(Modifier.width(12.dp))
-                    if (bannerLogoBitmap != null) {
-                        Image(
-                            bitmap = bannerLogoBitmap.asImageBitmap(),
-                            contentDescription = "BeeKeep bee logo",
-                            contentScale = ContentScale.Fit,
-                            colorFilter = androidx.compose.ui.graphics.ColorFilter.tint(BeeKeepAccent),
-                            modifier = Modifier.size(width = 82.dp, height = 98.dp)
-                        )
-                    } else {
-                        HoneybeeGlyph(Modifier.size(72.dp))
-                    }
+                    Image(
+                        painter = androidx.compose.ui.res.painterResource(R.drawable.beekeep_header_logo),
+                        contentDescription = "BeeKeep apiary health logo",
+                        contentScale = ContentScale.Fit,
+                        modifier = Modifier.size(width = 88.dp, height = 98.dp)
+                    )
                 }
             }
         }
