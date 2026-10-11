@@ -1321,7 +1321,8 @@ private fun HomeScreen(
                 Row(
                     modifier = Modifier
                         .fillMaxSize()
-                        .padding(vertical = 10.dp),
+                        .padding(vertical = 10.dp)
+                        .padding(end = 8.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
