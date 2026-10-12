@@ -10,6 +10,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
+import org.json.JSONArray
 
 class LocalHiveRepository(context: Context) {
     private val appContext = context.applicationContext
@@ -533,6 +534,297 @@ class LocalHiveRepository(context: Context) {
         }
     }
 
+
+    /**
+     * Portable export of apiaries and their hive history. Photo files and sync transport
+     * state are device-specific and deliberately are not part of the JSON backup.
+     */
+    suspend fun createDataBackupJson(): String = withContext(Dispatchers.IO) {
+        val records = JSONArray()
+        fun addRecord(type: String, id: Long, updatedAt: Long, payload: String) {
+            records.put(JSONObject()
+                .put("type", type)
+                .put("id", id)
+                .put("updatedAt", updatedAt)
+                .put("payload", JSONObject(payload)))
+        }
+
+        val apiaries = db.apiaries().allForBackup().filterNot { it.deleted }
+        val hives = db.hives().allForBackup().filterNot { it.deleted }
+        val hiveIds = hives.map { it.id }.toSet()
+        apiaries.forEach { addRecord("apiary", it.id, it.updatedAt, apiaryPayload(it)) }
+        hives.forEach { addRecord("hive", it.id, it.updatedAt, hivePayload(it)) }
+        db.nfcTagAssignments().allForBackup().filter { it.hiveId in hiveIds }
+            .forEach { addRecord("nfc_assignment", it.id, maxOf(it.assignedAt, it.unassignedAt ?: 0L), nfcAssignmentPayload(it)) }
+        db.inspections().allForBackup().filter { it.hiveId in hiveIds }
+            .forEach { addRecord("inspection", it.id, it.updatedAt, inspectionPayload(it)) }
+        db.feedings().allForBackup().filter { it.hiveId in hiveIds }
+            .forEach { addRecord("feeding", it.id, it.createdAt, feedingPayload(it)) }
+        db.treatments().allForBackup().filter { it.hiveId in hiveIds }
+            .forEach { addRecord("treatment", it.id, it.createdAt, treatmentPayload(it)) }
+        db.harvests().allForBackup().filter { it.hiveId in hiveIds }
+            .forEach { addRecord("harvest", it.id, it.createdAt, harvestPayload(it)) }
+        db.events().allForBackup().filter { it.hiveId in hiveIds }
+            .forEach { addRecord("event", it.id, it.createdAt, eventPayload(it)) }
+
+        JSONObject()
+            .put("format", "beekeep-data-backup")
+            .put("schemaVersion", 1)
+            .put("createdAt", System.currentTimeMillis())
+            .put("records", records)
+            .toString(2)
+    }
+
+    /** Validates the entire file before any restore changes occur. */
+    fun previewDataBackup(raw: String): DataBackupPreview {
+        val root = JSONObject(raw)
+        require(root.optString("format") == "beekeep-data-backup") { "This file is not a BeeKeep data backup." }
+        require(root.optInt("schemaVersion", -1) == 1) { "This BeeKeep backup version is not supported by this app." }
+        val records = root.optJSONArray("records")
+            ?: throw IllegalArgumentException("The backup does not contain a records list.")
+        require(records.length() <= 50000) { "The backup contains too many records." }
+        val allowedTypes = setOf("apiary", "hive", "nfc_assignment", "inspection", "feeding", "treatment", "harvest", "event")
+        val seen = mutableSetOf<String>()
+        val counts = linkedMapOf<String, Int>()
+        for (recordIndex in 0 until records.length()) {
+            val row = records.optJSONObject(recordIndex)
+                ?: throw IllegalArgumentException("Backup record ${recordIndex + 1} is not valid JSON.")
+            val type = row.optString("type")
+            require(type in allowedTypes) { "The backup contains an unsupported record type." }
+            val id = row.optLong("id", -1L)
+            require(id > 0L) { "Backup record ${recordIndex + 1} has an invalid ID." }
+            require(seen.add("$type:$id")) { "The backup contains a duplicate $type record ($id)." }
+            val payload = row.optJSONObject("payload")
+                ?: throw IllegalArgumentException("Backup record ${recordIndex + 1} has no payload.")
+            require(payload.optLong("id", id) == id) { "Backup record ${recordIndex + 1} has mismatched IDs." }
+            if (type == "apiary") require(payload.optString("name").isNotBlank()) { "A backup apiary is missing its name." }
+            if (type == "hive") require(payload.optString("number").isNotBlank()) { "A backup hive is missing its number." }
+            counts[type] = (counts[type] ?: 0) + 1
+        }
+        return DataBackupPreview(root.optLong("createdAt", 0L), counts)
+    }
+
+    /**
+     * Merges a fully validated backup. Logical records already present locally are matched
+     * before ID collisions are remapped, so importing the same backup twice won't duplicate
+     * ordinary records. Newer local records win and no local-only row is deleted.
+     */
+    suspend fun restoreDataBackupJson(raw: String): DataBackupRestoreResult = withContext(Dispatchers.IO) {
+        previewDataBackup(raw)
+        val root = JSONObject(raw)
+        val records = root.getJSONArray("records")
+        val rows = (0 until records.length()).map { records.getJSONObject(it) }
+        val currentApiaries = db.apiaries().allForBackup()
+        val currentHives = db.hives().allForBackup()
+        val currentAssignments = db.nfcTagAssignments().allForBackup()
+        val currentInspections = db.inspections().allForBackup()
+        val currentFeedings = db.feedings().allForBackup()
+        val currentTreatments = db.treatments().allForBackup()
+        val currentHarvests = db.harvests().allForBackup()
+        val currentEvents = db.events().allForBackup()
+        val keyMap = mutableMapOf<String, Long>()
+        fun mapKey(type: String, id: Long) = "$type:$id"
+        fun remapId(type: String, sourceId: Long, preferred: Long): Long {
+            val mapKey = mapKey(type, sourceId)
+            return keyMap.getOrPut(mapKey) { preferred }
+        }
+        fun unusedId(used: Set<Long>): Long {
+            var candidate = IdGenerator.nextLong()
+            while (candidate in used || candidate <= 0L) candidate = IdGenerator.nextLong()
+            return candidate
+        }
+
+        // Apiary names are unique. Match by name first, then avoid a primary-key collision.
+        rows.filter { it.optString("type") == "apiary" }.forEach { row ->
+            val payload = row.getJSONObject("payload")
+            val sourceId = row.getLong("id")
+            val name = payload.optString("name").trim()
+            val sameName = currentApiaries.firstOrNull { it.name.equals(name, ignoreCase = true) }
+            val idOwner = currentApiaries.firstOrNull { it.id == sourceId }
+            val targetId = sameName?.id ?: if (idOwner == null || idOwner.name.equals(name, ignoreCase = true)) {
+                sourceId
+            } else unusedId(currentApiaries.map { it.id }.toSet())
+            remapId("apiary", sourceId, targetId)
+        }
+
+        // Match a hive by its apiary and number across phones; preserve IDs when they are safe.
+        rows.filter { it.optString("type") == "hive" }.forEach { row ->
+            val payload = row.getJSONObject("payload")
+            val sourceId = row.getLong("id")
+            val number = payload.optString("number").trim()
+            val apiaryName = payload.optString("apiary").trim()
+            val logical = currentHives.firstOrNull {
+                !it.deleted && it.number.equals(number, ignoreCase = true) &&
+                    it.apiaryName.equals(apiaryName, ignoreCase = true)
+            }
+            val idOwner = currentHives.firstOrNull { it.id == sourceId }
+            val targetId = logical?.id ?: if (idOwner == null ||
+                (idOwner.number.equals(number, ignoreCase = true) && idOwner.apiaryName.equals(apiaryName, ignoreCase = true))) {
+                sourceId
+            } else unusedId(currentHives.map { it.id }.toSet())
+            remapId("hive", sourceId, targetId)
+        }
+
+        // For history rows, locate logical duplicates before remapping colliding row IDs.
+        fun targetHive(sourceHiveId: Long): Long = keyMap[mapKey("hive", sourceHiveId)] ?: sourceHiveId
+        rows.forEach { row ->
+            val type = row.optString("type")
+            if (type !in setOf("nfc_assignment", "inspection", "feeding", "treatment", "harvest", "event")) return@forEach
+            val p = row.getJSONObject("payload")
+            val sourceId = row.getLong("id")
+            val mappedHiveId = targetHive(p.optLong("hive_id", -1L))
+            val logicalId = when (type) {
+                "nfc_assignment" -> currentAssignments.firstOrNull {
+                    it.tagUid.equals(p.optString("tag_uid"), ignoreCase = true) &&
+                        it.hiveId == mappedHiveId && it.assignedAt == p.optLong("assigned_at", row.optLong("updatedAt"))
+                }?.id
+                "inspection" -> currentInspections.firstOrNull {
+                    it.hiveId == mappedHiveId && it.createdAt == p.optLong("created_at")
+                }?.id
+                "feeding" -> currentFeedings.firstOrNull {
+                    it.hiveId == mappedHiveId && it.createdAt == p.optLong("created_at") &&
+                        it.feedType.equals(p.optString("feed_type"), ignoreCase = true)
+                }?.id
+                "treatment" -> currentTreatments.firstOrNull {
+                    it.hiveId == mappedHiveId && it.createdAt == p.optLong("created_at") &&
+                        it.treatmentType.equals(p.optString("treatment_type"), ignoreCase = true)
+                }?.id
+                "harvest" -> currentHarvests.firstOrNull {
+                    it.hiveId == mappedHiveId && it.createdAt == p.optLong("created_at")
+                }?.id
+                else -> currentEvents.firstOrNull {
+                    it.hiveId == mappedHiveId && it.createdAt == p.optLong("created_at") &&
+                        it.type.equals(p.optString("type"), ignoreCase = true) &&
+                        it.title.equals(p.optString("title"), ignoreCase = true)
+                }?.id
+            }
+            val idOwnerMatches = when (type) {
+                "nfc_assignment" -> currentAssignments.firstOrNull { it.id == sourceId }?.let {
+                    it.hiveId == mappedHiveId && it.tagUid.equals(p.optString("tag_uid"), ignoreCase = true)
+                } ?: true
+                "inspection" -> currentInspections.firstOrNull { it.id == sourceId }?.let { it.hiveId == mappedHiveId } ?: true
+                "feeding" -> currentFeedings.firstOrNull { it.id == sourceId }?.let { it.hiveId == mappedHiveId } ?: true
+                "treatment" -> currentTreatments.firstOrNull { it.id == sourceId }?.let { it.hiveId == mappedHiveId } ?: true
+                "harvest" -> currentHarvests.firstOrNull { it.id == sourceId }?.let { it.hiveId == mappedHiveId } ?: true
+                else -> currentEvents.firstOrNull { it.id == sourceId }?.let { it.hiveId == mappedHiveId } ?: true
+            }
+            val idOwner = when (type) {
+                "nfc_assignment" -> currentAssignments.any { it.id == sourceId }
+                "inspection" -> currentInspections.any { it.id == sourceId }
+                "feeding" -> currentFeedings.any { it.id == sourceId }
+                "treatment" -> currentTreatments.any { it.id == sourceId }
+                "harvest" -> currentHarvests.any { it.id == sourceId }
+                else -> currentEvents.any { it.id == sourceId }
+            }
+            val usedIds = when (type) {
+                "nfc_assignment" -> currentAssignments.map { it.id }.toSet()
+                "inspection" -> currentInspections.map { it.id }.toSet()
+                "feeding" -> currentFeedings.map { it.id }.toSet()
+                "treatment" -> currentTreatments.map { it.id }.toSet()
+                "harvest" -> currentHarvests.map { it.id }.toSet()
+                else -> currentEvents.map { it.id }.toSet()
+            }
+            val targetId = logicalId ?: if (!idOwner || idOwnerMatches) sourceId else unusedId(usedIds)
+            remapId(type, sourceId, targetId)
+        }
+
+        val orderedRows = rows.sortedWith(compareBy<JSONObject> { backupRestoreOrder(it.optString("type")) }.thenBy { it.optLong("id") })
+        var processed = 0
+        for (row in orderedRows) {
+            val type = row.getString("type")
+            val sourceId = row.getLong("id")
+            val targetId = keyMap[mapKey(type, sourceId)] ?: sourceId
+            val payload = JSONObject(row.getJSONObject("payload").toString())
+            payload.put("id", targetId)
+            if (payload.has("hive_id")) payload.put("hive_id", targetHive(payload.optLong("hive_id")))
+            if (type == "hive") {
+                val sourceApiary = payload.optLong("apiary_id", -1L)
+                if (sourceApiary > 0L) payload.put("apiary_id", keyMap[mapKey("apiary", sourceApiary)] ?: sourceApiary)
+                val originalHiveId = sourceId
+                val originalTagUid = payload.optString("tag_uid")
+                val hasActiveLedgerRecord = originalTagUid.isNotBlank() && rows.any { assignmentRow ->
+                    if (assignmentRow.optString("type") != "nfc_assignment") return@any false
+                    val assignment = assignmentRow.optJSONObject("payload") ?: return@any false
+                    assignment.optLong("hive_id", -1L) == originalHiveId &&
+                        assignment.optString("tag_uid").equals(originalTagUid, ignoreCase = true) &&
+                        (!assignment.has("unassigned_at") || assignment.isNull("unassigned_at"))
+                }
+                if (hasActiveLedgerRecord) payload.put("tag_uid", JSONObject.NULL)
+            }
+            if (type == "inspection") {
+                // Device-local image paths aren't portable; keep the current local file when restoring onto the same phone.
+                db.inspections().get(targetId)?.photoPath?.takeIf { it.isNotBlank() }?.let { payload.put("photo_path", it) }
+            }
+            val incomingUpdatedAt = payload.optLong("updated_at", row.optLong("updatedAt", root.optLong("createdAt")))
+            val localUpdatedAt = backupLocalTimestamp(type, targetId, currentApiaries, currentHives, currentAssignments,
+                currentInspections, currentFeedings, currentTreatments, currentHarvests, currentEvents)
+            if (localUpdatedAt == null || localUpdatedAt <= incomingUpdatedAt) {
+                applyCloudDocument(
+                    CloudDocumentRow(
+                        user_id = "local-backup-restore",
+                        entity_type = type,
+                        entity_id = targetId,
+                        payload = payload.toString(),
+                        updated_at = incomingUpdatedAt,
+                        deleted = false,
+                        device_id = "backup-restore"
+                    )
+                )
+            }
+            enqueueCurrentBackupRecord(type, targetId)
+            processed++
+        }
+        DataBackupRestoreResult(processed)
+    }
+
+    private suspend fun backupLocalTimestamp(
+        type: String,
+        id: Long,
+        apiaries: List<ApiaryEntity>,
+        hives: List<HiveEntity>,
+        assignments: List<NfcTagAssignmentEntity>,
+        inspections: List<InspectionEntity>,
+        feedings: List<FeedingEntity>,
+        treatments: List<TreatmentEntity>,
+        harvests: List<HarvestEntity>,
+        events: List<ActivityEventEntity>
+    ): Long? = when (type) {
+        "apiary" -> apiaries.firstOrNull { it.id == id }?.updatedAt
+        "hive" -> hives.firstOrNull { it.id == id }?.updatedAt
+        "nfc_assignment" -> assignments.firstOrNull { it.id == id }?.let { maxOf(it.assignedAt, it.unassignedAt ?: 0L) }
+        "inspection" -> inspections.firstOrNull { it.id == id }?.updatedAt
+        "feeding" -> feedings.firstOrNull { it.id == id }?.createdAt
+        "treatment" -> treatments.firstOrNull { it.id == id }?.createdAt
+        "harvest" -> harvests.firstOrNull { it.id == id }?.createdAt
+        "event" -> events.firstOrNull { it.id == id }?.createdAt
+        else -> null
+    }
+
+    private fun backupRestoreOrder(type: String): Int = when (type) {
+        "apiary" -> 0
+        "hive" -> 1
+        "nfc_assignment" -> 2
+        "inspection" -> 3
+        "feeding" -> 4
+        "treatment" -> 5
+        "harvest" -> 6
+        "event" -> 7
+        else -> 99
+    }
+
+    private suspend fun enqueueCurrentBackupRecord(type: String, id: Long) {
+        when (type) {
+            "apiary" -> db.apiaries().get(id)?.let { enqueue("apiary", id, "upsert", apiaryPayload(it)) }
+            "hive" -> db.hives().get(id)?.let { enqueue("hive", id, "upsert", hivePayload(it)) }
+            "nfc_assignment" -> db.nfcTagAssignments().get(id)?.let { enqueue("nfc_assignment", id, "upsert", nfcAssignmentPayload(it)) }
+            "inspection" -> db.inspections().get(id)?.let { enqueue("inspection", id, "upsert", inspectionPayload(it)) }
+            "feeding" -> db.feedings().get(id)?.let { enqueue("feeding", id, "upsert", feedingPayload(it)) }
+            "treatment" -> db.treatments().get(id)?.let { enqueue("treatment", id, "upsert", treatmentPayload(it)) }
+            "harvest" -> db.harvests().get(id)?.let { enqueue("harvest", id, "upsert", harvestPayload(it)) }
+            "event" -> db.events().get(id)?.let { enqueue("event", id, "upsert", eventPayload(it)) }
+        }
+    }
+
     private suspend fun applyAssignment(incoming: NfcTagAssignmentEntity) {
         db.withTransaction {
             val merge = NfcAssignmentResolver.merge(
@@ -575,6 +867,12 @@ class LocalHiveRepository(context: Context) {
     private fun toApiary(e: ApiaryEntity) = Apiary(e.id, e.name, e.notes, e.latitude, e.longitude, e.forageNotes, e.waterNotes)
     private fun toEvent(e: ActivityEventEntity) = ActivityEvent(e.id, e.hiveId, e.createdAt, e.type, e.title, e.detail)
 }
+
+data class DataBackupPreview(val createdAt: Long, val counts: Map<String, Int>) {
+    val totalRecords: Int get() = counts.values.sum()
+}
+
+data class DataBackupRestoreResult(val processedRecords: Int)
 
 private fun requireValidCoordinates(latitude: Double?, longitude: Double?, subject: String) {
     require((latitude == null) == (longitude == null)) {

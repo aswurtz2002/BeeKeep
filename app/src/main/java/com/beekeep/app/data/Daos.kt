@@ -8,6 +8,8 @@ import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface ApiaryDao {
+    @Query("SELECT * FROM apiaries ORDER BY name COLLATE NOCASE")
+    suspend fun allForBackup(): List<ApiaryEntity>
     @Query("SELECT * FROM apiaries WHERE deleted = 0 ORDER BY name COLLATE NOCASE")
     fun observeAll(): Flow<List<ApiaryEntity>>
     @Query("SELECT * FROM apiaries WHERE id = :id")
@@ -22,6 +24,8 @@ interface ApiaryDao {
 
 @Dao
 interface HiveDao {
+    @Query("SELECT * FROM hives ORDER BY id")
+    suspend fun allForBackup(): List<HiveEntity>
     @Query("SELECT * FROM hives WHERE deleted = 0 AND status = 'ACTIVE' ORDER BY CAST(number AS INTEGER), number")
     fun observeAll(): Flow<List<HiveEntity>>
     @Query("SELECT * FROM hives WHERE deleted = 0 AND status != 'ACTIVE' ORDER BY dead_at DESC")
@@ -46,6 +50,8 @@ interface HiveDao {
 
 @Dao
 interface NfcTagAssignmentDao {
+    @Query("SELECT * FROM nfc_tag_assignments ORDER BY id")
+    suspend fun allForBackup(): List<NfcTagAssignmentEntity>
     @Query("SELECT * FROM nfc_tag_assignments WHERE tag_uid = :uid COLLATE NOCASE AND unassigned_at IS NULL ORDER BY assigned_at DESC, id DESC LIMIT 1")
     suspend fun activeByTag(uid: String): NfcTagAssignmentEntity?
     @Query("SELECT * FROM nfc_tag_assignments WHERE hive_id = :hiveId AND unassigned_at IS NULL ORDER BY assigned_at DESC, id DESC LIMIT 1")
@@ -64,6 +70,8 @@ interface NfcTagAssignmentDao {
 
 @Dao
 interface InspectionDao {
+    @Query("SELECT * FROM inspections ORDER BY id")
+    suspend fun allForBackup(): List<InspectionEntity>
     @Query("SELECT * FROM inspections WHERE hive_id = :hiveId ORDER BY created_at DESC")
     fun observeForHive(hiveId: Long): Flow<List<InspectionEntity>>
     @Query("SELECT * FROM inspections ORDER BY created_at DESC")
@@ -82,6 +90,8 @@ interface InspectionDao {
 
 @Dao
 interface FeedingDao {
+    @Query("SELECT * FROM feeding_entries ORDER BY id")
+    suspend fun allForBackup(): List<FeedingEntity>
     @Query("SELECT * FROM feeding_entries WHERE hive_id = :hiveId ORDER BY created_at DESC")
     fun observeForHive(hiveId: Long): Flow<List<FeedingEntity>>
     @Query("SELECT * FROM feeding_entries ORDER BY created_at DESC")
@@ -98,6 +108,8 @@ interface FeedingDao {
 
 @Dao
 interface TreatmentDao {
+    @Query("SELECT * FROM treatment_entries ORDER BY id")
+    suspend fun allForBackup(): List<TreatmentEntity>
     @Query("SELECT * FROM treatment_entries WHERE hive_id = :hiveId ORDER BY created_at DESC")
     fun observeForHive(hiveId: Long): Flow<List<TreatmentEntity>>
     @Query("SELECT * FROM treatment_entries ORDER BY created_at DESC")
@@ -114,6 +126,8 @@ interface TreatmentDao {
 
 @Dao
 interface HarvestDao {
+    @Query("SELECT * FROM harvest_entries ORDER BY id")
+    suspend fun allForBackup(): List<HarvestEntity>
     @Query("SELECT * FROM harvest_entries WHERE hive_id = :hiveId ORDER BY created_at DESC")
     fun observeForHive(hiveId: Long): Flow<List<HarvestEntity>>
     @Query("SELECT * FROM harvest_entries ORDER BY created_at DESC")
@@ -130,6 +144,8 @@ interface HarvestDao {
 
 @Dao
 interface EventDao {
+    @Query("SELECT * FROM activity_events ORDER BY id")
+    suspend fun allForBackup(): List<ActivityEventEntity>
     @Query("SELECT * FROM activity_events WHERE hive_id = :hiveId ORDER BY created_at DESC")
     fun observeForHive(hiveId: Long): Flow<List<ActivityEventEntity>>
     @Query("SELECT * FROM activity_events WHERE hive_id = :hiveId")

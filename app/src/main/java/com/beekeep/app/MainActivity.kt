@@ -294,19 +294,33 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
         val prefs = getSharedPreferences(PREFS, MODE_PRIVATE)
         setContent {
             var darkMode by rememberSaveable { mutableStateOf(prefs.getBoolean("dark_mode", false)) }
+            var largeFieldText by rememberSaveable { mutableStateOf(prefs.getBoolean("large_field_text", false)) }
             BeeKeepTheme(darkMode = darkMode) {
-                androidx.compose.runtime.SideEffect {
-                    val controller = WindowCompat.getInsetsController(window, window.decorView)
-                    controller.isAppearanceLightStatusBars = !darkMode
-                    controller.isAppearanceLightNavigationBars = false
-                }
-                val incomingNfc by pendingNfcResult.collectAsStateWithLifecycle()
-                BeeKeepApp(
-                    vm, nfc, this, locationController, cloud, darkMode, incomingNfc,
-                    onSpeakHiveNumber = ::speakHiveNumber
-                ) { value ->
-                    darkMode = value
-                    prefs.edit { putBoolean("dark_mode", value) }
+                val baseDensity = androidx.compose.ui.platform.LocalDensity.current
+                androidx.compose.runtime.CompositionLocalProvider(
+                    androidx.compose.ui.platform.LocalDensity provides androidx.compose.ui.unit.Density(baseDensity.density,
+                        fontScale = if (largeFieldText) (baseDensity.fontScale * 1.12f).coerceAtMost(1.35f) else baseDensity.fontScale
+                    )
+                ) {
+                    androidx.compose.runtime.SideEffect {
+                        val controller = WindowCompat.getInsetsController(window, window.decorView)
+                        controller.isAppearanceLightStatusBars = !darkMode
+                        controller.isAppearanceLightNavigationBars = false
+                    }
+                    val incomingNfc by pendingNfcResult.collectAsStateWithLifecycle()
+                    BeeKeepApp(
+                        vm, nfc, this, locationController, cloud, darkMode, incomingNfc,
+                        onSpeakHiveNumber = ::speakHiveNumber,
+                        largeFieldText = largeFieldText,
+                        onLargeFieldTextChange = { value ->
+                            largeFieldText = value
+                            prefs.edit { putBoolean("large_field_text", value) }
+                        },
+                        onDarkModeChange = { value ->
+                            darkMode = value
+                            prefs.edit { putBoolean("dark_mode", value) }
+                        }
+                    )
                 }
             }
         }
@@ -397,6 +411,7 @@ enum class Screen {
     MAP,
     SCAN,
     MORE,
+    SETTINGS,
     TAG_MANAGER,
     COLONY_HISTORY
 }
@@ -419,6 +434,8 @@ fun BeeKeepApp(
     darkMode: Boolean,
     incomingNfc: NfcResult.Read?,
     onSpeakHiveNumber: (String) -> Unit,
+    largeFieldText: Boolean,
+    onLargeFieldTextChange: (Boolean) -> Unit,
     onDarkModeChange: (Boolean) -> Unit
 ) {
     val context = LocalContext.current
@@ -564,7 +581,7 @@ fun BeeKeepApp(
         if (resolvedHive != null) {
             checkHiveLocation(resolvedHive)
             // Announce every accepted tag read, even when this hive is already open.
-            onSpeakHiveNumber(resolvedHive.number)
+            if (autoVoicePrefs.getBoolean("speak_hive_number_on_scan", true)) onSpeakHiveNumber(resolvedHive.number)
             // Field NFC scans go directly to Inspect so the beekeeper can keep gloves on.
             val alreadyOpen = selectedHiveOpen && selected?.id == resolvedHive.id
             val alreadyInspectingThisHive = inspecting && selected?.id == resolvedHive.id
@@ -686,7 +703,13 @@ fun BeeKeepApp(
     }
 
     if (addHive) {
-        AddHiveScreen(apiaries, selectedApiaryName, { addHive = false; pendingTagUid = null }) { number, apiary, queen, strength ->
+        AddHiveScreen(
+            apiaries = apiaries,
+            initialApiary = selectedApiaryName,
+            defaultQueenStatus = autoVoicePrefs.getString("default_queen_status", "Laying")?.takeIf { it in setOf("Laying", "Queenless", "Virgin") } ?: "Laying",
+            defaultStrength = autoVoicePrefs.getInt("default_starting_strength", 3).coerceIn(1, 5),
+            onBack = { addHive = false; pendingTagUid = null }
+        ) { number, apiary, queen, strength ->
             vm.createHive(number, apiary, queen, strength, tagUid = pendingTagUid) { success, error ->
                 scope.launch { snackbarHostState.showSnackbar(error ?: "Hive ${number.trim()} created") }
                 if (success) { addHive = false; pendingTagUid = null }
@@ -738,6 +761,10 @@ fun BeeKeepApp(
         InspectionScreen(
             activity, locationController, hiveForInspection,
             priorInspections = inspections,
+            defaultMiteSampleSize = autoVoicePrefs.getInt("default_mite_sample_size", 300).coerceIn(1, 10000),
+            defaultStartingStrength = autoVoicePrefs.getInt("default_starting_strength", 3).coerceIn(1, 5),
+            rememberLastInspectionValues = autoVoicePrefs.getBoolean("remember_last_inspection_values", true),
+            voiceReadyBeepEnabled = autoVoicePrefs.getBoolean("voice_ready_beep", true),
             autoStartVoice = pendingAutoStartVoiceHiveId == hiveForInspection.id,
             autoVoiceEnabled = autoVoiceEnabled,
             onAutoVoiceEnabledChange = { enabled ->
@@ -898,7 +925,7 @@ fun BeeKeepApp(
                                 val resolvedHive = assignedHive ?: payloadHive
                                 if (resolvedHive != null) {
                                     checkHiveLocation(resolvedHive)
-                                    onSpeakHiveNumber(resolvedHive.number)
+                                    if (autoVoicePrefs.getBoolean("speak_hive_number_on_scan", true)) onSpeakHiveNumber(resolvedHive.number)
                                     vm.openHive(resolvedHive.id)
                                     selectedHiveOpen = true
                                     screen = Screen.HOME
@@ -984,7 +1011,7 @@ fun BeeKeepApp(
                                         val resolvedHive = assignedHive ?: payloadHive
                                         if (resolvedHive != null) {
                                             checkHiveLocation(resolvedHive)
-                                            onSpeakHiveNumber(resolvedHive.number)
+                                            if (autoVoicePrefs.getBoolean("speak_hive_number_on_scan", true)) onSpeakHiveNumber(resolvedHive.number)
                                             vm.openHive(resolvedHive.id)
                                             selectedHiveOpen = true
                                             screen = Screen.HOME
@@ -1024,18 +1051,35 @@ fun BeeKeepApp(
                 locationController = locationController,
                 onBack = { screen = mapOrigin; mapFocusApiaryId = null }
             )
-            Screen.MORE -> MoreScreen(padding, darkMode, onDarkModeChange, onTagManager = { tagManagerReturnScreen = Screen.MORE; screen = Screen.TAG_MANAGER }, onColonyHistory = { screen = Screen.COLONY_HISTORY }, deadCount = deadHives.size, activity, cloud)
+            Screen.MORE -> MoreScreen(padding, darkMode, onDarkModeChange, onSettings = { screen = Screen.SETTINGS }, onTagManager = { tagManagerReturnScreen = Screen.MORE; screen = Screen.TAG_MANAGER }, onColonyHistory = { screen = Screen.COLONY_HISTORY }, deadCount = deadHives.size, activity, cloud)
+            Screen.SETTINGS -> SettingsScreen(
+                padding = padding,
+                activity = activity,
+                preferences = autoVoicePrefs,
+                darkMode = darkMode,
+                onDarkModeChange = onDarkModeChange,
+                autoVoiceEnabled = autoVoiceEnabled,
+                onAutoVoiceEnabledChange = { enabled ->
+                    autoVoiceEnabled = enabled
+                    autoVoicePrefs.edit { putBoolean("auto_voice_on_nfc", enabled) }
+                },
+                largeFieldText = largeFieldText,
+                onLargeFieldTextChange = onLargeFieldTextChange,
+                cloud = cloud,
+                onBack = { screen = Screen.MORE }
+            )
             Screen.TAG_MANAGER -> TagManagementScreen(
                 padding = padding,
                 hives = hives,
                 nfc = nfc,
                 activity = activity,
                 pendingUid = pendingTagUid,
+                confirmBeforeTagRemoval = autoVoicePrefs.getBoolean("confirm_tag_removal", true),
                 onPendingUidConsumed = { pendingTagUid = null },
                 onBack = { screen = tagManagerReturnScreen },
                 onOpenHive = { vm.openHive(it); selectedHiveOpen = true; screen = Screen.HOME },
                 onScanOpenHive = { hiveId ->
-                    onSpeakHiveNumber(hives.firstOrNull { it.id == hiveId }?.number.orEmpty())
+                    if (autoVoicePrefs.getBoolean("speak_hive_number_on_scan", true)) onSpeakHiveNumber(hives.firstOrNull { it.id == hiveId }?.number.orEmpty())
                     vm.openHive(hiveId)
                     selectedHiveOpen = true
                     screen = Screen.HOME
@@ -2977,7 +3021,7 @@ private fun InspectionSnapshot(i: Inspection) {
 }
 
 @Composable
-private fun InspectionHoneycombBackground(modifier: Modifier = Modifier) {
+fun InspectionHoneycombBackground(modifier: Modifier = Modifier) {
     val patternColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.06f)
     Canvas(modifier) {
         val radius = 18.dp.toPx()
@@ -3011,6 +3055,10 @@ private fun InspectionScreen(
     locationController: LocationController,
     hive: Hive,
     priorInspections: List<Inspection>,
+    defaultMiteSampleSize: Int,
+    defaultStartingStrength: Int,
+    rememberLastInspectionValues: Boolean,
+    voiceReadyBeepEnabled: Boolean,
     autoStartVoice: Boolean,
     autoVoiceEnabled: Boolean,
     onAutoVoiceEnabledChange: (Boolean) -> Unit,
@@ -3060,50 +3108,56 @@ private fun InspectionScreen(
     }
 
     var strength by rememberSaveable(hive.id, formStateKey, lastInspection?.id) {
-        mutableIntStateOf(ColonyStrength.gradeFromStored(formDraft?.strength ?: lastInspection?.strength ?: hive.strength))
+        mutableIntStateOf(
+            ColonyStrength.gradeFromStored(
+                formDraft?.strength
+                    ?: (if (rememberLastInspectionValues) lastInspection?.strength else null)
+                    ?: ColonyStrength.storedFromGrade(defaultStartingStrength)
+            )
+        )
     }
     var queen by rememberSaveable(hive.id, formStateKey, lastInspection?.id) {
-        mutableStateOf(formDraft?.queenStatus ?: lastInspection?.queenStatus ?: hive.queenStatus)
+        mutableStateOf(formDraft?.queenStatus ?: (if (rememberLastInspectionValues) lastInspection?.queenStatus else null) ?: hive.queenStatus)
     }
     var mites by rememberSaveable(hive.id, formStateKey, lastInspection?.id) {
-        mutableIntStateOf(formDraft?.miteCount ?: lastInspection?.miteCount ?: 0)
+        mutableIntStateOf(formDraft?.miteCount ?: (if (rememberLastInspectionValues) lastInspection?.miteCount else null) ?: 0)
     }
     var sample by rememberSaveable(hive.id, formStateKey, lastInspection?.id) {
-        mutableIntStateOf(formDraft?.sampleSize ?: lastInspection?.sampleSize ?: 300)
+        mutableIntStateOf(formDraft?.sampleSize ?: (if (rememberLastInspectionValues) lastInspection?.sampleSize else null) ?: defaultMiteSampleSize.coerceIn(1, 10000))
     }
     var notes by rememberSaveable(hive.id) { mutableStateOf(startingNotes) }
     var noteSaveStatus by rememberSaveable(hive.id) {
         mutableStateOf(if (startingNotes.isBlank()) "" else if (hasSavedNoteDraft) "Auto-saved note restored" else "Saved notes loaded")
     }
     var eggs by rememberSaveable(hive.id, formStateKey, lastInspection?.id) {
-        mutableIntStateOf(formDraft?.eggs ?: lastInspection?.eggs ?: 0)
+        mutableIntStateOf(formDraft?.eggs ?: (if (rememberLastInspectionValues) lastInspection?.eggs else null) ?: 0)
     }
     var openBrood by rememberSaveable(hive.id, formStateKey, lastInspection?.id) {
-        mutableIntStateOf(formDraft?.openBrood ?: lastInspection?.openBrood ?: 0)
+        mutableIntStateOf(formDraft?.openBrood ?: (if (rememberLastInspectionValues) lastInspection?.openBrood else null) ?: 0)
     }
     var cappedBrood by rememberSaveable(hive.id, formStateKey, lastInspection?.id) {
-        mutableIntStateOf(formDraft?.cappedBrood ?: lastInspection?.cappedBrood ?: 0)
+        mutableIntStateOf(formDraft?.cappedBrood ?: (if (rememberLastInspectionValues) lastInspection?.cappedBrood else null) ?: 0)
     }
     var honey by rememberSaveable(hive.id, formStateKey, lastInspection?.id) {
-        mutableIntStateOf(formDraft?.honeyStores ?: lastInspection?.honeyStores ?: 0)
+        mutableIntStateOf(formDraft?.honeyStores ?: (if (rememberLastInspectionValues) lastInspection?.honeyStores else null) ?: 0)
     }
     var pollen by rememberSaveable(hive.id, formStateKey, lastInspection?.id) {
-        mutableIntStateOf(formDraft?.pollen ?: lastInspection?.pollen ?: 0)
+        mutableIntStateOf(formDraft?.pollen ?: (if (rememberLastInspectionValues) lastInspection?.pollen else null) ?: 0)
     }
     var emptyComb by rememberSaveable(hive.id, formStateKey, lastInspection?.id) {
-        mutableIntStateOf(formDraft?.emptyDrawnComb ?: lastInspection?.emptyDrawnComb ?: 0)
+        mutableIntStateOf(formDraft?.emptyDrawnComb ?: (if (rememberLastInspectionValues) lastInspection?.emptyDrawnComb else null) ?: 0)
     }
     var emergency by rememberSaveable(hive.id, formStateKey, lastInspection?.id) {
-        mutableIntStateOf(formDraft?.emergencyCells ?: lastInspection?.emergencyCells ?: 0)
+        mutableIntStateOf(formDraft?.emergencyCells ?: (if (rememberLastInspectionValues) lastInspection?.emergencyCells else null) ?: 0)
     }
     var supercedure by rememberSaveable(hive.id, formStateKey, lastInspection?.id) {
-        mutableIntStateOf(formDraft?.supercedureCells ?: lastInspection?.supercedureCells ?: 0)
+        mutableIntStateOf(formDraft?.supercedureCells ?: (if (rememberLastInspectionValues) lastInspection?.supercedureCells else null) ?: 0)
     }
     var swarm by rememberSaveable(hive.id, formStateKey, lastInspection?.id) {
-        mutableIntStateOf(formDraft?.swarmCells ?: lastInspection?.swarmCells ?: 0)
+        mutableIntStateOf(formDraft?.swarmCells ?: (if (rememberLastInspectionValues) lastInspection?.swarmCells else null) ?: 0)
     }
     var diseasesCsv by rememberSaveable(hive.id, formStateKey, lastInspection?.id) {
-        mutableStateOf(formDraft?.diseaseFlags ?: lastInspection?.diseaseFlags.orEmpty())
+        mutableStateOf(formDraft?.diseaseFlags ?: (if (rememberLastInspectionValues) lastInspection?.diseaseFlags else null).orEmpty())
     }
     var lat by rememberSaveable(hive.id, formStateKey) { mutableStateOf(formDraft?.latitude) }
     var lon by rememberSaveable(hive.id, formStateKey) { mutableStateOf(formDraft?.longitude) }
@@ -3246,7 +3300,9 @@ private fun InspectionScreen(
         if (recognizer != null) {
             recognizer.setRecognitionListener(object : RecognitionListener {
                 override fun onReadyForSpeech(params: Bundle?) {
-                    runCatching { voiceStartTone?.startTone(ToneGenerator.TONE_PROP_BEEP, 140) }
+                    if (voiceReadyBeepEnabled) {
+                        runCatching { voiceStartTone?.startTone(ToneGenerator.TONE_PROP_BEEP, 140) }
+                    }
                     voiceStatus = "Listening • speak your notes"
                 }
                 override fun onBeginningOfSpeech() {
@@ -3945,6 +4001,8 @@ private fun NumberField(
 private fun AddHiveScreen(
     apiaries: List<Apiary>,
     initialApiary: String?,
+    defaultQueenStatus: String = "Laying",
+    defaultStrength: Int = 3,
     onBack: () -> Unit,
     onCreate: (String, String, String, Int) -> Unit
 ) {
@@ -3958,8 +4016,8 @@ private fun AddHiveScreen(
         )
     }
     var apiaryMenuExpanded by rememberSaveable { mutableStateOf(false) }
-    var queen by rememberSaveable { mutableStateOf("Laying") }
-    var strength by rememberSaveable { mutableIntStateOf(3) }
+    var queen by rememberSaveable { mutableStateOf(defaultQueenStatus) }
+    var strength by rememberSaveable { mutableIntStateOf(defaultStrength.coerceIn(1, 5)) }
 
     Column(
         Modifier.fillMaxSize().safeDrawingPadding().verticalScroll(rememberScrollState()).padding(18.dp),
@@ -4261,6 +4319,7 @@ private fun TagManagementScreen(
     nfc: NfcController,
     activity: ComponentActivity,
     pendingUid: String?,
+    confirmBeforeTagRemoval: Boolean = true,
     onPendingUidConsumed: () -> Unit,
     onBack: () -> Unit,
     onOpenHive: (Long) -> Unit,
@@ -4273,6 +4332,7 @@ private fun TagManagementScreen(
     var status by rememberSaveable { mutableStateOf("") }
     var assigningHiveId by rememberSaveable { mutableStateOf<Long?>(null) }
     var reassignPrompt by rememberSaveable { mutableStateOf<Pair<Long, String>?>(null) }
+    var pendingRemoveHiveId by rememberSaveable { mutableStateOf<Long?>(null) }
     var launchWriteHiveId by rememberSaveable { mutableStateOf<Long?>(null) }
     var launchWriteUid by rememberSaveable { mutableStateOf<String?>(null) }
     var launchWriteOverwrite by rememberSaveable { mutableStateOf(false) }
@@ -4392,6 +4452,29 @@ private fun TagManagementScreen(
                     launchWriteUid = null
                     launchWriteStatusHandler = null
                 }) { Text("NOT NOW") }
+            }
+        )
+    }
+
+    pendingRemoveHiveId?.let { hiveId ->
+        val hiveNumber = hives.firstOrNull { it.id == hiveId }?.number ?: hiveId.toString()
+        AlertDialog(
+            onDismissRequest = { pendingRemoveHiveId = null },
+            title = { Text("Remove NFC tag?", fontWeight = FontWeight.ExtraBold) },
+            text = {
+                Text("Release the tag assignment from Hive $hiveNumber? The physical tag is not erased; you can assign it to another hive later.")
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    pendingRemoveHiveId = null
+                    status = "Removing NFC tag from Hive $hiveNumber…"
+                    onClearTag(hiveId) { success, error ->
+                        status = if (success) "Tag removed from Hive $hiveNumber • available for reuse" else (error ?: "Could not remove the tag from Hive $hiveNumber.")
+                    }
+                }) { Text("REMOVE TAG", fontWeight = FontWeight.Bold) }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingRemoveHiveId = null }) { Text("CANCEL") }
             }
         )
     }
@@ -4532,9 +4615,13 @@ private fun TagManagementScreen(
                             }, modifier = Modifier.weight(1f)) { Text("VERIFY") }
                             TextButton(
                                 onClick = {
-                                    verifyText = "Removing NFC tag…"
-                                    onClearTag(hive.id) { success, error ->
-                                        verifyText = if (success) "Tag removed • available for reuse" else (error ?: "Could not remove tag.")
+                                    if (confirmBeforeTagRemoval) {
+                                        pendingRemoveHiveId = hive.id
+                                    } else {
+                                        verifyText = "Removing NFC tag…"
+                                        onClearTag(hive.id) { success, error ->
+                                            verifyText = if (success) "Tag removed • available for reuse" else (error ?: "Could not remove tag.")
+                                        }
                                     }
                                 },
                                 modifier = Modifier.weight(1f)
@@ -4554,6 +4641,7 @@ private fun MoreScreen(
     padding: PaddingValues,
     darkMode: Boolean,
     onDarkModeChange: (Boolean) -> Unit,
+    onSettings: () -> Unit,
     onTagManager: () -> Unit,
     onColonyHistory: () -> Unit,
     deadCount: Int,
@@ -4577,6 +4665,16 @@ private fun MoreScreen(
                     Text("High-contrast controls for bright outdoor conditions", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
                 }
                 Switch(checked = darkMode, onCheckedChange = onDarkModeChange)
+            }
+        }
+
+        Card(onClick = onSettings, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(24.dp)) {
+            Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    Text("Settings", fontWeight = FontWeight.ExtraBold, style = MaterialTheme.typography.titleMedium)
+                    Text("Appearance, voice, inspection defaults, backup and permissions", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Icon(Icons.Rounded.Settings, "Open settings", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(30.dp))
             }
         }
 
