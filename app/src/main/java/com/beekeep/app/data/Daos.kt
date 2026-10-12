@@ -53,7 +53,30 @@ interface NfcTagAssignmentDao {
     @Query("SELECT * FROM nfc_tag_assignments ORDER BY id")
     suspend fun allForBackup(): List<NfcTagAssignmentEntity>
     @Query("SELECT * FROM nfc_tag_assignments WHERE tag_uid = :uid COLLATE NOCASE AND unassigned_at IS NULL ORDER BY assigned_at DESC, id DESC LIMIT 1")
-    suspend fun activeByTag(uid: String): NfcTagAssignmentEntity?
+    suspend fun activeByTag(uid: String?): NfcTagAssignmentEntity?
+
+    @Query("""
+        SELECT EXISTS(
+            SELECT 1 FROM nfc_tag_assignments
+            WHERE tag_uid = :uid COLLATE NOCASE AND unassigned_at IS NOT NULL
+        ) AND NOT EXISTS(
+            SELECT 1 FROM nfc_tag_assignments
+            WHERE tag_uid = :uid COLLATE NOCASE AND unassigned_at IS NULL
+        )
+    """)
+    suspend fun isUnassigned(uid: String): Boolean
+
+    @Query("""
+        SELECT DISTINCT released.tag_uid
+        FROM nfc_tag_assignments AS released
+        WHERE released.unassigned_at IS NOT NULL
+          AND NOT EXISTS(
+              SELECT 1 FROM nfc_tag_assignments AS active
+              WHERE active.tag_uid = released.tag_uid COLLATE NOCASE
+                AND active.unassigned_at IS NULL
+          )
+    """)
+    suspend fun allUnassignedTagUids(): List<String>
     @Query("SELECT * FROM nfc_tag_assignments WHERE hive_id = :hiveId AND unassigned_at IS NULL ORDER BY assigned_at DESC, id DESC LIMIT 1")
     suspend fun activeForHive(hiveId: Long): NfcTagAssignmentEntity?
     @Query("SELECT * FROM nfc_tag_assignments WHERE hive_id = :hiveId AND unassigned_at IS NULL ORDER BY assigned_at DESC, id DESC")

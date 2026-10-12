@@ -74,6 +74,10 @@ class BeeKeepViewModel(
 
     suspend fun findHiveByTag(tag: String): Hive? = repo.findHiveByNfc(tag)
 
+    suspend fun isNfcTagUnassigned(uid: String): Boolean = repo.isNfcTagUnassigned(uid)
+
+    suspend fun getUnassignedNfcTagUids(): Set<String> = repo.getUnassignedNfcTagUids()
+
     fun clearHive() { detailJob?.cancel(); _selected.value = null; _photos.value = emptyList() }
 
     fun createHive(number: String, apiary: String, queen: String, strength: Int, tagUid: String? = null, onResult: (Boolean, String?) -> Unit = { _, _ -> }) {

@@ -55,6 +55,7 @@ class NfcController {
     @Volatile private var passiveReaderActive = false
     @Volatile private var passiveReadListener: ((NfcResult.Read) -> Unit)? = null
     @Volatile private var knownHiveIdByTagUid: Map<String, Long> = emptyMap()
+    @Volatile private var knownUnassignedHiveTagUids: Set<String> = emptySet()
     @Volatile private var knownHiveTagsReady: Boolean = false
     private var lastHandledUid: String? = null
     private var lastHandledAt = 0L
@@ -101,10 +102,18 @@ class NfcController {
     fun isScanning(): Boolean = active.get()
 
     /** Update the local UID-to-hive index before automatic tag writes are allowed. */
-    fun updateKnownHiveTags(hiveIdByTagUid: Map<String, Long>, ready: Boolean) {
+    fun updateKnownHiveTags(
+        hiveIdByTagUid: Map<String, Long>,
+        ready: Boolean,
+        unassignedTagUids: Set<String> = emptySet()
+    ) {
         knownHiveIdByTagUid = hiveIdByTagUid.entries
             .mapNotNull { (uid, hiveId) -> uid.trim().uppercase(java.util.Locale.ROOT).takeIf { it.isNotBlank() }?.let { it to hiveId } }
             .toMap()
+        knownUnassignedHiveTagUids = unassignedTagUids
+            .map { it.trim().uppercase(java.util.Locale.ROOT) }
+            .filter { it.isNotBlank() && it !in knownHiveIdByTagUid }
+            .toSet()
         knownHiveTagsReady = ready
         if (ready) attachedActivity?.takeIf { activityResumed }?.let(::enablePassiveIfNeeded)
     }
@@ -489,6 +498,7 @@ class NfcController {
         val uidKey = result.uid.trim().uppercase(java.util.Locale.ROOT)
         val assignedHiveId = knownHiveIdByTagUid[uidKey]
         val payloadHiveId = BeeKeepNfcPayload.hiveId(result.text)
+        val tagWasReleased = assignedHiveId == null && uidKey in knownUnassignedHiveTagUids
 
         // A UID/payload conflict must never change the hive data. If needed, rewrite
         // the same stored payload only to add BeeKeep's Android launch record.
@@ -504,15 +514,20 @@ class NfcController {
             }
         }
 
-        val targetPayload = when {
-            assignedHiveId != null -> BeeKeepNfcPayload.forHive(assignedHiveId)
-            payloadHiveId != null -> result.text!!.trim() // preserve a valid hive payload, even if this device has not synced that hive yet
-            else -> BeeKeepNfcPayload.UNASSIGNED_PAYLOAD
-        }
+        val targetPayload = NfcTagResolution.targetPayload(
+            assignedHiveId = assignedHiveId,
+            payloadHiveId = payloadHiveId,
+            payloadText = result.text,
+            tagWasReleased = tagWasReleased
+        )
 
         if (result.info.hasBeeKeepLaunchRecord && result.text?.trim() == targetPayload) return result
 
-        return when (val written = write(tag, targetPayload, allowOverwriteOtherHive = false)) {
+        return when (val written = write(
+            tag,
+            targetPayload,
+            allowOverwriteOtherHive = NfcTagResolution.mayOverwriteStaleHivePayload(assignedHiveId, tagWasReleased)
+        )) {
             is NfcResult.Written -> NfcResult.Read(written.info, targetPayload)
             is NfcResult.Error -> result.copy(launchPreparationError = written.message)
             is NfcResult.Read -> result

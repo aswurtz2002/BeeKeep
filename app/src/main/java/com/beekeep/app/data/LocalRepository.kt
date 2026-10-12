@@ -42,6 +42,17 @@ class LocalHiveRepository(context: Context) {
         db.nfcTagAssignments().activeByTag(uid)?.let { db.hives().get(it.hiveId) }?.let(::toHive)
             ?: db.hives().byTag(uid)?.let(::toHive)
     }
+
+    suspend fun isNfcTagUnassigned(uid: String): Boolean = withContext(Dispatchers.IO) {
+        uid.trim().takeIf { it.isNotBlank() }?.let { db.nfcTagAssignments().isUnassigned(it) } ?: false
+    }
+
+    suspend fun getUnassignedNfcTagUids(): Set<String> = withContext(Dispatchers.IO) {
+        db.nfcTagAssignments().allUnassignedTagUids()
+            .map { it.trim().uppercase(java.util.Locale.ROOT) }
+            .filter { it.isNotBlank() }
+            .toSet()
+    }
     suspend fun findHiveByNumberAndApiary(number: String, apiary: String): Hive? = withContext(Dispatchers.IO) {
         db.hives().byNumberAndApiary(number.trim(), apiary.trim()).let { it?.let(::toHive) }
     }
@@ -274,6 +285,9 @@ class LocalHiveRepository(context: Context) {
                 ?: throw IllegalArgumentException("Hive not found.")
             val activeAssignments = db.nfcTagAssignments().activeAssignmentsForHive(hiveId)
             val cachedTag = hive.tagUid?.trim()?.takeIf { it.isNotBlank() }
+            val cachedTagHadActiveLedgerAssignment = cachedTag?.let {
+                db.nfcTagAssignments().activeByTag(it) != null
+            } == true
 
             // Older app builds could save the tag only in hives.tag_uid without
             // creating a row in nfc_tag_assignments. Treat that cached UID as an
@@ -287,6 +301,21 @@ class LocalHiveRepository(context: Context) {
                 val closed = assignment.copy(unassignedAt = now)
                 db.nfcTagAssignments().upsert(closed)
                 enqueue("nfc_assignment", closed.id, "upsert", nfcAssignmentPayload(closed))
+            }
+
+            // A legacy hive may have a cached UID but no ledger row. Create a closed
+            // assignment for it so the stale BEEKEEP:HIVE payload can be recognized and
+            // cleared on its next scan instead of reopening the former hive.
+            if (cachedTag != null && !cachedTagHadActiveLedgerAssignment) {
+                val legacyTombstone = NfcTagAssignmentEntity(
+                    id = IdGenerator.nextLong(),
+                    tagUid = cachedTag.uppercase(java.util.Locale.ROOT),
+                    hiveId = hiveId,
+                    assignedAt = hive.updatedAt.takeIf { it > 0L } ?: now,
+                    unassignedAt = now
+                )
+                db.nfcTagAssignments().upsert(legacyTombstone)
+                enqueue("nfc_assignment", legacyTombstone.id, "upsert", nfcAssignmentPayload(legacyTombstone))
             }
 
             // Clear both the assignment ledger and the cached UID on the hive.
