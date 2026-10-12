@@ -403,14 +403,17 @@ class NfcController {
         }
     }
 
+    @Suppress("UNUSED_PARAMETER")
     private fun write(tag: Tag, text: String, allowOverwriteOtherHive: Boolean): NfcResult {
         val id = uid(tag)
-        if (text.isBlank()) return NfcResult.Error("There is no hive payload to write.")
-        val payload = text.trim().toByteArray(StandardCharsets.UTF_8)
-        val mimeRecord = NdefRecord.createMime(BeeKeepNfcPayload.MIME_TYPE, payload)
-        // The Android Application Record asks Android to launch BeeKeep for this tag.
+        val markerRecord = NdefRecord.createMime(
+            BeeKeepNfcPayload.MIME_TYPE,
+            BeeKeepNfcPayload.TAG_PAYLOAD.toByteArray(StandardCharsets.UTF_8)
+        )
+        // Keep a generic MIME record first so Android can dispatch the scanned UID to BeeKeep.
+        // The Application Record launches BeeKeep when Android dispatches the physical tag.
         val appRecord = NdefRecord.createApplicationRecord("com.beekeep.app")
-        val message = NdefMessage(arrayOf(mimeRecord, appRecord))
+        val message = NdefMessage(arrayOf(markerRecord, appRecord))
 
         try {
             val ndef = Ndef.get(tag)
@@ -418,27 +421,14 @@ class NfcController {
                 try {
                     ndef.connect()
                     if (!ndef.isWritable) return NfcResult.Error("This NFC tag is read-only.")
-                    if (message.toByteArray().size > ndef.maxSize) return NfcResult.Error("The hive tag is too small for BeeKeep data.")
-                    val existing = ndef.ndefMessage?.records
-                        ?.asSequence()
-                        ?.mapNotNull(::parseRecord)
-                        ?.firstOrNull()
-                    val existingHiveId = BeeKeepNfcPayload.hiveId(existing)
-                    val requestedHiveId = BeeKeepNfcPayload.hiveId(text)
-                    if (!allowOverwriteOtherHive && existingHiveId != null && requestedHiveId != null && existingHiveId != requestedHiveId) {
-                        return NfcResult.Error("This tag is already assigned to another hive. Choose REPLACE to overwrite it.")
+                    if (message.toByteArray().size > ndef.maxSize) {
+                        return NfcResult.Error("This NFC tag is too small for BeeKeep's app-launch marker.")
                     }
                     ndef.writeNdefMessage(message)
-                    val verifiedMessage = ndef.ndefMessage
-                    val confirmed = verifiedMessage?.records
-                        ?.asSequence()
-                        ?.mapNotNull(::parseRecord)
-                        ?.firstOrNull()
-                    val hasLaunchRecord = verifiedMessage?.records?.any(::isBeeKeepAppRecord) == true
-                    if (confirmed != text || !hasLaunchRecord) {
-                        return NfcResult.Error("The tag reported a write, but BeeKeep could not verify both its payload and app-launch record. Try again.")
+                    if (!isGenericBeeKeepLaunchMessage(ndef.ndefMessage)) {
+                        return NfcResult.Error("The tag was written, but BeeKeep could not verify its generic marker and app-launch record. Try again.")
                     }
-                    return NfcResult.Written(tagInfoAfterWrite(tag, id, text, ndef))
+                    return NfcResult.Written(tagInfoAfterWrite(tag, id, ndef))
                 } finally {
                     runCatching { ndef.close() }
                 }
@@ -449,27 +439,28 @@ class NfcController {
             try {
                 formattable.connect()
                 formattable.format(message)
-                val info = NfcTagInfo(
-                    uid = id,
-                    technologies = tag.techList.map { it.substringAfterLast('.') }.sorted(),
-                    ndefSupported = true,
-                    formatted = true,
-                    writable = true,
-                    maxSizeBytes = null,
-                    ndefType = null,
-                    storedPayload = text,
-                    hasBeeKeepLaunchRecord = true
-                )
-                val verify = Ndef.get(tag)?.let { verification ->
+                val verified = Ndef.get(tag)?.let { verification ->
                     runCatching {
                         verification.connect()
-                        val verifiedMessage = verification.ndefMessage
-                        val confirmedPayload = verifiedMessage?.records?.asSequence()?.mapNotNull(::parseRecord)?.firstOrNull()
-                        verifiedMessage != null && confirmedPayload == text && verifiedMessage.records.any(::isBeeKeepAppRecord)
+                        isGenericBeeKeepLaunchMessage(verification.ndefMessage)
                     }.getOrDefault(false).also { runCatching { verification.close() } }
                 } ?: false
-                if (!verify) return NfcResult.Error("The tag was formatted, but BeeKeep could not verify both its payload and app-launch record. Try again.")
-                return NfcResult.Written(info)
+                if (!verified) {
+                    return NfcResult.Error("The tag was formatted, but BeeKeep could not verify its generic marker and app-launch record. Try again.")
+                }
+                return NfcResult.Written(
+                    NfcTagInfo(
+                        uid = id,
+                        technologies = tag.techList.map { it.substringAfterLast('.') }.sorted(),
+                        ndefSupported = true,
+                        formatted = true,
+                        writable = true,
+                        maxSizeBytes = null,
+                        ndefType = null,
+                        storedPayload = BeeKeepNfcPayload.TAG_PAYLOAD,
+                        hasBeeKeepLaunchRecord = true
+                    )
+                )
             } finally {
                 runCatching { formattable.close() }
             }
@@ -478,7 +469,14 @@ class NfcController {
         }
     }
 
-    private fun tagInfoAfterWrite(tag: Tag, id: String, text: String, ndef: Ndef): NfcTagInfo = NfcTagInfo(
+    private fun isGenericBeeKeepLaunchMessage(message: NdefMessage?): Boolean {
+        val records = message?.records ?: return false
+        return records.size == 2 &&
+            parseRecord(records[0])?.equals(BeeKeepNfcPayload.TAG_PAYLOAD, ignoreCase = true) == true &&
+            isBeeKeepAppRecord(records[1])
+    }
+
+    private fun tagInfoAfterWrite(tag: Tag, id: String, ndef: Ndef): NfcTagInfo = NfcTagInfo(
         uid = id,
         technologies = tag.techList.map { it.substringAfterLast('.') }.sorted(),
         ndefSupported = true,
@@ -486,7 +484,7 @@ class NfcController {
         writable = ndef.isWritable,
         maxSizeBytes = ndef.maxSize,
         ndefType = ndef.type,
-        storedPayload = text,
+        storedPayload = BeeKeepNfcPayload.TAG_PAYLOAD,
         hasBeeKeepLaunchRecord = true
     )
 
@@ -497,38 +495,20 @@ class NfcController {
 
         val uidKey = result.uid.trim().uppercase(java.util.Locale.ROOT)
         val assignedHiveId = knownHiveIdByTagUid[uidKey]
-        val payloadHiveId = BeeKeepNfcPayload.hiveId(result.text)
-        val tagWasReleased = assignedHiveId == null && uidKey in knownUnassignedHiveTagUids
+        val beeKeepData = BeeKeepNfcPayload.isBeeKeepPayload(result.text)
 
-        // A UID/payload conflict must never change the hive data. If needed, rewrite
-        // the same stored payload only to add BeeKeep's Android launch record.
-        if (assignedHiveId != null && payloadHiveId != null && assignedHiveId != payloadHiveId) {
-            val warning = "This tag's stored hive payload conflicts with its saved assignment. The payload was preserved."
-            if (result.info.hasBeeKeepLaunchRecord) return result.copy(launchPreparationError = warning)
-            val originalPayload = result.text?.trim()
-                ?: return result.copy(launchPreparationError = warning)
-            return when (val launchWrite = write(tag, originalPayload, allowOverwriteOtherHive = false)) {
-                is NfcResult.Written -> NfcResult.Read(launchWrite.info, originalPayload, warning)
-                is NfcResult.Error -> result.copy(launchPreparationError = "$warning BeeKeep launch data could not be added: ${launchWrite.message}")
-                is NfcResult.Read -> result.copy(launchPreparationError = warning)
-            }
+        // Current tags already contain the generic marker. No hive data is read or written.
+        if (result.info.hasBeeKeepLaunchRecord && BeeKeepNfcPayload.isTagPayload(result.text)) return result
+
+        // Only rewrite blank tags, tags with BeeKeep's own legacy records, or currently
+        // assigned UIDs. Do not silently erase a third-party app's unrelated NDEF data.
+        val mayPrepare = assignedHiveId != null || beeKeepData || !result.info.formatted
+        if (!mayPrepare) {
+            return result.copy(launchPreparationError = "This tag contains other NFC data. Use an explicit ASSIGN or WRITE TAG action to replace it.")
         }
 
-        val targetPayload = NfcTagResolution.targetPayload(
-            assignedHiveId = assignedHiveId,
-            payloadHiveId = payloadHiveId,
-            payloadText = result.text,
-            tagWasReleased = tagWasReleased
-        )
-
-        if (result.info.hasBeeKeepLaunchRecord && result.text?.trim() == targetPayload) return result
-
-        return when (val written = write(
-            tag,
-            targetPayload,
-            allowOverwriteOtherHive = NfcTagResolution.mayOverwriteStaleHivePayload(assignedHiveId, tagWasReleased)
-        )) {
-            is NfcResult.Written -> NfcResult.Read(written.info, targetPayload)
+        return when (val written = write(tag, BeeKeepNfcPayload.TAG_PAYLOAD, allowOverwriteOtherHive = true)) {
+            is NfcResult.Written -> NfcResult.Read(written.info, BeeKeepNfcPayload.TAG_PAYLOAD)
             is NfcResult.Error -> result.copy(launchPreparationError = written.message)
             is NfcResult.Read -> result
         }
@@ -541,7 +521,10 @@ class NfcController {
 
     private fun parseRecord(record: NdefRecord): String? {
         if (record.tnf == NdefRecord.TNF_MIME_MEDIA &&
-            record.type.toString(StandardCharsets.US_ASCII).equals(BeeKeepNfcPayload.MIME_TYPE, ignoreCase = true)) {
+            (
+                record.type.toString(StandardCharsets.US_ASCII).equals(BeeKeepNfcPayload.MIME_TYPE, ignoreCase = true) ||
+                    record.type.toString(StandardCharsets.US_ASCII).equals(BeeKeepNfcPayload.LEGACY_MIME_TYPE, ignoreCase = true)
+            )) {
             return record.payload.toString(StandardCharsets.UTF_8)
         }
         if (record.tnf == NdefRecord.TNF_WELL_KNOWN && record.type.contentEquals(NdefRecord.RTD_TEXT)) {
