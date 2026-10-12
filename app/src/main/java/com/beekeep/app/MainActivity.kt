@@ -1165,6 +1165,7 @@ private fun MetricCard(title: String, value: String, modifier: Modifier = Modifi
 }
 
 @Composable
+@Composable
 private fun HoneycombScanButton(scanning: Boolean, onClick: () -> Unit) {
     val pulse = rememberInfiniteTransition(label = "homeScanPulse")
     val ringScale by pulse.animateFloat(
@@ -1178,8 +1179,8 @@ private fun HoneycombScanButton(scanning: Boolean, onClick: () -> Unit) {
         label = "homeScanRingAlpha"
     )
 
-    // Use the supplied PNG as the actual button artwork, replacing the old drawn honeycomb.
-    // A faint duplicate expands behind it while NFC scanning is active.
+    // The supplied transparent PNG is the whole control: no square card, drawn hexagon,
+    // or text overlay. The soft image pulse only appears while NFC scanning is active.
     Box(
         modifier = Modifier
             .width(220.dp)
@@ -1203,24 +1204,9 @@ private fun HoneycombScanButton(scanning: Boolean, onClick: () -> Unit) {
 
         Image(
             painter = painterResource(R.drawable.scan_honeycomb),
-            contentDescription = null,
+            contentDescription = if (scanning) "Scanning for a hive tag" else "Scan for a hive tag",
             modifier = Modifier.fillMaxSize()
         )
-
-        // Keep a clear action label in the open centre cell of the supplied artwork.
-        Box(
-            modifier = Modifier.fillMaxSize().padding(bottom = 28.dp),
-            contentAlignment = Alignment.Center
-        ) {
-            Text(
-                if (scanning) "SCANNING…" else "SCAN",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.ExtraBold,
-                fontSize = if (scanning) 11.sp else 16.sp,
-                letterSpacing = if (scanning) 0.sp else 1.2.sp,
-                color = Color(0xFF3A1C06)
-            )
-        }
     }
 }
 
