@@ -121,6 +121,9 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.painter.BitmapPainter
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.Color
@@ -1177,9 +1180,25 @@ private fun HoneycombScanButton(scanning: Boolean, onClick: () -> Unit) {
         infiniteRepeatable(tween(1100)),
         label = "homeScanRingAlpha"
     )
+    val sourcePainter = painterResource(R.drawable.scan_honeycomb)
+    val croppedPainter = remember(sourcePainter) {
+        val bitmap = sourcePainter as? BitmapPainter
+        if (bitmap == null) {
+            sourcePainter
+        } else {
+            // Crop the image source to the honeycomb bounds, excluding the detached oval shadow.
+            BitmapPainter(
+                image = bitmap.image,
+                srcOffset = IntOffset(5, 0),
+                srcSize = IntSize(
+                    width = minOf(234, bitmap.image.width - 5),
+                    height = minOf(228, bitmap.image.height)
+                )
+            )
+        }
+    }
 
-    // The supplied transparent PNG is the whole control: no square card, drawn hexagon,
-    // or text overlay. The soft image pulse only appears while NFC scanning is active.
+    // Transparent PNG is the entire control; crop excludes the separate bottom oval shadow.
     Box(
         modifier = Modifier
             .width(220.dp)
@@ -1194,7 +1213,7 @@ private fun HoneycombScanButton(scanning: Boolean, onClick: () -> Unit) {
     ) {
         if (scanning) {
             Image(
-                painter = painterResource(R.drawable.scan_honeycomb),
+                painter = croppedPainter,
                 contentDescription = null,
                 modifier = Modifier
                     .fillMaxSize()
@@ -1207,7 +1226,7 @@ private fun HoneycombScanButton(scanning: Boolean, onClick: () -> Unit) {
         }
 
         Image(
-            painter = painterResource(R.drawable.scan_honeycomb),
+            painter = croppedPainter,
             contentDescription = if (scanning) "Scanning for a hive tag" else "Scan for a hive tag",
             modifier = Modifier.fillMaxSize()
         )
