@@ -283,10 +283,8 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
             lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) {
                 runCatching {
                     val assignedHive = repository.findHiveByNfc(result.uid)
-                    val payloadHiveId = BeeKeepNfcPayload.hiveId(result.text)
-                    val payloadHive = payloadHiveId?.let { repository.getHive(it) }
-                    if (assignedHive != null || payloadHive != null || payloadHiveId != null ||
-                        BeeKeepNfcPayload.isUnassignedPayload(result.text) || result.launchPreparationError != null) {
+                    if (assignedHive != null || result.info.hasBeeKeepLaunchRecord ||
+                        BeeKeepNfcPayload.isBeeKeepPayload(result.text) || result.launchPreparationError != null) {
                         pendingNfcResult.value = result
                     }
                 }
@@ -585,13 +583,9 @@ fun BeeKeepApp(
             return@LaunchedEffect
         }
 
-        val payloadHiveId = BeeKeepNfcPayload.hiveId(result.text)
         val assignedHive = vm.findHiveByTag(result.uid)
-        val payloadHive = payloadHiveId?.let { id -> hives.firstOrNull { it.id == id } }
-        val tagWasReleased = vm.isNfcTagUnassigned(result.uid)
-        val resolvedHiveId = NfcTagResolution.resolveHiveId(assignedHive?.id, payloadHiveId, tagWasReleased)
+        val resolvedHiveId = NfcTagResolution.resolveHiveId(assignedHive?.id)
         val resolvedHive = assignedHive?.takeIf { it.id == resolvedHiveId }
-            ?: payloadHive?.takeIf { it.id == resolvedHiveId }
         if (resolvedHive != null) {
             checkHiveLocation(resolvedHive)
             // Announce every accepted tag read, even when this hive is already open.
@@ -887,11 +881,15 @@ fun BeeKeepApp(
                     when (result) {
                         is NfcResult.Read -> {
                             val matchesUid = result.uid.equals(hiveForDetail.tagUid, ignoreCase = true)
-                            val payloadHive = BeeKeepNfcPayload.hiveId(result.text)
+                            val currentMarker = BeeKeepNfcPayload.isTagPayload(result.text) && result.info.hasBeeKeepLaunchRecord
                             scope.launch {
                                 snackbarHostState.showSnackbar(
-                                    if (matchesUid && (payloadHive == null || payloadHive == hiveForDetail.id)) "NFC tag verified"
-                                    else "Tag read • ${result.uid} • does not match this hive"
+                                    when {
+                                        !matchesUid -> "Tag read • ${result.uid} • does not match this hive"
+                                        currentMarker -> "NFC tag verified • no hive data stored on tag"
+                                        BeeKeepNfcPayload.hiveId(result.text) != null -> "UID matches, but this tag still has old hive data. Scan it in BeeKeep to upgrade it."
+                                        else -> "UID matches, but the BeeKeep app-launch marker is missing. Use WRITE TAG to repair it."
+                                    }
                                 )
                             }
                         }
@@ -934,13 +932,9 @@ fun BeeKeepApp(
                                 scope.launch { snackbarHostState.showSnackbar(message) }
                             }
                             scope.launch {
-                                val payloadId = BeeKeepNfcPayload.hiveId(result.text)
                                 val assignedHive = vm.findHiveByTag(result.uid)
-                                val payloadHive = payloadId?.let { id -> hives.firstOrNull { it.id == id } }
-                                val tagWasReleased = vm.isNfcTagUnassigned(result.uid)
-                                val resolvedHiveId = NfcTagResolution.resolveHiveId(assignedHive?.id, payloadId, tagWasReleased)
+                                val resolvedHiveId = NfcTagResolution.resolveHiveId(assignedHive?.id)
                                 val resolvedHive = assignedHive?.takeIf { it.id == resolvedHiveId }
-                                    ?: payloadHive?.takeIf { it.id == resolvedHiveId }
                                 if (resolvedHive != null) {
                                     checkHiveLocation(resolvedHive)
                                     if (autoVoicePrefs.getBoolean("speak_hive_number_on_scan", true)) onSpeakHiveNumber(resolvedHive.number)
@@ -1023,13 +1017,9 @@ fun BeeKeepApp(
                                         scope.launch { snackbarHostState.showSnackbar(message) }
                                     }
                                     scope.launch {
-                                        val payloadId = BeeKeepNfcPayload.hiveId(result.text)
                                         val assignedHive = vm.findHiveByTag(result.uid)
-                                        val payloadHive = payloadId?.let { id -> hives.firstOrNull { it.id == id } }
-                                        val tagWasReleased = vm.isNfcTagUnassigned(result.uid)
-                                        val resolvedHiveId = NfcTagResolution.resolveHiveId(assignedHive?.id, payloadId, tagWasReleased)
+                                        val resolvedHiveId = NfcTagResolution.resolveHiveId(assignedHive?.id)
                                         val resolvedHive = assignedHive?.takeIf { it.id == resolvedHiveId }
-                                            ?: payloadHive?.takeIf { it.id == resolvedHiveId }
                                         if (resolvedHive != null) {
                                             checkHiveLocation(resolvedHive)
                                             if (autoVoicePrefs.getBoolean("speak_hive_number_on_scan", true)) onSpeakHiveNumber(resolvedHive.number)
@@ -2803,7 +2793,7 @@ private fun HiveDetailScreen(
                             onClick = {
                                 nfc.startWrite(
                                     activity = activity,
-                                    text = BeeKeepNfcPayload.forHive(hive.id),
+                                    text = BeeKeepNfcPayload.TAG_PAYLOAD,
                                     allowOverwriteOtherHive = hive.tagUid != null,
                                     onResult = { result ->
                                         when (result) {
@@ -4316,7 +4306,7 @@ private fun TagManagementScreen(
     ) {
         nfc.startAssignAndWrite(
             activity = activity,
-            text = BeeKeepNfcPayload.forHive(hiveId),
+            text = BeeKeepNfcPayload.TAG_PAYLOAD,
             expectedUid = expectedUid,
             isAssignedElsewhere = { uid ->
                 hives.any { it.id != hiveId && it.tagUid.equals(uid, ignoreCase = true) }
@@ -4341,9 +4331,6 @@ private fun TagManagementScreen(
                             owner != null && owner.id != hiveId -> {
                                 reassignPrompt = hiveId to result.uid
                                 updateStatus("Tag ${result.uid} is assigned to Hive ${owner.number}. Confirm REASSIGN before changing it.")
-                            }
-                            payloadHiveId != null && payloadHiveId != hiveId -> {
-                                updateStatus("Tag payload belongs to another hive. No data was changed.")
                             }
                             else -> updateStatus("Could not write this tag automatically. Use WRITE TAG from the hive details to retry.")
                         }
@@ -4385,7 +4372,7 @@ private fun TagManagementScreen(
                     if (hiveId != null && uid != null) {
                         nfc.startWrite(
                             activity = activity,
-                            text = BeeKeepNfcPayload.forHive(hiveId),
+                            text = BeeKeepNfcPayload.TAG_PAYLOAD,
                             allowOverwriteOtherHive = allowOverwrite,
                             expectedUid = uid,
                             onResult = { result ->
@@ -4467,7 +4454,7 @@ private fun TagManagementScreen(
         Card(shape = RoundedCornerShape(24.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("How BeeKeep tags work", fontWeight = FontWeight.Bold)
-                Text("Choose a hive and tap ASSIGN/REPLACE. During that scan BeeKeep links the tag and writes its launch payload in the same step, including an Android app-launch record so Android can open BeeKeep directly. Hive history stays in BeeKeep, not on the tag.", color = MaterialTheme.colorScheme.onPrimaryContainer)
+                Text("Choose a hive and tap ASSIGN/REPLACE. BeeKeep links the tag's UID in its database and writes a generic marker plus Android app-launch record. No hive ID or hive history is stored on the physical tag.", color = MaterialTheme.colorScheme.onPrimaryContainer)
                 Text("Tags are reusable: when a colony dies its tag is released and can be assigned to another hive. Scanning always opens the colony the tag is currently assigned to.", color = MaterialTheme.colorScheme.onPrimaryContainer, style = MaterialTheme.typography.bodySmall)
                 Text("Use durable, weather-resistant NFC tags on the hive lid or another protected surface.", color = MaterialTheme.colorScheme.onPrimaryContainer, style = MaterialTheme.typography.bodySmall)
             }
@@ -4492,18 +4479,10 @@ private fun TagManagementScreen(
                             result.launchPreparationError?.let { status = it }
                             val hiveByUid = hives.firstOrNull { it.tagUid.equals(result.uid, ignoreCase = true) }
                             val tagWasReleased = onIsTagUnassigned(result.uid)
-                            val payloadHiveId = BeeKeepNfcPayload.hiveId(result.text)
-                            val resolvedHiveId = NfcTagResolution.resolveHiveId(
-                                hiveByUid?.id,
-                                payloadHiveId,
-                                tagWasReleased
-                            )
-                            val hiveByPayload = payloadHiveId?.let { id -> hives.firstOrNull { it.id == id } }
+                            val resolvedHiveId = NfcTagResolution.resolveHiveId(hiveByUid?.id)
                             val resolvedHive = hiveByUid?.takeIf { it.id == resolvedHiveId }
-                                ?: hiveByPayload?.takeIf { it.id == resolvedHiveId }
                             status = if (resolvedHive != null) {
-                                if (hiveByUid != null) "Hive ${resolvedHive.number} • tag verified"
-                                else "Hive ${resolvedHive.number} • tag payload recognized"
+                                "Hive ${resolvedHive.number} • tag verified by UID"
                             } else {
                                 "Unassigned tag • ${result.uid}"
                             }
@@ -4563,12 +4542,13 @@ private fun TagManagementScreen(
                                 nfc.startRead(activity) { result ->
                                     when (result) {
                                         is NfcResult.Read -> {
-                                            val payloadId = BeeKeepNfcPayload.hiveId(result.text)
+                                            val matchesUid = result.uid.equals(hive.tagUid, true)
+                                            val currentMarker = BeeKeepNfcPayload.isTagPayload(result.text) && result.info.hasBeeKeepLaunchRecord
                                             verifyText = when {
-                                                !result.uid.equals(hive.tagUid, true) -> "⚠ Tag ${result.uid} does not match Hive ${hive.number}"
-                                                payloadId == hive.id -> "✓ Tag matches Hive ${hive.number} and has BeeKeep launch data"
-                                                payloadId == null -> "UID matches, but this tag has no BeeKeep launch data. Use WRITE TAG from hive details."
-                                                else -> "⚠ Tag payload belongs to another hive"
+                                                !matchesUid -> "⚠ Tag ${result.uid} does not match Hive ${hive.number}"
+                                                currentMarker -> "✓ Tag matches Hive ${hive.number}; no hive data is stored on the tag"
+                                                BeeKeepNfcPayload.hiveId(result.text) != null -> "UID matches, but this tag still has old hive data. Scan it in BeeKeep to upgrade it."
+                                                else -> "UID matches, but the BeeKeep app-launch marker is missing. Use WRITE TAG from hive details."
                                             }
                                         }
                                         is NfcResult.Error -> verifyText = result.message
