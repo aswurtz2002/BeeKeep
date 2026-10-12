@@ -283,10 +283,8 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
             lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) {
                 runCatching {
                     val assignedHive = repository.findHiveByNfc(result.uid)
-                    val payloadHiveId = BeeKeepNfcPayload.hiveId(result.text)
-                    val payloadHive = payloadHiveId?.let { repository.getHive(it) }
-                    if (assignedHive != null || payloadHive != null || payloadHiveId != null ||
-                        BeeKeepNfcPayload.isUnassignedPayload(result.text) || result.launchPreparationError != null) {
+                    if (assignedHive != null || result.info.hasBeeKeepLaunchRecord ||
+                        BeeKeepNfcPayload.isBeeKeepPayload(result.text) || result.launchPreparationError != null) {
                         pendingNfcResult.value = result
                     }
                 }
@@ -585,13 +583,9 @@ fun BeeKeepApp(
             return@LaunchedEffect
         }
 
-        val payloadHiveId = BeeKeepNfcPayload.hiveId(result.text)
         val assignedHive = vm.findHiveByTag(result.uid)
-        val payloadHive = payloadHiveId?.let { id -> hives.firstOrNull { it.id == id } }
-        val tagWasReleased = vm.isNfcTagUnassigned(result.uid)
-        val resolvedHiveId = NfcTagResolution.resolveHiveId(assignedHive?.id, payloadHiveId, tagWasReleased)
+        val resolvedHiveId = NfcTagResolution.resolveHiveId(assignedHive?.id)
         val resolvedHive = assignedHive?.takeIf { it.id == resolvedHiveId }
-            ?: payloadHive?.takeIf { it.id == resolvedHiveId }
         if (resolvedHive != null) {
             checkHiveLocation(resolvedHive)
             // Announce every accepted tag read, even when this hive is already open.
@@ -938,13 +932,9 @@ fun BeeKeepApp(
                                 scope.launch { snackbarHostState.showSnackbar(message) }
                             }
                             scope.launch {
-                                val payloadId = BeeKeepNfcPayload.hiveId(result.text)
                                 val assignedHive = vm.findHiveByTag(result.uid)
-                                val payloadHive = payloadId?.let { id -> hives.firstOrNull { it.id == id } }
-                                val tagWasReleased = vm.isNfcTagUnassigned(result.uid)
-                                val resolvedHiveId = NfcTagResolution.resolveHiveId(assignedHive?.id, payloadId, tagWasReleased)
+                                val resolvedHiveId = NfcTagResolution.resolveHiveId(assignedHive?.id)
                                 val resolvedHive = assignedHive?.takeIf { it.id == resolvedHiveId }
-                                    ?: payloadHive?.takeIf { it.id == resolvedHiveId }
                                 if (resolvedHive != null) {
                                     checkHiveLocation(resolvedHive)
                                     if (autoVoicePrefs.getBoolean("speak_hive_number_on_scan", true)) onSpeakHiveNumber(resolvedHive.number)
@@ -1027,13 +1017,9 @@ fun BeeKeepApp(
                                         scope.launch { snackbarHostState.showSnackbar(message) }
                                     }
                                     scope.launch {
-                                        val payloadId = BeeKeepNfcPayload.hiveId(result.text)
                                         val assignedHive = vm.findHiveByTag(result.uid)
-                                        val payloadHive = payloadId?.let { id -> hives.firstOrNull { it.id == id } }
-                                        val tagWasReleased = vm.isNfcTagUnassigned(result.uid)
-                                        val resolvedHiveId = NfcTagResolution.resolveHiveId(assignedHive?.id, payloadId, tagWasReleased)
+                                        val resolvedHiveId = NfcTagResolution.resolveHiveId(assignedHive?.id)
                                         val resolvedHive = assignedHive?.takeIf { it.id == resolvedHiveId }
-                                            ?: payloadHive?.takeIf { it.id == resolvedHiveId }
                                         if (resolvedHive != null) {
                                             checkHiveLocation(resolvedHive)
                                             if (autoVoicePrefs.getBoolean("speak_hive_number_on_scan", true)) onSpeakHiveNumber(resolvedHive.number)
@@ -4346,9 +4332,6 @@ private fun TagManagementScreen(
                                 reassignPrompt = hiveId to result.uid
                                 updateStatus("Tag ${result.uid} is assigned to Hive ${owner.number}. Confirm REASSIGN before changing it.")
                             }
-                            payloadHiveId != null && payloadHiveId != hiveId -> {
-                                updateStatus("Tag payload belongs to another hive. No data was changed.")
-                            }
                             else -> updateStatus("Could not write this tag automatically. Use WRITE TAG from the hive details to retry.")
                         }
                     }
@@ -4496,18 +4479,10 @@ private fun TagManagementScreen(
                             result.launchPreparationError?.let { status = it }
                             val hiveByUid = hives.firstOrNull { it.tagUid.equals(result.uid, ignoreCase = true) }
                             val tagWasReleased = onIsTagUnassigned(result.uid)
-                            val payloadHiveId = BeeKeepNfcPayload.hiveId(result.text)
-                            val resolvedHiveId = NfcTagResolution.resolveHiveId(
-                                hiveByUid?.id,
-                                payloadHiveId,
-                                tagWasReleased
-                            )
-                            val hiveByPayload = payloadHiveId?.let { id -> hives.firstOrNull { it.id == id } }
+                            val resolvedHiveId = NfcTagResolution.resolveHiveId(hiveByUid?.id)
                             val resolvedHive = hiveByUid?.takeIf { it.id == resolvedHiveId }
-                                ?: hiveByPayload?.takeIf { it.id == resolvedHiveId }
                             status = if (resolvedHive != null) {
-                                if (hiveByUid != null) "Hive ${resolvedHive.number} • tag verified"
-                                else "Hive ${resolvedHive.number} • tag payload recognized"
+                                "Hive ${resolvedHive.number} • tag verified by UID"
                             } else {
                                 "Unassigned tag • ${result.uid}"
                             }
