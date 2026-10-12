@@ -1221,40 +1221,111 @@ private fun HoneycombPattern(modifier: Modifier = Modifier) {
         val halfHeight = radius * 0.8660254f
         val columnStep = radius * 1.7320508f
         val rowStep = radius * 1.5f
-        val lineColor = Color(0xFFB45309).copy(alpha = 0.34f)
-        val lineWidth = 1.25.dp.toPx()
+        val shadowDrop = 2.1.dp.toPx()
+        val edgeWidth = 1.1.dp.toPx()
+
+        fun hexCell(cx: Float, cy: Float): Path = Path().apply {
+            moveTo(cx + radius, cy)
+            lineTo(cx + radius / 2f, cy + halfHeight)
+            lineTo(cx - radius / 2f, cy + halfHeight)
+            lineTo(cx - radius, cy)
+            lineTo(cx - radius / 2f, cy - halfHeight)
+            lineTo(cx + radius / 2f, cy - halfHeight)
+            close()
+        }
 
         var row = -2
         while (row * rowStep < size.height + radius) {
             val cy = radius + row * rowStep
-            val offset = if (row % 2 == 0) 0f else columnStep / 2f
+            val rowOffset = if (row % 2 == 0) 0f else columnStep / 2f
             var col = -2
-            while (col * columnStep + offset < size.width + columnStep) {
-                val cx = col * columnStep + offset
-                val cell = Path().apply {
-                    moveTo(cx + radius, cy)
-                    lineTo(cx + radius / 2f, cy + halfHeight)
-                    lineTo(cx - radius / 2f, cy + halfHeight)
-                    lineTo(cx - radius, cy)
-                    lineTo(cx - radius / 2f, cy - halfHeight)
-                    lineTo(cx + radius / 2f, cy - halfHeight)
-                    close()
-                }
-                drawPath(cell, lineColor, style = Stroke(width = lineWidth))
+            while (col * columnStep + rowOffset < size.width + columnStep) {
+                val cx = col * columnStep + rowOffset
+                val shadow = hexCell(cx, cy + shadowDrop)
+                val cell = hexCell(cx, cy)
+
+                // A short, dark drop-shadow under each cell makes the honeycomb feel raised.
+                drawPath(shadow, Color(0xFF78350F).copy(alpha = 0.28f))
+                drawPath(
+                    cell,
+                    Brush.linearGradient(
+                        colors = listOf(
+                            Color(0xFFFFF6D7).copy(alpha = 0.52f),
+                            Color(0xFFFFD36A).copy(alpha = 0.18f),
+                            Color(0xFF9A4906).copy(alpha = 0.32f)
+                        ),
+                        start = Offset(cx - radius, cy - halfHeight),
+                        end = Offset(cx + radius, cy + halfHeight)
+                    )
+                )
+                drawPath(
+                    cell,
+                    Color(0xFF914609).copy(alpha = 0.42f),
+                    style = Stroke(width = edgeWidth)
+                )
+
+                // Bright upper bevel and darker lower bevel give every cell a 3D edge.
+                drawLine(
+                    Color(0xFFFFF8DC).copy(alpha = 0.75f),
+                    Offset(cx - radius / 2f, cy - halfHeight),
+                    Offset(cx + radius / 2f, cy - halfHeight),
+                    strokeWidth = 1.35.dp.toPx()
+                )
+                drawLine(
+                    Color(0xFFFFF0C2).copy(alpha = 0.45f),
+                    Offset(cx - radius, cy),
+                    Offset(cx - radius / 2f, cy - halfHeight),
+                    strokeWidth = 1.15.dp.toPx()
+                )
+                drawLine(
+                    Color(0xFF793704).copy(alpha = 0.42f),
+                    Offset(cx - radius / 2f, cy + halfHeight),
+                    Offset(cx + radius / 2f, cy + halfHeight),
+                    strokeWidth = 1.55.dp.toPx()
+                )
+                drawLine(
+                    Color(0xFF793704).copy(alpha = 0.30f),
+                    Offset(cx + radius / 2f, cy + halfHeight),
+                    Offset(cx + radius, cy),
+                    strokeWidth = 1.15.dp.toPx()
+                )
                 col++
             }
             row++
         }
+
+        // A polished rim: warm light catches the upper edge while the lower edge stays shaded.
+        val inset = 3.dp.toPx()
         val edge = Path().apply {
-            moveTo(size.width * 0.25f, 1f)
-            lineTo(size.width * 0.75f, 1f)
-            lineTo(size.width - 1f, size.height / 2f)
-            lineTo(size.width * 0.75f, size.height - 1f)
-            lineTo(size.width * 0.25f, size.height - 1f)
-            lineTo(1f, size.height / 2f)
+            moveTo(size.width * 0.25f, inset)
+            lineTo(size.width * 0.75f, inset)
+            lineTo(size.width - inset, size.height / 2f)
+            lineTo(size.width * 0.75f, size.height - inset)
+            lineTo(size.width * 0.25f, size.height - inset)
+            lineTo(inset, size.height / 2f)
             close()
         }
-        drawPath(edge, BeeKeepAccent.copy(alpha = 0.82f), style = Stroke(width = 1.5.dp.toPx()))
+        drawPath(edge, Color(0xFFFFF2C6).copy(alpha = 0.68f), style = Stroke(width = 1.8.dp.toPx()))
+        drawLine(
+            Color(0xFF873D05).copy(alpha = 0.72f),
+            Offset(size.width * 0.25f, size.height - inset),
+            Offset(size.width * 0.75f, size.height - inset),
+            strokeWidth = 2.dp.toPx()
+        )
+
+        // Soft gloss fades over the upper half of the honeycomb face.
+        drawRect(
+            brush = Brush.verticalGradient(
+                colors = listOf(
+                    Color.White.copy(alpha = 0.24f),
+                    Color.White.copy(alpha = 0.06f),
+                    Color.Transparent
+                ),
+                startY = 0f,
+                endY = size.height * 0.58f
+            ),
+            size = Size(size.width, size.height * 0.58f)
+        )
     }
 }
 
@@ -1288,14 +1359,27 @@ private fun HoneycombScanButton(scanning: Boolean, onClick: () -> Unit) {
                     .border(3.dp, BeeKeepAccent, HoneycombButtonShape)
             )
         }
+        // Dark rear layer remains visible below the face, like a cast honeycomb tile.
+        Box(
+            Modifier
+                .fillMaxSize()
+                .clip(HoneycombButtonShape)
+                .background(Color(0xFF813B05))
+        )
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .shadow(8.dp, HoneycombButtonShape)
+                .padding(bottom = 5.dp)
+                .shadow(13.dp, HoneycombButtonShape)
                 .clip(HoneycombButtonShape)
                 .background(
                     Brush.verticalGradient(
-                        colors = listOf(BeeKeepAccent, Color(0xFFD97706))
+                        colors = listOf(
+                            Color(0xFFFFE8A0),
+                            Color(0xFFFFC83D),
+                            Color(0xFFF59E0B),
+                            Color(0xFFD97706)
+                        )
                     )
                 )
                 .clickable(onClick = onClick),
@@ -1312,7 +1396,7 @@ private fun HoneycombScanButton(scanning: Boolean, onClick: () -> Unit) {
                     if (scanning) "SCANNING…" else "SCAN",
                     style = if (scanning) MaterialTheme.typography.titleMedium else MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.ExtraBold,
-                    color = Color(0xFF2A2421)
+                    color = Color(0xFF3A1C06)
                 )
             }
         }
