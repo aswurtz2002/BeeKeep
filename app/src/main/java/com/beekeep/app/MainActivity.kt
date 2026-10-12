@@ -1165,7 +1165,6 @@ private fun MetricCard(title: String, value: String, modifier: Modifier = Modifi
 }
 
 @Composable
-@Composable
 private fun HoneycombScanButton(scanning: Boolean, onClick: () -> Unit) {
     val pulse = rememberInfiniteTransition(label = "homeScanPulse")
     val ringScale by pulse.animateFloat(
