@@ -54,7 +54,6 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.GenericShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -1165,205 +1164,62 @@ private fun MetricCard(title: String, value: String, modifier: Modifier = Modifi
     }
 }
 
-private val HoneycombButtonShape = GenericShape { size, _ ->
-    moveTo(size.width * 0.25f, 0f)
-    lineTo(size.width * 0.75f, 0f)
-    lineTo(size.width, size.height * 0.5f)
-    lineTo(size.width * 0.75f, size.height)
-    lineTo(size.width * 0.25f, size.height)
-    lineTo(0f, size.height * 0.5f)
-    close()
-}
-
-@Composable
-private fun HoneycombPattern(modifier: Modifier = Modifier) {
-    Canvas(modifier) {
-        val radius = size.height / 6.0f
-        val halfHeight = radius * 0.8660254f
-        val columnStep = radius * 1.7320508f
-        val rowStep = radius * 1.5f
-        val shadowDrop = 2.1.dp.toPx()
-        val edgeWidth = 1.1.dp.toPx()
-
-        fun hexCell(cx: Float, cy: Float): Path = Path().apply {
-            moveTo(cx + radius, cy)
-            lineTo(cx + radius / 2f, cy + halfHeight)
-            lineTo(cx - radius / 2f, cy + halfHeight)
-            lineTo(cx - radius, cy)
-            lineTo(cx - radius / 2f, cy - halfHeight)
-            lineTo(cx + radius / 2f, cy - halfHeight)
-            close()
-        }
-
-        var row = -2
-        while (row * rowStep < size.height + radius) {
-            val cy = radius + row * rowStep
-            val rowOffset = if (row % 2 == 0) 0f else columnStep / 2f
-            var col = -2
-            while (col * columnStep + rowOffset < size.width + columnStep) {
-                val cx = col * columnStep + rowOffset
-                val shadow = hexCell(cx, cy + shadowDrop)
-                val cell = hexCell(cx, cy)
-
-                // A short, dark drop-shadow under each cell makes the honeycomb feel raised.
-                drawPath(shadow, Color(0xFF78350F).copy(alpha = 0.28f))
-                drawPath(
-                    cell,
-                    Brush.linearGradient(
-                        colors = listOf(
-                            Color(0xFFFFF6D7).copy(alpha = 0.52f),
-                            Color(0xFFFFD36A).copy(alpha = 0.18f),
-                            Color(0xFF9A4906).copy(alpha = 0.32f)
-                        ),
-                        start = Offset(cx - radius, cy - halfHeight),
-                        end = Offset(cx + radius, cy + halfHeight)
-                    )
-                )
-                drawPath(
-                    cell,
-                    Color(0xFF914609).copy(alpha = 0.42f),
-                    style = Stroke(width = edgeWidth)
-                )
-
-                // Bright upper bevel and darker lower bevel give every cell a 3D edge.
-                drawLine(
-                    Color(0xFFFFF8DC).copy(alpha = 0.75f),
-                    Offset(cx - radius / 2f, cy - halfHeight),
-                    Offset(cx + radius / 2f, cy - halfHeight),
-                    strokeWidth = 1.35.dp.toPx()
-                )
-                drawLine(
-                    Color(0xFFFFF0C2).copy(alpha = 0.45f),
-                    Offset(cx - radius, cy),
-                    Offset(cx - radius / 2f, cy - halfHeight),
-                    strokeWidth = 1.15.dp.toPx()
-                )
-                drawLine(
-                    Color(0xFF793704).copy(alpha = 0.42f),
-                    Offset(cx - radius / 2f, cy + halfHeight),
-                    Offset(cx + radius / 2f, cy + halfHeight),
-                    strokeWidth = 1.55.dp.toPx()
-                )
-                drawLine(
-                    Color(0xFF793704).copy(alpha = 0.30f),
-                    Offset(cx + radius / 2f, cy + halfHeight),
-                    Offset(cx + radius, cy),
-                    strokeWidth = 1.15.dp.toPx()
-                )
-                col++
-            }
-            row++
-        }
-
-        // A polished rim: warm light catches the upper edge while the lower edge stays shaded.
-        val inset = 3.dp.toPx()
-        val edge = Path().apply {
-            moveTo(size.width * 0.25f, inset)
-            lineTo(size.width * 0.75f, inset)
-            lineTo(size.width - inset, size.height / 2f)
-            lineTo(size.width * 0.75f, size.height - inset)
-            lineTo(size.width * 0.25f, size.height - inset)
-            lineTo(inset, size.height / 2f)
-            close()
-        }
-        drawPath(edge, Color(0xFFFFF2C6).copy(alpha = 0.68f), style = Stroke(width = 1.8.dp.toPx()))
-        drawLine(
-            Color(0xFF873D05).copy(alpha = 0.72f),
-            Offset(size.width * 0.25f, size.height - inset),
-            Offset(size.width * 0.75f, size.height - inset),
-            strokeWidth = 2.dp.toPx()
-        )
-
-        // Soft gloss fades over the upper half of the honeycomb face.
-        drawRect(
-            brush = Brush.verticalGradient(
-                colors = listOf(
-                    Color.White.copy(alpha = 0.24f),
-                    Color.White.copy(alpha = 0.06f),
-                    Color.Transparent
-                ),
-                startY = 0f,
-                endY = size.height * 0.58f
-            ),
-            size = Size(size.width, size.height * 0.58f)
-        )
-    }
-}
-
 @Composable
 private fun HoneycombScanButton(scanning: Boolean, onClick: () -> Unit) {
     val pulse = rememberInfiniteTransition(label = "homeScanPulse")
     val ringScale by pulse.animateFloat(
-        0.96f, 1.16f,
+        0.97f, 1.12f,
         infiniteRepeatable(tween(1100)),
         label = "homeScanRingScale"
     )
     val ringAlpha by pulse.animateFloat(
-        0.58f, 0f,
+        0.46f, 0f,
         infiniteRepeatable(tween(1100)),
         label = "homeScanRingAlpha"
     )
 
+    // Use the supplied PNG as the actual button artwork, replacing the old drawn honeycomb.
+    // A faint duplicate expands behind it while NFC scanning is active.
     Box(
-        modifier = Modifier.width(208.dp).height(180.dp),
+        modifier = Modifier
+            .width(220.dp)
+            .height(226.dp)
+            .clickable(onClick = onClick),
         contentAlignment = Alignment.Center
     ) {
         if (scanning) {
-            Box(
-                Modifier
+            Image(
+                painter = painterResource(R.drawable.scan_honeycomb),
+                contentDescription = null,
+                modifier = Modifier
                     .fillMaxSize()
                     .graphicsLayer {
                         scaleX = ringScale
                         scaleY = ringScale
                         alpha = ringAlpha
                     }
-                    .border(3.dp, BeeKeepAccent, HoneycombButtonShape)
             )
         }
-        // Dark rear layer remains visible below the face, like a cast honeycomb tile.
-        Box(
-            Modifier
-                .fillMaxSize()
-                .clip(HoneycombButtonShape)
-                .background(Color(0xFF813B05))
+
+        Image(
+            painter = painterResource(R.drawable.scan_honeycomb),
+            contentDescription = null,
+            modifier = Modifier.fillMaxSize()
         )
+
+        // Keep a clear action label in the open centre cell of the supplied artwork.
         Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(bottom = 5.dp)
-                .shadow(13.dp, HoneycombButtonShape)
-                .clip(HoneycombButtonShape)
-                .background(
-                    Brush.verticalGradient(
-                        colors = listOf(
-                            Color(0xFFFFE8A0),
-                            Color(0xFFFFC83D),
-                            Color(0xFFF59E0B),
-                            Color(0xFFD97706)
-                        )
-                    )
-                )
-                .clickable(onClick = onClick),
+            modifier = Modifier.fillMaxSize().padding(bottom = 28.dp),
             contentAlignment = Alignment.Center
         ) {
-            HoneycombPattern(Modifier.fillMaxSize())
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.Center
-            ) {
-                Image(
-                    painter = painterResource(R.drawable.scan_honeycomb),
-                    contentDescription = "BeeKeep honeycomb scan logo",
-                    modifier = Modifier.size(58.dp)
-                )
-                Spacer(Modifier.width(14.dp))
-                Text(
-                    if (scanning) "SCANNING…" else "SCAN",
-                    style = if (scanning) MaterialTheme.typography.titleMedium else MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.ExtraBold,
-                    color = Color(0xFF3A1C06)
-                )
-            }
+            Text(
+                if (scanning) "SCANNING…" else "SCAN",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.ExtraBold,
+                fontSize = if (scanning) 11.sp else 16.sp,
+                letterSpacing = if (scanning) 0.sp else 1.2.sp,
+                color = Color(0xFF3A1C06)
+            )
         }
     }
 }
