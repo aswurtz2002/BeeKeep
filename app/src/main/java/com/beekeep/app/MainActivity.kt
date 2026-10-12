@@ -121,7 +121,9 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.painter.BitmapPainter
+import androidx.compose.ui.res.imageResource
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -1180,22 +1182,17 @@ private fun HoneycombScanButton(scanning: Boolean, onClick: () -> Unit) {
         infiniteRepeatable(tween(1100)),
         label = "homeScanRingAlpha"
     )
-    val sourcePainter = painterResource(R.drawable.scan_honeycomb)
-    val croppedPainter = remember(sourcePainter) {
-        val bitmap = sourcePainter as? BitmapPainter
-        if (bitmap == null) {
-            sourcePainter
-        } else {
-            // Crop the image source to the honeycomb bounds, excluding the detached oval shadow.
-            BitmapPainter(
-                image = bitmap.image,
-                srcOffset = IntOffset(5, 0),
-                srcSize = IntSize(
-                    width = minOf(234, bitmap.image.width - 5),
-                    height = minOf(228, bitmap.image.height)
-                )
+    val imageBitmap = ImageBitmap.imageResource(id = R.drawable.scan_honeycomb)
+    val croppedPainter = remember(imageBitmap) {
+        // Crop to the honeycomb bounds, excluding the detached oval shadow at the bottom.
+        BitmapPainter(
+            image = imageBitmap,
+            srcOffset = IntOffset(5, 0),
+            srcSize = IntSize(
+                width = minOf(234, imageBitmap.width - 5),
+                height = minOf(228, imageBitmap.height)
             )
-        }
+        )
     }
 
     // Transparent PNG is the entire control; crop excludes the separate bottom oval shadow.
