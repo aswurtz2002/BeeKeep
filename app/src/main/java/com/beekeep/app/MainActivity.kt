@@ -129,6 +129,7 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.graphicsLayer
@@ -1179,18 +1180,26 @@ private fun MetricCard(title: String, value: String, modifier: Modifier = Modifi
 private fun HoneycombScanButton(scanning: Boolean, onClick: () -> Unit) {
     val pulse = rememberInfiniteTransition(label = "homeScanPulse")
     val ringScale by pulse.animateFloat(
-        0.97f, 1.12f,
-        infiniteRepeatable(tween(1100)),
+        0.84f, 1.27f,
+        infiniteRepeatable(tween(950, easing = androidx.compose.animation.core.LinearOutSlowInEasing)),
         label = "homeScanRingScale"
     )
     val ringAlpha by pulse.animateFloat(
-        0.46f, 0f,
-        infiniteRepeatable(tween(1100)),
+        0.92f, 0f,
+        infiniteRepeatable(tween(950, easing = androidx.compose.animation.core.LinearOutSlowInEasing)),
         label = "homeScanRingAlpha"
+    )
+    val iconScale by pulse.animateFloat(
+        1f, 1.045f,
+        infiniteRepeatable(
+            animation = tween(650, easing = androidx.compose.animation.core.FastOutSlowInEasing),
+            repeatMode = androidx.compose.animation.core.RepeatMode.Reverse
+        ),
+        label = "homeScanIconScale"
     )
     val imageBitmap = ImageBitmap.imageResource(id = R.drawable.scan_honeycomb)
     val croppedPainter = remember(imageBitmap) {
-        // Crop to the honeycomb bounds, excluding the detached oval shadow at the bottom.
+        // Crop to the honeycomb's bounds, excluding the detached oval shadow at the bottom.
         BitmapPainter(
             image = imageBitmap,
             srcOffset = IntOffset(5, 0),
@@ -1201,12 +1210,11 @@ private fun HoneycombScanButton(scanning: Boolean, onClick: () -> Unit) {
         )
     }
 
-    // Transparent PNG is the entire control; crop excludes the separate bottom oval shadow.
+    // The pulse is drawn from the transparent artwork itself, so no square outline/ripple appears.
     Box(
         modifier = Modifier
             .width(220.dp)
             .height(226.dp)
-            // Avoid Compose's default rectangular ripple around the transparent artwork.
             .clickable(
                 interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
                 indication = null,
@@ -1215,9 +1223,11 @@ private fun HoneycombScanButton(scanning: Boolean, onClick: () -> Unit) {
         contentAlignment = Alignment.Center
     ) {
         if (scanning) {
+            // Bright gold silhouette expands beyond the artwork and fades to create a clear pulse.
             Image(
                 painter = croppedPainter,
                 contentDescription = null,
+                colorFilter = ColorFilter.tint(Color(0xFFFFC928)),
                 modifier = Modifier
                     .fillMaxSize()
                     .graphicsLayer {
@@ -1231,7 +1241,13 @@ private fun HoneycombScanButton(scanning: Boolean, onClick: () -> Unit) {
         Image(
             painter = croppedPainter,
             contentDescription = if (scanning) "Scanning for a hive tag" else "Scan for a hive tag",
-            modifier = Modifier.fillMaxSize()
+            modifier = Modifier
+                .fillMaxSize()
+                .graphicsLayer {
+                    val scale = if (scanning) iconScale else 1f
+                    scaleX = scale
+                    scaleY = scale
+                }
         )
     }
 }
