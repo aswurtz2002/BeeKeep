@@ -11,6 +11,7 @@ import android.nfc.NfcAdapter
 import android.provider.Settings
 import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
@@ -107,6 +108,7 @@ internal fun SettingsScreen(
     onBack: () -> Unit
 ) {
     val context = LocalContext.current
+    BackHandler { onBack() }
     val scope = rememberCoroutineScope()
     val account by cloud.account.collectAsState()
     val repository = remember(context) { LocalHiveRepository(context) }
@@ -430,7 +432,7 @@ internal fun SettingsScreen(
                     }
                 }
                 Text(
-                    "A JSON backup includes apiaries, hives, NFC assignment history, inspections, feeding, treatments, harvests and activity history. Inspection photo files are not embedded. Restore merges records and does not wipe local-only data.",
+                    "A JSON backup includes apiaries, hives, NFC assignment history, inspections, feeding, treatments, harvests and activity history. Inspection photo files are not embedded. Restore merges records and does not wipe local-only data. The exported file may contain private notes and hive history; store it somewhere secure.",
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     style = MaterialTheme.typography.bodySmall
                 )
