@@ -980,7 +980,7 @@ fun BeeKeepApp(
                     mapFocusApiaryId = null
                     screen = Screen.MAP
                 }
-                NavItem("More", Icons.Rounded.Settings, screen == Screen.MORE || screen == Screen.SETTINGS) { screen = Screen.MORE }
+                NavItem("Settings", Icons.Rounded.Settings, screen == Screen.MORE || screen == Screen.SETTINGS) { screen = Screen.SETTINGS }
             }
         }
     ) { padding ->
@@ -1052,7 +1052,15 @@ fun BeeKeepApp(
                 locationController = locationController,
                 onBack = { screen = mapOrigin; mapFocusApiaryId = null }
             )
-            Screen.MORE -> MoreScreen(padding, darkMode, onDarkModeChange, onSettings = { screen = Screen.SETTINGS }, onTagManager = { tagManagerReturnScreen = Screen.MORE; screen = Screen.TAG_MANAGER }, onColonyHistory = { screen = Screen.COLONY_HISTORY }, deadCount = deadHives.size, activity, cloud)
+            Screen.MORE -> MoreScreen(
+                padding = padding,
+                onBack = { screen = Screen.SETTINGS },
+                onTagManager = { tagManagerReturnScreen = Screen.MORE; screen = Screen.TAG_MANAGER },
+                onColonyHistory = { screen = Screen.COLONY_HISTORY },
+                deadCount = deadHives.size,
+                activity = activity,
+                cloud = cloud
+            )
             Screen.SETTINGS -> SettingsScreen(
                 padding = padding,
                 activity = activity,
@@ -1067,7 +1075,8 @@ fun BeeKeepApp(
                 largeFieldText = largeFieldText,
                 onLargeFieldTextChange = onLargeFieldTextChange,
                 cloud = cloud,
-                onBack = { screen = Screen.MORE }
+                onBack = { screen = Screen.HOME },
+                onOpenMore = { screen = Screen.MORE }
             )
             Screen.TAG_MANAGER -> TagManagementScreen(
                 padding = padding,
@@ -4655,15 +4664,14 @@ private fun TagManagementScreen(
 @Composable
 private fun MoreScreen(
     padding: PaddingValues,
-    darkMode: Boolean,
-    onDarkModeChange: (Boolean) -> Unit,
-    onSettings: () -> Unit,
+    onBack: () -> Unit,
     onTagManager: () -> Unit,
     onColonyHistory: () -> Unit,
     deadCount: Int,
     activity: ComponentActivity,
     cloud: SupabaseGateway
 ) {
+    BackHandler { onBack() }
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val account by cloud.account.collectAsStateWithLifecycle()
@@ -4672,25 +4680,13 @@ private fun MoreScreen(
     var authMessage by rememberSaveable { mutableStateOf("") }
 
     Column(Modifier.fillMaxSize().padding(padding).padding(18.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text("More", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.ExtraBold)
-
-        Card(shape = RoundedCornerShape(24.dp)) {
-            Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    Text("Yellow + black field mode", fontWeight = FontWeight.Bold)
-                    Text("High-contrast controls for bright outdoor conditions", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
-                }
-                Switch(checked = darkMode, onCheckedChange = onDarkModeChange)
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onBack, modifier = Modifier.size(48.dp)) {
+                Icon(Icons.Rounded.ArrowBack, contentDescription = "Back to Settings")
             }
-        }
-
-        Card(onClick = onSettings, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(24.dp)) {
-            Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                    Text("Settings", fontWeight = FontWeight.ExtraBold, style = MaterialTheme.typography.titleMedium)
-                    Text("Appearance, voice, inspection defaults, backup and permissions", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                Icon(Icons.Rounded.Settings, "Open settings", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(30.dp))
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text("More", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.ExtraBold)
+                Text("Additional tools and account controls", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
             }
         }
 

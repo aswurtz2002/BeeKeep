@@ -32,8 +32,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.background
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Backup
+import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.Cloud
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.Nfc
@@ -48,7 +48,6 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -105,7 +104,8 @@ internal fun SettingsScreen(
     largeFieldText: Boolean,
     onLargeFieldTextChange: (Boolean) -> Unit,
     cloud: SupabaseGateway,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    onOpenMore: () -> Unit
 ) {
     val context = LocalContext.current
     BackHandler { onBack() }
@@ -235,14 +235,9 @@ internal fun SettingsScreen(
             Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onClick = onBack, modifier = Modifier.size(48.dp)) {
-                    Icon(Icons.Rounded.ArrowBack, contentDescription = "Back to More")
-                }
-                Column(Modifier.weight(1f)) {
-                    Text("Settings", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.ExtraBold)
-                    Text("Tune BeeKeep for your apiaries and field work", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
-                }
+            Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text("Settings", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.ExtraBold)
+                Text("Tune BeeKeep for your apiaries and field work", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
             }
 
             SettingsSection("Appearance & field mode", Icons.Rounded.Settings) {
@@ -374,7 +369,7 @@ internal fun SettingsScreen(
                             when {
                                 !account.configured -> "Cloud sync is not configured on this build."
                                 account.signedIn -> "Signed in • online sync available"
-                                else -> "Local data remains available offline. Sign in on the More page to enable cloud sync."
+                                else -> "Local data remains available offline. Open Settings → More to enable cloud sync."
                             },
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             style = MaterialTheme.typography.bodySmall
@@ -403,7 +398,7 @@ internal fun SettingsScreen(
                                     settingsMessage = "Cloud sync completed."
                                 }
                                 CloudResult.NotConfigured -> settingsMessage = "Cloud sync is not configured."
-                                CloudResult.NotSignedIn -> settingsMessage = "Sign in on the More page before syncing."
+                                CloudResult.NotSignedIn -> settingsMessage = "Open Settings → More and sign in before syncing."
                                 is CloudResult.Failure -> settingsMessage = "Sync failed: ${result.message}"
                             }
                         }
@@ -476,7 +471,7 @@ internal fun SettingsScreen(
                     },
                     modifier = Modifier.fillMaxWidth()
                 ) { Text("OPEN ANDROID APP SETTINGS") }
-                Text("If NFC is enabled but a tag does not open a hive, open NFC Tag Management from More and use VERIFY. If voice will not start, check microphone permission and ensure another app is not occupying the microphone.", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+                Text("If NFC is enabled but a tag does not open a hive, open Settings → More → NFC tag management and use VERIFY. If voice will not start, check microphone permission and ensure another app is not occupying the microphone.", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
             }
 
             SettingsSection("About BeeKeep", Icons.Rounded.Info) {
@@ -513,6 +508,16 @@ internal fun SettingsScreen(
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Text(settingsMessage, modifier = Modifier.padding(14.dp), color = MaterialTheme.colorScheme.onSurface)
+                }
+            }
+
+            Card(onClick = onOpenMore, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(20.dp)) {
+                Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                        Text("More", fontWeight = FontWeight.ExtraBold, style = MaterialTheme.typography.titleMedium)
+                        Text("NFC tag management, colony history and account tools", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+                    }
+                    Icon(Icons.Rounded.ChevronRight, contentDescription = "Open More", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(26.dp))
                 }
             }
             Spacer(Modifier.height(8.dp))
@@ -566,7 +571,7 @@ internal fun SettingsScreen(
                                         preferences.edit { putLong("last_successful_sync_at", now) }
                                         backupMessage += " Cloud sync completed."
                                     }
-                                    CloudResult.NotSignedIn -> backupMessage += " The restored data is on this phone; sign in on More to sync it."
+                                    CloudResult.NotSignedIn -> backupMessage += " The restored data is on this phone; open Settings → More to sign in and sync it."
                                     CloudResult.NotConfigured -> backupMessage += " Cloud sync is not configured."
                                     is CloudResult.Failure -> backupMessage += " Cloud sync did not finish: ${syncResult.message}"
                                 }
