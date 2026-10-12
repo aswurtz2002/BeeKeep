@@ -867,6 +867,7 @@ fun BeeKeepApp(
             onHarvest = { logType = HiveLogType.HARVEST },
             onTag = { uid, onResult -> vm.assignTag(uid, onResult) },
             onClearTag = { hiveId, onResult -> vm.clearTagForHive(hiveId, onResult) },
+            confirmBeforeTagRemoval = autoVoicePrefs.getBoolean("confirm_tag_removal", true),
             onVerifyTag = {
                 nfc.startRead(activity) { result ->
                     when (result) {
@@ -2519,6 +2520,7 @@ private fun HiveDetailScreen(
     onHarvest: () -> Unit,
     onTag: (String, (Boolean, String?) -> Unit) -> Unit,
     onClearTag: (Long, (Boolean, String?) -> Unit) -> Unit,
+    confirmBeforeTagRemoval: Boolean = true,
     onVerifyTag: () -> Unit,
     onMarkDead: () -> Unit,
     onRestore: () -> Unit,
@@ -2529,7 +2531,30 @@ private fun HiveDetailScreen(
     var showRecentActivity by rememberSaveable(hive.id) { mutableStateOf(false) }
     var confirmDead by rememberSaveable { mutableStateOf(false) }
     var confirmDelete by rememberSaveable { mutableStateOf(false) }
+    var confirmRemoveTag by rememberSaveable(hive.id) { mutableStateOf(false) }
     BackHandler { onBack() }
+
+    fun removeHiveTag() {
+        removingTag = true
+        writeStatus = "Removing NFC tag…"
+        onClearTag(hive.id) { success, error ->
+            removingTag = false
+            writeStatus = if (success) "NFC tag removed • available for reuse" else (error ?: "Could not remove the NFC tag.")
+        }
+    }
+
+    if (confirmRemoveTag) {
+        AlertDialog(
+            onDismissRequest = { confirmRemoveTag = false },
+            title = { Text("Remove NFC tag?", fontWeight = FontWeight.ExtraBold) },
+            text = { Text("Release the tag assignment from Hive ${hive.number}? The physical tag is not erased; you can assign it to another hive later.") },
+            confirmButton = {
+                TextButton(onClick = { confirmRemoveTag = false; removeHiveTag() }) { Text("REMOVE TAG", fontWeight = FontWeight.Bold) }
+            },
+            dismissButton = { TextButton(onClick = { confirmRemoveTag = false }) { Text("CANCEL") }
+            }
+        )
+    }
 
     if (confirmDead) {
         AlertDialog(
@@ -2862,16 +2887,7 @@ private fun HiveDetailScreen(
                     if (hive.tagUid != null) {
                         TextButton(
                             onClick = {
-                                removingTag = true
-                                writeStatus = "Removing NFC tag…"
-                                onClearTag(hive.id) { success, error ->
-                                    removingTag = false
-                                    writeStatus = if (success) {
-                                        "NFC tag removed • available for reuse"
-                                    } else {
-                                        error ?: "Could not remove the NFC tag."
-                                    }
-                                }
+                                if (confirmBeforeTagRemoval) confirmRemoveTag = true else removeHiveTag()
                             },
                             enabled = !removingTag,
                             modifier = Modifier.fillMaxWidth().height(36.dp)

@@ -584,6 +584,9 @@ class LocalHiveRepository(context: Context) {
             ?: throw IllegalArgumentException("The backup does not contain a records list.")
         require(records.length() <= 50000) { "The backup contains too many records." }
         val allowedTypes = setOf("apiary", "hive", "nfc_assignment", "inspection", "feeding", "treatment", "harvest", "event")
+        val rows = (0 until records.length()).map { records.getJSONObject(it) }
+        val backupHiveIds = rows.filter { it.optString("type") == "hive" }.map { it.optLong("id", -1L) }.toSet()
+        val childTypes = setOf("nfc_assignment", "inspection", "feeding", "treatment", "harvest", "event")
         val seen = mutableSetOf<String>()
         val counts = linkedMapOf<String, Int>()
         for (recordIndex in 0 until records.length()) {
@@ -599,6 +602,12 @@ class LocalHiveRepository(context: Context) {
             require(payload.optLong("id", id) == id) { "Backup record ${recordIndex + 1} has mismatched IDs." }
             if (type == "apiary") require(payload.optString("name").isNotBlank()) { "A backup apiary is missing its name." }
             if (type == "hive") require(payload.optString("number").isNotBlank()) { "A backup hive is missing its number." }
+            if (type in childTypes) {
+                val hiveId = payload.optLong("hive_id", -1L)
+                require(hiveId > 0L && hiveId in backupHiveIds) {
+                    "Backup record ${recordIndex + 1} refers to a hive that is not included in the backup."
+                }
+            }
             counts[type] = (counts[type] ?: 0) + 1
         }
         return DataBackupPreview(root.optLong("createdAt", 0L), counts)
@@ -623,6 +632,7 @@ class LocalHiveRepository(context: Context) {
         val currentHarvests = db.harvests().allForBackup()
         val currentEvents = db.events().allForBackup()
         val keyMap = mutableMapOf<String, Long>()
+        val allBackupIds = rows.mapNotNull { row -> row.optLong("id", -1L).takeIf { it > 0L } }.toSet()
         fun mapKey(type: String, id: Long) = "$type:$id"
         fun remapId(type: String, sourceId: Long, preferred: Long): Long {
             val mapKey = mapKey(type, sourceId)
@@ -630,7 +640,9 @@ class LocalHiveRepository(context: Context) {
         }
         fun unusedId(used: Set<Long>): Long {
             var candidate = IdGenerator.nextLong()
-            while (candidate in used || candidate <= 0L) candidate = IdGenerator.nextLong()
+            while (candidate in used || candidate in allBackupIds || candidate in keyMap.values || candidate <= 0L) {
+                candidate = IdGenerator.nextLong()
+            }
             return candidate
         }
 
