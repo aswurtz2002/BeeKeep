@@ -980,7 +980,7 @@ fun BeeKeepApp(
                     mapFocusApiaryId = null
                     screen = Screen.MAP
                 }
-                NavItem("More", Icons.Rounded.Settings, screen == Screen.MORE) { screen = Screen.MORE }
+                NavItem("More", Icons.Rounded.Settings, screen == Screen.MORE || screen == Screen.SETTINGS) { screen = Screen.MORE }
             }
         }
     ) { padding ->
