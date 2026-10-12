@@ -1,29 +1,13 @@
 package com.beekeep.app.nfc
 
 /**
- * Resolves NFC hive links safely when the NDEF payload can outlive a local UID assignment.
- * A released UID takes precedence over the old hive ID still stored on a physical tag.
+ * Hive identity comes only from the active UID assignment stored in BeeKeep's database.
+ * Legacy payload and release-history inputs are retained for source compatibility but ignored.
  */
 object NfcTagResolution {
     fun resolveHiveId(
         assignedHiveId: Long?,
-        payloadHiveId: Long?,
-        tagWasReleased: Boolean
-    ): Long? = assignedHiveId ?: payloadHiveId.takeUnless { tagWasReleased }
-
-    fun targetPayload(
-        assignedHiveId: Long?,
-        payloadHiveId: Long?,
-        payloadText: String?,
-        tagWasReleased: Boolean
-    ): String = when {
-        assignedHiveId != null -> BeeKeepNfcPayload.forHive(assignedHiveId)
-        tagWasReleased -> BeeKeepNfcPayload.UNASSIGNED_PAYLOAD
-        payloadHiveId != null -> payloadText?.trim()?.takeIf { it.isNotBlank() }
-            ?: BeeKeepNfcPayload.forHive(payloadHiveId)
-        else -> BeeKeepNfcPayload.UNASSIGNED_PAYLOAD
-    }
-
-    fun mayOverwriteStaleHivePayload(assignedHiveId: Long?, tagWasReleased: Boolean): Boolean =
-        assignedHiveId == null && tagWasReleased
+        @Suppress("UNUSED_PARAMETER") legacyPayloadHiveId: Long? = null,
+        @Suppress("UNUSED_PARAMETER") tagWasReleased: Boolean = false
+    ): Long? = assignedHiveId
 }
