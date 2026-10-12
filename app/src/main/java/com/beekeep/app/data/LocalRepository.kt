@@ -712,13 +712,29 @@ class LocalHiveRepository(context: Context) {
             }
             val idOwnerMatches = when (type) {
                 "nfc_assignment" -> currentAssignments.firstOrNull { it.id == sourceId }?.let {
-                    it.hiveId == mappedHiveId && it.tagUid.equals(p.optString("tag_uid"), ignoreCase = true)
+                    it.hiveId == mappedHiveId &&
+                        it.tagUid.equals(p.optString("tag_uid"), ignoreCase = true) &&
+                        it.assignedAt == p.optLong("assigned_at", row.optLong("updatedAt"))
                 } ?: true
-                "inspection" -> currentInspections.firstOrNull { it.id == sourceId }?.let { it.hiveId == mappedHiveId } ?: true
-                "feeding" -> currentFeedings.firstOrNull { it.id == sourceId }?.let { it.hiveId == mappedHiveId } ?: true
-                "treatment" -> currentTreatments.firstOrNull { it.id == sourceId }?.let { it.hiveId == mappedHiveId } ?: true
-                "harvest" -> currentHarvests.firstOrNull { it.id == sourceId }?.let { it.hiveId == mappedHiveId } ?: true
-                else -> currentEvents.firstOrNull { it.id == sourceId }?.let { it.hiveId == mappedHiveId } ?: true
+                "inspection" -> currentInspections.firstOrNull { it.id == sourceId }?.let {
+                    it.hiveId == mappedHiveId && it.createdAt == p.optLong("created_at")
+                } ?: true
+                "feeding" -> currentFeedings.firstOrNull { it.id == sourceId }?.let {
+                    it.hiveId == mappedHiveId && it.createdAt == p.optLong("created_at") &&
+                        it.feedType.equals(p.optString("feed_type"), ignoreCase = true)
+                } ?: true
+                "treatment" -> currentTreatments.firstOrNull { it.id == sourceId }?.let {
+                    it.hiveId == mappedHiveId && it.createdAt == p.optLong("created_at") &&
+                        it.treatmentType.equals(p.optString("treatment_type"), ignoreCase = true)
+                } ?: true
+                "harvest" -> currentHarvests.firstOrNull { it.id == sourceId }?.let {
+                    it.hiveId == mappedHiveId && it.createdAt == p.optLong("created_at")
+                } ?: true
+                else -> currentEvents.firstOrNull { it.id == sourceId }?.let {
+                    it.hiveId == mappedHiveId && it.createdAt == p.optLong("created_at") &&
+                        it.type.equals(p.optString("type"), ignoreCase = true) &&
+                        it.title.equals(p.optString("title"), ignoreCase = true)
+                } ?: true
             }
             val idOwner = when (type) {
                 "nfc_assignment" -> currentAssignments.any { it.id == sourceId }

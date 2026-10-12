@@ -299,7 +299,7 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
                 val baseDensity = androidx.compose.ui.platform.LocalDensity.current
                 androidx.compose.runtime.CompositionLocalProvider(
                     androidx.compose.ui.platform.LocalDensity provides androidx.compose.ui.unit.Density(baseDensity.density,
-                        fontScale = if (largeFieldText) (baseDensity.fontScale * 1.12f).coerceAtMost(1.35f) else baseDensity.fontScale
+                        fontScale = if (largeFieldText) (baseDensity.fontScale * 1.12f).coerceAtMost(2.0f) else baseDensity.fontScale
                     )
                 ) {
                     androidx.compose.runtime.SideEffect {
