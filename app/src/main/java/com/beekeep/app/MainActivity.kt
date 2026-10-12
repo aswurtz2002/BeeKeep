@@ -28,6 +28,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
+import androidx.compose.ui.res.painterResource
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -1164,46 +1165,6 @@ private fun MetricCard(title: String, value: String, modifier: Modifier = Modifi
     }
 }
 
-@Composable
-private fun HoneybeeGlyph(modifier: Modifier = Modifier) {
-    Canvas(modifier) {
-        val unit = minOf(size.width, size.height) / 48f
-        val startX = (size.width - 48f * unit) / 2f
-        val startY = (size.height - 48f * unit) / 2f
-        fun at(x: Float, y: Float) = Offset(startX + x * unit, startY + y * unit)
-
-        val beeDark = Color(0xFF26190B)
-        val beeGold = Color(0xFFF1B63F)
-        val beeWing = Color(0xFFFFF0C7)
-
-        rotate(-27f, pivot = Offset(size.width / 2f, size.height / 2f)) {
-            // Two clean, flat wings give the scan action its own small 2D bee mark.
-            drawOval(beeWing, topLeft = at(12f, 9f), size = Size(15f * unit, 8f * unit))
-            drawOval(beeWing.copy(alpha = 0.94f), topLeft = at(20f, 10f), size = Size(12f * unit, 7f * unit))
-
-            // Rounded, striped abdomen with a dark outline.
-            drawOval(beeDark, topLeft = at(7f, 19f), size = Size(28f * unit, 15f * unit))
-            drawOval(beeGold, topLeft = at(8.5f, 20.5f), size = Size(25f * unit, 12f * unit))
-            drawLine(beeDark, at(16f, 21f), at(16f, 32f), strokeWidth = 3.1f * unit)
-            drawLine(beeDark, at(23f, 20.5f), at(23f, 32.5f), strokeWidth = 3.1f * unit)
-            drawLine(beeDark, at(29f, 22f), at(29f, 30.5f), strokeWidth = 2.7f * unit)
-
-            // Head, eye, and antennae.
-            drawCircle(beeDark, radius = 6.2f * unit, center = at(34f, 24.5f))
-            drawCircle(beeGold, radius = 1.35f * unit, center = at(35.5f, 23f))
-            drawLine(beeDark, at(32.5f, 19.5f), at(35.5f, 14f), strokeWidth = 1.8f * unit)
-            drawLine(beeDark, at(36f, 20f), at(41f, 17.5f), strokeWidth = 1.8f * unit)
-            drawCircle(beeGold, radius = 1.4f * unit, center = at(35.5f, 14f))
-            drawCircle(beeGold, radius = 1.4f * unit, center = at(41f, 17.5f))
-
-            // Tiny legs, kept simple so the symbol stays crisp at phone sizes.
-            drawLine(beeDark, at(17f, 32f), at(15f, 36f), strokeWidth = 1.8f * unit)
-            drawLine(beeDark, at(24f, 32f), at(23f, 36f), strokeWidth = 1.8f * unit)
-            drawLine(beeDark, at(29f, 31f), at(31f, 34f), strokeWidth = 1.8f * unit)
-        }
-    }
-}
-
 private val HoneycombButtonShape = GenericShape { size, _ ->
     moveTo(size.width * 0.25f, 0f)
     lineTo(size.width * 0.75f, 0f)
@@ -1390,7 +1351,11 @@ private fun HoneycombScanButton(scanning: Boolean, onClick: () -> Unit) {
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.Center
             ) {
-                HoneybeeGlyph(Modifier.size(43.dp))
+                Image(
+                    painter = painterResource(R.drawable.scan_honeycomb),
+                    contentDescription = "BeeKeep honeycomb scan logo",
+                    modifier = Modifier.size(58.dp)
+                )
                 Spacer(Modifier.width(14.dp))
                 Text(
                     if (scanning) "SCANNING…" else "SCAN",
