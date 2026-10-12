@@ -1184,7 +1184,12 @@ private fun HoneycombScanButton(scanning: Boolean, onClick: () -> Unit) {
         modifier = Modifier
             .width(220.dp)
             .height(226.dp)
-            .clickable(onClick = onClick),
+            // Avoid Compose's default rectangular ripple around the transparent artwork.
+            .clickable(
+                interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+                indication = null,
+                onClick = onClick
+            ),
         contentAlignment = Alignment.Center
     ) {
         if (scanning) {
