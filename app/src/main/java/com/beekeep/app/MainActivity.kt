@@ -776,10 +776,6 @@ fun BeeKeepApp(
             voiceReadyBeepEnabled = autoVoicePrefs.getBoolean("voice_ready_beep", true),
             autoStartVoice = pendingAutoStartVoiceHiveId == hiveForInspection.id,
             autoVoiceEnabled = autoVoiceEnabled,
-            onAutoVoiceEnabledChange = { enabled ->
-                autoVoiceEnabled = enabled
-                autoVoicePrefs.edit { putBoolean("auto_voice_on_nfc", enabled) }
-            },
             onVoiceAutoStartConsumed = {
                 if (pendingAutoStartVoiceHiveId == hiveForInspection.id) pendingAutoStartVoiceHiveId = null
             },
@@ -3019,7 +3015,6 @@ private fun InspectionScreen(
     voiceReadyBeepEnabled: Boolean,
     autoStartVoice: Boolean,
     autoVoiceEnabled: Boolean,
-    onAutoVoiceEnabledChange: (Boolean) -> Unit,
     onVoiceAutoStartConsumed: () -> Unit,
     onSaveHiveLocation: (Long, Double, Double, (String?) -> Unit) -> Unit,
     onBack: () -> Unit,
@@ -3458,27 +3453,6 @@ private fun InspectionScreen(
                                 } else {
                                     voicePermission.launch(Manifest.permission.RECORD_AUDIO)
                                 }
-                            }
-                            Column(
-                                modifier = Modifier.width(108.dp),
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                verticalArrangement = Arrangement.spacedBy(1.dp)
-                            ) {
-                                Text(
-                                    "Auto Voice Toggle",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    maxLines = 2,
-                                    softWrap = true
-                                )
-                                Switch(
-                                    checked = autoVoiceEnabled,
-                                    onCheckedChange = onAutoVoiceEnabledChange,
-                                    modifier = Modifier.semantics {
-                                        contentDescription = "Automatically start voice recording when opening a hive with NFC"
-                                    }
-                                )
                             }
                         }
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
