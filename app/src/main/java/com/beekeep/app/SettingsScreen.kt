@@ -237,19 +237,16 @@ internal fun SettingsScreen(
         ) {
             Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text("Settings", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.ExtraBold)
-                Text("Tune BeeKeep for your apiaries and field work", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
-            }
+}
 
             SettingsSection("Appearance & field mode", Icons.Rounded.Settings) {
                 SettingsSwitchRow(
                     title = "Yellow + black field mode",
-                    description = "High contrast for bright sunlight and outdoor inspections.",
                     checked = darkMode,
                     onCheckedChange = onDarkModeChange
                 )
                 SettingsSwitchRow(
                     title = "Larger field text",
-                    description = "Increase text size across BeeKeep for easier reading with gloves.",
                     checked = largeFieldText,
                     onCheckedChange = onLargeFieldTextChange
                 )
@@ -258,13 +255,11 @@ internal fun SettingsScreen(
             SettingsSection("Voice & NFC behaviour", Icons.Rounded.RecordVoiceOver) {
                 SettingsSwitchRow(
                     title = "Auto-start voice after an NFC hive scan",
-                    description = "Open the scanned hive and start hands-free dictation when microphone permission is available.",
                     checked = autoVoiceEnabled,
                     onCheckedChange = onAutoVoiceEnabledChange
                 )
                 SettingsSwitchRow(
                     title = "Beep when voice is ready",
-                    description = "Play a short beep when speech recognition starts listening.",
                     checked = readyBeep,
                     onCheckedChange = {
                         readyBeep = it
@@ -273,7 +268,6 @@ internal fun SettingsScreen(
                 )
                 SettingsSwitchRow(
                     title = "Speak the hive number aloud",
-                    description = "Announce the hive number after BeeKeep recognizes its NFC tag.",
                     checked = speakHiveNumber,
                     onCheckedChange = {
                         speakHiveNumber = it
@@ -282,14 +276,13 @@ internal fun SettingsScreen(
                 )
                 SettingsSwitchRow(
                     title = "Confirm before removing a tag",
-                    description = "Ask before releasing an NFC tag assignment so it can be reused.",
                     checked = confirmTagRemoval,
                     onCheckedChange = {
                         confirmTagRemoval = it
                         preferences.edit { putBoolean("confirm_tag_removal", it) }
                     }
                 )
-                Text("Tag reassignment always requires confirmation to prevent accidentally moving a tag between hives.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+
             }
 
             SettingsSection("Inspection defaults", Icons.Rounded.Nfc) {
@@ -300,7 +293,7 @@ internal fun SettingsScreen(
                         onValueChange = { sampleSizeText = it.filter(Char::isDigit).take(5); sampleSizeError = "" },
                         modifier = Modifier.weight(1f),
                         label = { Text("Bees in sample") },
-                        supportingText = { Text("1–10,000 bees") },
+
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         singleLine = true,
                         isError = sampleSizeError.isNotBlank()
@@ -320,7 +313,7 @@ internal fun SettingsScreen(
                 if (sampleSizeError.isNotBlank()) Text(sampleSizeError, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
                 Spacer(Modifier.height(2.dp))
                 Text("Default starting colony strength", fontWeight = FontWeight.Bold)
-                Text("Used for new hives and the first inspection when there is no saved inspection to resume.", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     (1..5).forEach { grade ->
                         FilterChip(
@@ -352,7 +345,6 @@ internal fun SettingsScreen(
                 }
                 SettingsSwitchRow(
                     title = "Use last inspection values",
-                    description = "Resume the last saved values when starting a new inspection for the same hive. Unsaved drafts are still protected.",
                     checked = rememberLastInspection,
                     onCheckedChange = {
                         rememberLastInspection = it
@@ -426,12 +418,7 @@ internal fun SettingsScreen(
                         Text("RESTORE")
                     }
                 }
-                Text(
-                    "A JSON backup includes apiaries, hives, NFC assignment history, inspections, feeding, treatments, harvests and activity history. Inspection photo files are not embedded. Restore merges records and does not wipe local-only data. The exported file may contain private notes and hive history; store it somewhere secure.",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    style = MaterialTheme.typography.bodySmall
-                )
-                if (backupMessage.isNotBlank()) Text(backupMessage, color = if (backupMessage.startsWith("Backup failed") || backupMessage.startsWith("Could not")) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
+if (backupMessage.isNotBlank()) Text(backupMessage, color = if (backupMessage.startsWith("Backup failed") || backupMessage.startsWith("Could not")) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
             }
 
             SettingsSection("Permissions & troubleshooting", Icons.Rounded.Security) {
@@ -471,14 +458,14 @@ internal fun SettingsScreen(
                     },
                     modifier = Modifier.fillMaxWidth()
                 ) { Text("OPEN ANDROID APP SETTINGS") }
-                Text("If NFC is enabled but a tag does not open a hive, open Settings → More → NFC tag management and use VERIFY. If voice will not start, check microphone permission and ensure another app is not occupying the microphone.", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+
             }
 
             SettingsSection("About BeeKeep", Icons.Rounded.Info) {
                 Text("BeeKeep · native Android", fontWeight = FontWeight.Bold)
                 Text("Version ${BuildConfig.VERSION_NAME} (build ${BuildConfig.VERSION_CODE})", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Text("Android ${android.os.Build.VERSION.RELEASE} · ${android.os.Build.MODEL}", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Text("Local-first storage: your saved hives and inspections stay on this phone and work offline. Cloud syncing is optional.", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+
                 OutlinedButton(
                     onClick = {
                         val diagnostics = buildString {
@@ -515,7 +502,7 @@ internal fun SettingsScreen(
                 Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                         Text("More", fontWeight = FontWeight.ExtraBold, style = MaterialTheme.typography.titleMedium)
-                        Text("NFC tag management, colony history and account tools", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+
                     }
                     Icon(Icons.Rounded.ChevronRight, contentDescription = "Open More", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(26.dp))
                 }
@@ -618,14 +605,12 @@ private fun SettingsSection(
 @Composable
 private fun SettingsSwitchRow(
     title: String,
-    description: String,
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit
 ) {
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(title, fontWeight = FontWeight.Bold)
-            Text(description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         Switch(
             checked = checked,
