@@ -155,6 +155,7 @@ import com.beekeep.app.nfc.NfcController
 import com.beekeep.app.nfc.BeeKeepNfcPayload
 import com.beekeep.app.nfc.NfcResult
 import com.beekeep.app.nfc.NfcTagResolution
+import com.beekeep.app.nfc.playNfcAssignmentSuccessFeedback
 import com.beekeep.app.ui.theme.BeeKeepTheme
 import com.beekeep.app.ui.theme.BeeKeepAccent
 import com.beekeep.app.ui.theme.NavBarDark
@@ -617,6 +618,7 @@ fun BeeKeepApp(
                     if (success) {
                         lastHiveTagSuccessHiveId = targetHive.id
                         lastHiveTagSuccessUid = result.uid
+                        playNfcAssignmentSuccessFeedback(context)
                     }
                     scope.launch {
                         snackbarHostState.showSnackbar(
@@ -1544,6 +1546,7 @@ private fun TagManagementScreen(
                     is NfcResult.Written -> {
                         onAssignTag(hiveId, result.uid, false) { success, error ->
                             if (success) {
+                                playNfcAssignmentSuccessFeedback(context)
                                 if (consumePending) onPendingUidConsumed()
                                 val hiveNumber = hives.firstOrNull { it.id == hiveId }?.number ?: hiveId.toString()
                                 updateStatus("Tag assigned and launch data written. With BeeKeep closed, tapping this tag should open Hive ${hiveNumber}.")
@@ -1605,7 +1608,10 @@ private fun TagManagementScreen(
                             expectedUid = uid,
                             onResult = { result ->
                                 when (result) {
-                                    is NfcResult.Written -> updateStatus?.invoke("Tag assigned and written. Tapping it with BeeKeep closed can now open Hive $targetNumber.")
+                                    is NfcResult.Written -> {
+                                        playNfcAssignmentSuccessFeedback(context)
+                                        updateStatus?.invoke("Tag assigned and written. Tapping it with BeeKeep closed can now open Hive $targetNumber.")
+                                    }
                                     is NfcResult.Error -> updateStatus?.invoke("Tag $uid is assigned, but launch data was not written: ${result.message} Open this hive and use WRITE TAG to retry.")
                                     is NfcResult.Read -> Unit
                                 }

@@ -64,6 +64,7 @@ import com.beekeep.app.data.Treatment
 import com.beekeep.app.nfc.BeeKeepNfcPayload
 import com.beekeep.app.nfc.NfcController
 import com.beekeep.app.nfc.NfcResult
+import com.beekeep.app.nfc.playNfcAssignmentSuccessFeedback
 import java.text.DateFormat
 import java.util.Date
 import java.util.Locale
@@ -419,6 +420,7 @@ internal fun HiveDetailScreen(
                                                     writeStatus = "Tag written. Saving its assignment to this hive…"
                                                     onTag(result.uid) { success, error ->
                                                         writeStatusType = if (success) "success" else "error"
+                                                        if (success) playNfcAssignmentSuccessFeedback(activity)
                                                         writeStatus = if (success) {
                                                             "NFC tag successfully assigned • ${result.uid}"
                                                         } else {
