@@ -11,6 +11,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import java.time.ZoneId
+import kotlin.math.roundToInt
 
 class BeeKeepViewModel(
     private val repo: LocalHiveRepository,
@@ -287,6 +288,9 @@ class BeeKeepViewModel(
         }
     }
 
+    private fun normalizeBroodStoresGauge(value: Double): Double =
+        (value.coerceIn(0.0, 10.0) * 2.0).roundToInt() / 2.0
+
     suspend fun saveInspection(i: Inspection): Boolean {
         val h = _selected.value ?: return false
         if (i.hiveId != h.id) return false
@@ -301,12 +305,12 @@ class BeeKeepViewModel(
             emergencyCells = i.emergencyCells.coerceAtLeast(0),
             supercedureCells = i.supercedureCells.coerceAtLeast(0),
             swarmCells = i.swarmCells.coerceAtLeast(0),
-            eggs = i.eggs.coerceAtLeast(0),
-            openBrood = i.openBrood.coerceAtLeast(0),
-            cappedBrood = i.cappedBrood.coerceAtLeast(0),
-            honeyStores = i.honeyStores.coerceAtLeast(0),
-            pollen = i.pollen.coerceAtLeast(0),
-            emptyDrawnComb = i.emptyDrawnComb.coerceAtLeast(0),
+            eggs = normalizeBroodStoresGauge(i.eggs),
+            openBrood = normalizeBroodStoresGauge(i.openBrood),
+            cappedBrood = normalizeBroodStoresGauge(i.cappedBrood),
+            honeyStores = normalizeBroodStoresGauge(i.honeyStores),
+            pollen = normalizeBroodStoresGauge(i.pollen),
+            emptyDrawnComb = normalizeBroodStoresGauge(i.emptyDrawnComb),
             diseaseFlags = i.diseaseFlags.trim()
         )
         return runCatching {
