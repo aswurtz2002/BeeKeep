@@ -16,7 +16,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.animateItemPlacement
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -161,7 +160,7 @@ internal fun ApiariesScreen(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 // Animate neighbors into their new slots, but let the active card stay directly under the finger.
-                                .then(if (isDragging) Modifier else Modifier.animateItemPlacement())
+                                .then(if (isDragging) Modifier else Modifier.animateItem(fadeInSpec = null, fadeOutSpec = null))
                                 .zIndex(if (isDragging) 1f else 0f)
                                 .graphicsLayer {
                                     translationY = if (isDragging && listItemInfo != null) {
