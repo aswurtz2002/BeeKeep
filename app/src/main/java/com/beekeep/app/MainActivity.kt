@@ -371,6 +371,8 @@ fun BeeKeepApp(
     var addApiary by rememberSaveable { mutableStateOf(false) }
     var editingApiary by remember { mutableStateOf<Apiary?>(null) }
     var unassignedTagUid by rememberSaveable { mutableStateOf<String?>(null) }
+    var lastHiveTagSuccessHiveId by rememberSaveable { mutableStateOf<Long?>(null) }
+    var lastHiveTagSuccessUid by rememberSaveable { mutableStateOf<String?>(null) }
     var unassignedTagOrigin by rememberSaveable { mutableStateOf(Screen.HOME) }
     var tagManagerReturnScreen by rememberSaveable { mutableStateOf(Screen.MORE) }
     var pendingTagUid by rememberSaveable { mutableStateOf<String?>(null) }
@@ -542,6 +544,34 @@ fun BeeKeepApp(
                 pendingInspectionHiveId = resolvedHive.id
             }
             if (!alreadyOpen) scope.launch { snackbarHostState.showSnackbar("${hiveReferenceName(resolvedHive.number)} recognized • inspection ready") }
+        } else if (selectedHiveOpen && selected != null && !selected.isDead) {
+            // When a hive is already open, treat a newly scanned unassigned tag as
+            // belonging to that hive. Keep the beekeeper on this page instead of
+            // showing the generic "assign or create" dialog.
+            val targetHive = selected
+            lastHiveTagSuccessHiveId = null
+            lastHiveTagSuccessUid = null
+            if (result.launchPreparationError != null) {
+                scope.launch {
+                    snackbarHostState.showSnackbar(
+                        "Tag was not assigned because BeeKeep could not prepare it for app launch. " +
+                            result.launchPreparationError + " Use WRITE TAG on this hive to retry."
+                    )
+                }
+            } else {
+                vm.assignTagToHive(targetHive.id, result.uid) { success, error ->
+                    if (success) {
+                        lastHiveTagSuccessHiveId = targetHive.id
+                        lastHiveTagSuccessUid = result.uid
+                    }
+                    scope.launch {
+                        snackbarHostState.showSnackbar(
+                            if (success) "NFC tag assigned to ${hiveReferenceName(targetHive.number)}"
+                            else error ?: "Could not assign the NFC tag to ${hiveReferenceName(targetHive.number)}."
+                        )
+                    }
+                }
+            }
         } else {
             screen = Screen.SCAN
             unassignedTagOrigin = Screen.HOME
@@ -813,6 +843,7 @@ fun BeeKeepApp(
             onTag = { uid, onResult -> vm.assignTag(uid, onResult) },
             onClearTag = { hiveId, onResult -> vm.clearTagForHive(hiveId, onResult) },
             confirmBeforeTagRemoval = autoVoicePrefs.getBoolean("confirm_tag_removal", true),
+            tagAssignmentSuccessUid = if (lastHiveTagSuccessHiveId == hiveForDetail.id) lastHiveTagSuccessUid else null,
             onVerifyTag = {
                 nfc.startRead(activity) { result ->
                     when (result) {
