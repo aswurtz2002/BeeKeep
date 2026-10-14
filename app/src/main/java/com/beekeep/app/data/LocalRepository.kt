@@ -76,7 +76,7 @@ class LocalHiveRepository(context: Context) {
 
         val cleanHiveNumbers = hiveNumbersByApiary.map { numbers ->
             val clean = numbers.map(String::trim)
-            require(clean.isNotEmpty() && clean.all(String::isNotBlank)) { "Each apiary needs at least one named hive." }
+            require(clean.all(String::isNotBlank)) { "Hive names cannot be blank." }
             require(clean.map { it.lowercase(java.util.Locale.ROOT) }.distinct().size == clean.size) {
                 "Hive names must be unique within each apiary."
             }

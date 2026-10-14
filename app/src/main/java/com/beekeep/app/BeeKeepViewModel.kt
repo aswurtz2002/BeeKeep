@@ -113,42 +113,60 @@ class BeeKeepViewModel(
     }
 
     fun createPreMadeSetup(
-        apiaryPrefix: String,
         hivePrefix: String,
-        apiaryCount: Int,
-        hivesPerApiary: Int,
+        apiaryNames: List<String>,
+        startingHiveNumbers: List<Int>,
+        hiveCounts: List<Int>,
         onResult: (Boolean, String?) -> Unit = { _, _ -> }
     ) {
-        val cleanApiaryPrefix = apiaryPrefix.trim()
-        val cleanHivePrefix = hivePrefix.trim()
-        if (cleanApiaryPrefix.isBlank()) {
-            onResult(false, "Enter a name prefix for your apiaries.")
+        val cleanPrefix = hivePrefix.trim()
+        val cleanApiaryNames = apiaryNames.map(String::trim)
+        if (cleanPrefix.isBlank()) {
+            onResult(false, "Enter a hive name prefix.")
             return
         }
-        if (cleanHivePrefix.isBlank()) {
-            onResult(false, "Enter a name prefix for your hives.")
+        if (cleanApiaryNames.isEmpty() || cleanApiaryNames.size > 30) {
+            onResult(false, "Choose between 1 and 30 apiaries.")
             return
         }
-        if (apiaryCount !in 1..30 || hivesPerApiary < 1 ||
-            apiaryCount.toLong() * hivesPerApiary.toLong() > 1_000L
+        if (cleanApiaryNames.size != startingHiveNumbers.size ||
+            cleanApiaryNames.size != hiveCounts.size
         ) {
-            onResult(false, "Choose between 1 and 30 apiaries, with no more than 1,000 hives in total.")
+            onResult(false, "Each apiary needs its own starting number and hive count.")
+            return
+        }
+        if (cleanApiaryNames.any(String::isBlank)) {
+            onResult(false, "Every apiary needs a name.")
+            return
+        }
+        if (cleanApiaryNames.map { it.lowercase(java.util.Locale.ROOT) }.distinct().size != cleanApiaryNames.size) {
+            onResult(false, "Each apiary needs a unique name.")
+            return
+        }
+        if (startingHiveNumbers.any { it !in 1..999_999 }) {
+            onResult(false, "Starting numbers must be between 1 and 999,999.")
+            return
+        }
+        if (hiveCounts.any { it !in 0..1_000 } || hiveCounts.sum() > 1_000) {
+            onResult(false, "Choose between 0 and 1,000 hives per apiary, with no more than 1,000 total.")
+            return
+        }
+        if (startingHiveNumbers.indices.any { i ->
+            hiveCounts[i] > 0 &&
+                startingHiveNumbers[i].toLong() + hiveCounts[i].toLong() - 1L > 999_999L
+        }) {
+            onResult(false, "A hive range cannot end above 999,999.")
             return
         }
 
-        val apiaryWidth = if (apiaryCount >= 10) apiaryCount.toString().length else 1
-        val hiveWidth = if (hivesPerApiary >= 10) hivesPerApiary.toString().length else 1
-        val apiaryNames = (1..apiaryCount).map { index ->
-            cleanApiaryPrefix + " " + index.toString().padStart(apiaryWidth, '0')
-        }
-        val hiveNamesByApiary = List(apiaryCount) {
-            (1..hivesPerApiary).map { index ->
-                cleanHivePrefix + " " + index.toString().padStart(hiveWidth, '0')
-            }
+        val hiveNumbersByApiary = cleanApiaryNames.indices.map { index ->
+            val start = startingHiveNumbers[index]
+            val count = hiveCounts[index]
+            (0 until count).map { offset -> cleanPrefix + " " + (start + offset) }
         }
 
         viewModelScope.launch {
-            runCatching { repo.createStarterSetup(apiaryNames, hiveNamesByApiary) }
+            runCatching { repo.createStarterSetup(cleanApiaryNames, hiveNumbersByApiary) }
                 .onSuccess { onResult(true, null) }
                 .onFailure { onResult(false, it.message ?: "Could not create the starter apiaries and hives.") }
         }
