@@ -37,6 +37,7 @@ import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material.icons.rounded.Cloud
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.Nfc
+import androidx.compose.material.icons.rounded.LocationOn
 import androidx.compose.material.icons.rounded.RecordVoiceOver
 import androidx.compose.material.icons.rounded.Restore
 import androidx.compose.material.icons.rounded.Security
@@ -116,6 +117,7 @@ internal fun SettingsScreen(
     var readyBeep by remember(preferences) { mutableStateOf(preferences.getBoolean("voice_ready_beep", true)) }
     var speakHiveNumber by remember(preferences) { mutableStateOf(preferences.getBoolean("speak_hive_number_on_scan", true)) }
     var confirmTagRemoval by remember(preferences) { mutableStateOf(preferences.getBoolean("confirm_tag_removal", true)) }
+    var autoMoveHiveApiary by remember(preferences) { mutableStateOf(preferences.getBoolean("auto_move_hive_apiary", false)) }
     var defaultQueenStatus by remember(preferences) {
         mutableStateOf(preferences.getString("default_queen_status", "Laying")?.takeIf { it in setOf("Laying", "Queenless", "Virgin") } ?: "Laying")
     }
@@ -283,6 +285,17 @@ internal fun SettingsScreen(
                     }
                 )
 
+            }
+
+            SettingsSection("Apiary location", Icons.Rounded.LocationOn) {
+                SettingsSwitchRow(
+                    title = "Automatically move hives to nearby apiaries",
+                    checked = autoMoveHiveApiary,
+                    onCheckedChange = {
+                        autoMoveHiveApiary = it
+                        preferences.edit { putBoolean("auto_move_hive_apiary", it) }
+                    }
+                )
             }
 
             SettingsSection("Inspection defaults", Icons.Rounded.Nfc) {

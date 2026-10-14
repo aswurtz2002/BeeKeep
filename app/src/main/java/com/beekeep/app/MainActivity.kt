@@ -559,7 +559,19 @@ fun BeeKeepApp(
                     .filter { it.second <= 500f }
                     .minByOrNull { it.second }
                 if (nearestOther != null) {
-                    pendingApiaryMove = hive to nearestOther.first
+                    val targetApiary = nearestOther.first
+                    if (autoVoicePrefs.getBoolean("auto_move_hive_apiary", false)) {
+                        vm.moveHiveToApiary(hive.id, targetApiary.name) { success, error ->
+                            scope.launch {
+                                snackbarHostState.showSnackbar(
+                                    if (success) "Hive ${hive.number} moved from ${hive.apiary} to ${targetApiary.name}"
+                                    else error ?: "Could not move Hive ${hive.number} to ${targetApiary.name}."
+                                )
+                            }
+                        }
+                    } else {
+                        pendingApiaryMove = hive to targetApiary
+                    }
                 } else if (currentApiary != null) {
                     snackbarHostState.showSnackbar("Hive ${hive.number} is far from ${currentApiary.name}, but no other saved apiary GPS location is nearby. No changes made.")
                 } else {
