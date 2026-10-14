@@ -7,7 +7,6 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -21,7 +20,10 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.ChevronRight
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Icon
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -52,8 +54,14 @@ import com.beekeep.app.data.Hive
 import com.beekeep.app.ui.theme.BeeKeepAccent
 
 @Composable
-private fun MetricCard(title: String, value: String, modifier: Modifier = Modifier, supporting: String? = null) {
+private fun MetricCard(
+    title: String,
+    value: String,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
     ElevatedCard(
+        onClick = onClick,
         modifier = modifier,
         shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.elevatedCardColors(
@@ -61,41 +69,49 @@ private fun MetricCard(title: String, value: String, modifier: Modifier = Modifi
         ),
         elevation = CardDefaults.elevatedCardElevation(defaultElevation = 2.dp)
     ) {
-        Column(
+        Row(
             Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 14.dp),
-            verticalArrangement = Arrangement.spacedBy(2.dp)
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(
-                value,
-                style = MaterialTheme.typography.headlineLarge,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.onPrimaryContainer,
-                maxLines = 1
-            )
-            Text(
-                title,
-                color = MaterialTheme.colorScheme.onPrimaryContainer,
-                style = MaterialTheme.typography.bodyMedium
-            )
-            supporting?.let {
-                Text(it, color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.75f), style = MaterialTheme.typography.bodySmall)
+            Column(
+                Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(2.dp)
+            ) {
+                Text(
+                    value,
+                    style = MaterialTheme.typography.headlineLarge,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    maxLines = 1
+                )
+                Text(
+                    title,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    style = MaterialTheme.typography.bodyMedium
+                )
             }
+            Icon(
+                Icons.Rounded.ChevronRight,
+                contentDescription = "Open $title page",
+                tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                modifier = Modifier.padding(start = 8.dp).size(22.dp)
+            )
         }
     }
 }
 
 @Composable
-private fun HoneycombScanButton(scanning: Boolean, onClick: () -> Unit) {
-    val pulse = rememberInfiniteTransition(label = "homeScanPulse")
+private fun HoneycombNfcIndicator(nfcEnabled: Boolean) {
+    val pulse = rememberInfiniteTransition(label = "homeNfcPulse")
     val ringScale by pulse.animateFloat(
         0.84f, 1.27f,
         infiniteRepeatable(tween(950, easing = androidx.compose.animation.core.LinearOutSlowInEasing)),
-        label = "homeScanRingScale"
+        label = "homeNfcRingScale"
     )
     val ringAlpha by pulse.animateFloat(
         0.92f, 0f,
         infiniteRepeatable(tween(950, easing = androidx.compose.animation.core.LinearOutSlowInEasing)),
-        label = "homeScanRingAlpha"
+        label = "homeNfcRingAlpha"
     )
     val iconScale by pulse.animateFloat(
         1f, 1.045f,
@@ -103,7 +119,7 @@ private fun HoneycombScanButton(scanning: Boolean, onClick: () -> Unit) {
             animation = tween(650, easing = androidx.compose.animation.core.FastOutSlowInEasing),
             repeatMode = androidx.compose.animation.core.RepeatMode.Reverse
         ),
-        label = "homeScanIconScale"
+        label = "homeNfcIconScale"
     )
     val imageBitmap = ImageBitmap.imageResource(id = R.drawable.scan_honeycomb)
     val croppedPainter = remember(imageBitmap) {
@@ -118,44 +134,50 @@ private fun HoneycombScanButton(scanning: Boolean, onClick: () -> Unit) {
         )
     }
 
-    // The pulse is drawn from the transparent artwork itself, so no square outline/ripple appears.
-    Box(
-        modifier = Modifier
-            .width(220.dp)
-            .height(226.dp)
-            .clickable(
-                interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
-                indication = null,
-                onClick = onClick
-            ),
-        contentAlignment = Alignment.Center
+    // This artwork is now an NFC status indicator only. It intentionally has no click action.
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(4.dp)
     ) {
-        if (scanning) {
-            // Bright gold silhouette expands beyond the artwork and fades to create a clear pulse.
+        Box(
+            modifier = Modifier
+                .width(220.dp)
+                .height(226.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            if (nfcEnabled) {
+                Image(
+                    painter = croppedPainter,
+                    contentDescription = null,
+                    colorFilter = ColorFilter.tint(Color(0xFFFFC928)),
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .graphicsLayer {
+                            scaleX = ringScale
+                            scaleY = ringScale
+                            alpha = ringAlpha
+                        }
+                )
+            }
+
             Image(
                 painter = croppedPainter,
-                contentDescription = null,
-                colorFilter = ColorFilter.tint(Color(0xFFFFC928)),
+                contentDescription = if (nfcEnabled) "NFC enabled" else "NFC turned off",
                 modifier = Modifier
                     .fillMaxSize()
                     .graphicsLayer {
-                        scaleX = ringScale
-                        scaleY = ringScale
-                        alpha = ringAlpha
+                        val scale = if (nfcEnabled) iconScale else 1f
+                        scaleX = scale
+                        scaleY = scale
                     }
             )
         }
-
-        Image(
-            painter = croppedPainter,
-            contentDescription = if (scanning) "Scanning for a hive tag" else "Scan for a hive tag",
-            modifier = Modifier
-                .fillMaxSize()
-                .graphicsLayer {
-                    val scale = if (scanning) iconScale else 1f
-                    scaleX = scale
-                    scaleY = scale
-                }
+        Text(
+            text = if (nfcEnabled) "NFC READY" else "NFC OFF",
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.ExtraBold,
+            letterSpacing = 1.1.sp,
+            color = if (nfcEnabled) Color(0xFF166534) else MaterialTheme.colorScheme.onSurfaceVariant
         )
     }
 }
@@ -165,9 +187,9 @@ internal fun HomeScreen(
     hives: List<Hive>,
     apiaries: List<Apiary>,
     padding: androidx.compose.foundation.layout.PaddingValues,
-    scanning: Boolean,
-    onScan: () -> Unit,
-    onCancelScan: () -> Unit
+    nfcEnabled: Boolean,
+    onOpenHives: () -> Unit,
+    onOpenApiaries: () -> Unit
 ) {
     LazyColumn(
         Modifier
@@ -278,8 +300,8 @@ internal fun HomeScreen(
                 Modifier.fillMaxWidth().padding(top = 4.dp),
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                MetricCard("Hives", hives.size.toString(), Modifier.weight(1f))
-                MetricCard("Apiaries", apiaries.size.toString(), Modifier.weight(1f))
+                MetricCard("Apiaries", apiaries.size.toString(), Modifier.weight(1f), onClick = onOpenApiaries)
+                MetricCard("Hives", hives.size.toString(), Modifier.weight(1f), onClick = onOpenHives)
             }
         }
         item {
@@ -287,7 +309,7 @@ internal fun HomeScreen(
                 Modifier.fillMaxWidth().padding(top = 48.dp, bottom = 30.dp),
                 horizontalArrangement = Arrangement.Center
             ) {
-                HoneycombScanButton(scanning = scanning, onClick = onScan)
+                HoneycombNfcIndicator(nfcEnabled = nfcEnabled)
             }
         }
     }
