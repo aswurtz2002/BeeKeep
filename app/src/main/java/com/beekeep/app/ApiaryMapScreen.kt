@@ -187,7 +187,7 @@ internal fun ApiaryMapScreen(
             Surface(
                 modifier = Modifier
                     .align(Alignment.TopCenter)
-                    .padding(top = 150.dp, start = 16.dp, end = 16.dp),
+                    .padding(top = if (locatedApiaries.isEmpty()) 150.dp else 220.dp, start = 16.dp, end = 16.dp),
                 shape = RoundedCornerShape(12.dp),
                 color = MaterialTheme.colorScheme.surface.copy(alpha = 0.97f),
                 tonalElevation = 4.dp
@@ -279,10 +279,10 @@ internal fun ApiaryMapScreen(
         }
         Surface(
             modifier = Modifier
-                .align(Alignment.BottomStart)
+                .align(Alignment.TopStart)
                 .padding(
                     start = 14.dp,
-                    bottom = if (locatedApiaries.isEmpty()) 112.dp else 14.dp
+                    top = if (locatedApiaries.isEmpty()) 84.dp else 150.dp
                 ),
             shape = CircleShape,
             color = MaterialTheme.colorScheme.surface.copy(alpha = 0.97f),
