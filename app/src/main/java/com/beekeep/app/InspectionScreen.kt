@@ -378,18 +378,18 @@ internal fun InspectionScreen(
         beeCountHistoryStartKey,
         initialBeeCountHalfSteps
     ).coerceIn(1, 20)
-    var beeCountHalfSteps by rememberSaveable(hive.id, formStateKey, lastInspection?.id) {
+    var beeCountHalfSteps by rememberSaveable(hive.id, formStateKey) {
         mutableIntStateOf(initialBeeCountHalfSteps)
     }
-    var beeCountHistoryStartHalfSteps by rememberSaveable(hive.id, formStateKey, lastInspection?.id) {
+    var beeCountHistoryStartHalfSteps by rememberSaveable(hive.id, formStateKey) {
         mutableIntStateOf(savedBeeCountHistoryStart)
     }
     // Hold the latest values in per-hive state objects so lifecycle/disposal callbacks
     // can finalize safely even if an NFC scan switches the displayed hive.
-    val latestBeeCountForHistory = remember(hive.id, formStateKey, lastInspection?.id) {
+    val latestBeeCountForHistory = remember(hive.id, formStateKey) {
         mutableIntStateOf(beeCountHalfSteps)
     }
-    val latestBeeCountStartForHistory = remember(hive.id, formStateKey, lastInspection?.id) {
+    val latestBeeCountStartForHistory = remember(hive.id, formStateKey) {
         mutableIntStateOf(beeCountHistoryStartHalfSteps)
     }
     val latestBeeCountRecorder = rememberUpdatedState(onRecordBeeCountChange)
@@ -397,7 +397,7 @@ internal fun InspectionScreen(
         latestBeeCountForHistory.intValue = beeCountHalfSteps
         latestBeeCountStartForHistory.intValue = beeCountHistoryStartHalfSteps
     }
-    val finalizeBeeCountHistory = remember(hive.id, formStateKey, lastInspection?.id) {
+    val finalizeBeeCountHistory = remember(hive.id, formStateKey) {
         {
             val startingValue = latestBeeCountStartForHistory.intValue
             val finalValue = latestBeeCountForHistory.intValue
@@ -510,7 +510,7 @@ internal fun InspectionScreen(
         }
     }
 
-    DisposableEffect(hive.id, formStateKey, lastInspection?.id) {
+    DisposableEffect(hive.id, formStateKey) {
         val hiveIdForDraft = hive.id
         val formDraftForThisHive = latestFormDraft
         val finalizeThisHiveBeeCount = finalizeBeeCountHistory
@@ -713,7 +713,7 @@ internal fun InspectionScreen(
 
     // Do not leave the microphone active if the beekeeper backgrounds BeeKeep or locks the phone.
     val voiceLifecycleOwner = LocalLifecycleOwner.current
-    DisposableEffect(voiceLifecycleOwner, speechRecognizer, hive.id, formStateKey, lastInspection?.id) {
+    DisposableEffect(voiceLifecycleOwner, speechRecognizer, hive.id, formStateKey) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_STOP) {
                 finalizeBeeCountHistory()
