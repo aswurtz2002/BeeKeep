@@ -488,8 +488,8 @@ fun BeeKeepApp(
                         vm.moveHiveToApiary(hive.id, targetApiary.name) { success, error ->
                             scope.launch {
                                 snackbarHostState.showSnackbar(
-                                    if (success) "Hive ${hive.number} moved from ${hive.apiary} to ${targetApiary.name}"
-                                    else error ?: "Could not move Hive ${hive.number} to ${targetApiary.name}."
+                                    if (success) "${hiveReferenceName(hive.number)} moved from ${hive.apiary} to ${targetApiary.name}"
+                                    else error ?: "Could not move ${hiveReferenceName(hive.number)} to ${targetApiary.name}."
                                 )
                             }
                         }
@@ -497,7 +497,7 @@ fun BeeKeepApp(
                         pendingApiaryMove = hive to targetApiary
                     }
                 } else if (currentApiary != null) {
-                    snackbarHostState.showSnackbar("Hive ${hive.number} is far from ${currentApiary.name}, but no other saved apiary GPS location is nearby. No changes made.")
+                    snackbarHostState.showSnackbar("${hiveReferenceName(hive.number)} is far from ${currentApiary.name}, but no other saved apiary GPS location is nearby. No changes made.")
                 } else {
                     snackbarHostState.showSnackbar("No saved apiary GPS location is close enough to identify a destination. No changes made.")
                 }
@@ -541,7 +541,7 @@ fun BeeKeepApp(
             } else {
                 pendingInspectionHiveId = resolvedHive.id
             }
-            if (!alreadyOpen) scope.launch { snackbarHostState.showSnackbar("Hive ${resolvedHive.number} recognized • inspection ready") }
+            if (!alreadyOpen) scope.launch { snackbarHostState.showSnackbar("${hiveReferenceName(resolvedHive.number)} recognized • inspection ready") }
         } else {
             screen = Screen.SCAN
             unassignedTagOrigin = Screen.HOME
@@ -616,7 +616,7 @@ fun BeeKeepApp(
             onDismissRequest = { pendingApiaryMove = null },
             title = { Text("Hive scanned at another apiary?", fontWeight = FontWeight.ExtraBold) },
             text = {
-                Text("Hive ${hive.number} is assigned to ${hive.apiary}, but your phone's GPS is near ${targetApiary.name}. Would you like to move this hive to ${targetApiary.name}?")
+                Text("${hiveReferenceName(hive.number)} is assigned to ${hive.apiary}, but your phone's GPS is near ${targetApiary.name}. Would you like to move this hive to ${targetApiary.name}?")
             },
             confirmButton = {
                 TextButton(onClick = {
@@ -624,7 +624,7 @@ fun BeeKeepApp(
                         pendingApiaryMove = null
                         scope.launch {
                             snackbarHostState.showSnackbar(
-                                if (success) "Hive ${hive.number} moved to ${targetApiary.name}"
+                                if (success) "${hiveReferenceName(hive.number)} moved to ${targetApiary.name}"
                                 else error ?: "Could not move the hive."
                             )
                         }
@@ -837,18 +837,18 @@ fun BeeKeepApp(
             },
             onMarkDead = {
                 vm.markHiveDead(hiveForDetail.id) { _, error ->
-                    scope.launch { snackbarHostState.showSnackbar(error ?: "Hive ${hiveForDetail.number} marked dead. History preserved.") }
+                    scope.launch { snackbarHostState.showSnackbar(error ?: "${hiveReferenceName(hiveForDetail.number)} marked dead. History preserved.") }
                 }
             },
             onRestore = {
                 vm.restoreHive(hiveForDetail.id) { _, error ->
-                    scope.launch { snackbarHostState.showSnackbar(error ?: "Hive ${hiveForDetail.number} restored to active.") }
+                    scope.launch { snackbarHostState.showSnackbar(error ?: "${hiveReferenceName(hiveForDetail.number)} restored to active.") }
                 }
             },
             onDelete = {
                 vm.deleteHivePermanently(hiveForDetail.id) { success, error ->
                     if (success) { selectedHiveOpen = false; vm.clearHive() }
-                    scope.launch { snackbarHostState.showSnackbar(error ?: "Hive ${hiveForDetail.number} permanently deleted.") }
+                    scope.launch { snackbarHostState.showSnackbar(error ?: "${hiveReferenceName(hiveForDetail.number)} permanently deleted.") }
                 }
             }
         )
@@ -880,7 +880,7 @@ fun BeeKeepApp(
                                     screen = Screen.HOME
                                     pendingAutoStartVoiceHiveId = resolvedHive.id
                                     pendingInspectionHiveId = resolvedHive.id
-                                    snackbarHostState.showSnackbar("Hive ${resolvedHive.number} recognized • inspection ready")
+                                    snackbarHostState.showSnackbar("${hiveReferenceName(resolvedHive.number)} recognized • inspection ready")
                                 } else {
                                     unassignedTagOrigin = Screen.HOME
                                     unassignedTagUid = result.uid
@@ -983,7 +983,7 @@ fun BeeKeepApp(
                                             screen = Screen.HOME
                                             pendingAutoStartVoiceHiveId = resolvedHive.id
                                             pendingInspectionHiveId = resolvedHive.id
-                                            snackbarHostState.showSnackbar("Hive ${resolvedHive.number} recognized • inspection ready")
+                                            snackbarHostState.showSnackbar("${hiveReferenceName(resolvedHive.number)} recognized • inspection ready")
                                         } else {
                                             unassignedTagOrigin = Screen.HOME
                                             unassignedTagUid = result.uid
@@ -1333,7 +1333,7 @@ private fun TagManagementScreen(
                         when {
                             owner != null && owner.id != hiveId -> {
                                 reassignPrompt = hiveId to result.uid
-                                updateStatus("Tag ${result.uid} is assigned to Hive ${owner.number}. Confirm REASSIGN before changing it.")
+                                updateStatus("Tag ${result.uid} is assigned to ${hiveReferenceName(owner.number)}. Confirm REASSIGN before changing it.")
                             }
                             else -> updateStatus("Could not write this tag automatically. Use WRITE TAG from the hive details to retry.")
                         }
@@ -1485,7 +1485,7 @@ private fun TagManagementScreen(
                             val resolvedHiveId = NfcTagResolution.resolveHiveId(hiveByUid?.id)
                             val resolvedHive = hiveByUid?.takeIf { it.id == resolvedHiveId }
                             status = if (resolvedHive != null) {
-                                "Hive ${resolvedHive.number} • tag verified by UID"
+                                "${hiveReferenceName(resolvedHive.number)} • tag verified by UID"
                             } else {
                                 "Unassigned tag • ${result.uid}"
                             }
@@ -1515,7 +1515,7 @@ private fun TagManagementScreen(
                 Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
-                            Text("Hive ${hive.number}", fontWeight = FontWeight.Bold)
+                            Text(hiveDisplayName(hive.number), fontWeight = FontWeight.Bold)
                             Text(hive.apiary, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
                         }
                         Text(if (hive.tagUid.isNullOrBlank()) "UNASSIGNED" else "TAGGED", fontWeight = FontWeight.Bold, color = if (hive.tagUid.isNullOrBlank()) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary)
@@ -1548,8 +1548,8 @@ private fun TagManagementScreen(
                                             val matchesUid = result.uid.equals(hive.tagUid, true)
                                             val currentMarker = BeeKeepNfcPayload.isTagPayload(result.text) && result.info.hasBeeKeepLaunchRecord
                                             verifyText = when {
-                                                !matchesUid -> "⚠ Tag ${result.uid} does not match Hive ${hive.number}"
-                                                currentMarker -> "✓ Tag matches Hive ${hive.number}; no hive data is stored on the tag"
+                                                !matchesUid -> "⚠ Tag ${result.uid} does not match ${hiveReferenceName(hive.number)}"
+                                                currentMarker -> "✓ Tag matches ${hiveReferenceName(hive.number)}; no hive data is stored on the tag"
                                                 BeeKeepNfcPayload.hiveId(result.text) != null -> "UID matches, but this tag still has old hive data. Scan it in BeeKeep to upgrade it."
                                                 else -> "UID matches, but the BeeKeep app-launch marker is missing. Use WRITE TAG from hive details."
                                             }

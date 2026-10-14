@@ -121,7 +121,7 @@ internal fun HiveDetailScreen(
         AlertDialog(
             onDismissRequest = { confirmRemoveTag = false },
             title = { Text("Remove NFC tag?", fontWeight = FontWeight.ExtraBold) },
-            text = { Text("Release the tag assignment from Hive ${hive.number}? The physical tag is not erased; you can assign it to another hive later.") },
+            text = { Text("Release the tag assignment from ${hiveReferenceName(hive.number)}? The physical tag is not erased; you can assign it to another hive later.") },
             confirmButton = {
                 TextButton(onClick = { confirmRemoveTag = false; removeHiveTag() }) { Text("REMOVE TAG", fontWeight = FontWeight.Bold) }
             },
@@ -134,7 +134,7 @@ internal fun HiveDetailScreen(
         AlertDialog(
             onDismissRequest = { confirmDead = false },
             title = { Text("Mark colony dead?", fontWeight = FontWeight.ExtraBold) },
-            text = { Text("Hive ${hive.number} will move to colony history. All inspections, treatments, feedings, harvests and photos stay attached. Its NFC tag is released for reuse.") },
+            text = { Text("${hiveReferenceName(hive.number)} will move to colony history. All inspections, treatments, feedings, harvests and photos stay attached. Its NFC tag is released for reuse.") },
             confirmButton = { TextButton(onClick = { confirmDead = false; onMarkDead() }) { Text("MARK DEAD", fontWeight = FontWeight.ExtraBold, color = MaterialTheme.colorScheme.error) } },
             dismissButton = { TextButton(onClick = { confirmDead = false }) { Text("CANCEL") } }
         )
@@ -142,7 +142,7 @@ internal fun HiveDetailScreen(
     if (confirmDelete) {
         AlertDialog(
             onDismissRequest = { confirmDelete = false },
-            title = { Text("Delete Hive ${hive.number} permanently?", fontWeight = FontWeight.ExtraBold) },
+            title = { Text("Delete ${hiveReferenceName(hive.number)} permanently?", fontWeight = FontWeight.ExtraBold) },
             text = { Text("This removes the hive and all of its associated history. This cannot be undone. To preserve history, mark the colony dead instead.") },
             confirmButton = { TextButton(onClick = { confirmDelete = false; onDelete() }) { Text("DELETE PERMANENTLY", fontWeight = FontWeight.ExtraBold, color = MaterialTheme.colorScheme.error) } },
             dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("CANCEL") } }
@@ -157,7 +157,7 @@ internal fun HiveDetailScreen(
         Row(verticalAlignment = Alignment.CenterVertically) {
             IconButton(onBack) { Icon(Icons.Rounded.ArrowBack, "Back") }
             Column(Modifier.weight(1f)) {
-                Text("Hive ${hive.number}", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.ExtraBold)
+                Text(hiveDisplayName(hive.number), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.ExtraBold)
                 Text(hive.apiary, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
             }
             if (hive.isDead || hive.queenStatus == "Queenless" || hive.mitePercent >= 3.0) {

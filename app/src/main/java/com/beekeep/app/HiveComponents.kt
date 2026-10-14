@@ -77,7 +77,7 @@ internal fun HiveRow(hive: Hive, supporting: String? = null, onClick: () -> Unit
     ) {
         Row(Modifier.fillMaxWidth().padding(15.dp), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                Text("Hive ${hive.number}", fontWeight = FontWeight.ExtraBold, style = MaterialTheme.typography.titleMedium)
+                Text(hiveDisplayName(hive.number), fontWeight = FontWeight.ExtraBold, style = MaterialTheme.typography.titleMedium)
                 Text(hive.apiary, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Text("Queen ${hive.queenStatus}", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
                 supporting?.let { Text(it, color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelMedium) }
@@ -121,7 +121,7 @@ internal fun ColonyHistoryScreen(deadHives: List<Hive>, padding: androidx.compos
                     Card(onClick = { onOpenHive(hive.id) }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(24.dp)) {
                         Row(Modifier.fillMaxWidth().padding(15.dp), verticalAlignment = Alignment.CenterVertically) {
                             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                                Text("Hive ${hive.number}", fontWeight = FontWeight.ExtraBold, style = MaterialTheme.typography.titleMedium)
+                                Text(hiveDisplayName(hive.number), fontWeight = FontWeight.ExtraBold, style = MaterialTheme.typography.titleMedium)
                                 Text(hive.apiary, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 Text(
                                     "Dead: ${hive.deadAt?.let { DateFormat.getDateInstance(DateFormat.MEDIUM).format(Date(it)) } ?: "date unknown"}",

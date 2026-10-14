@@ -121,10 +121,6 @@ class BeeKeepViewModel(
     ) {
         val cleanPrefix = hivePrefix.trim()
         val cleanApiaryNames = apiaryNames.map(String::trim)
-        if (cleanPrefix.isBlank()) {
-            onResult(false, "Enter a hive name prefix.")
-            return
-        }
         if (cleanApiaryNames.isEmpty() || cleanApiaryNames.size > 30) {
             onResult(false, "Choose between 1 and 30 apiaries.")
             return
@@ -162,7 +158,10 @@ class BeeKeepViewModel(
         val hiveNumbersByApiary = cleanApiaryNames.indices.map { index ->
             val start = startingHiveNumbers[index]
             val count = hiveCounts[index]
-            (0 until count).map { offset -> cleanPrefix + " " + (start + offset) }
+            (0 until count).map { offset ->
+                val number = (start + offset).toString()
+                if (cleanPrefix.isBlank()) number else "$cleanPrefix $number"
+            }
         }
 
         viewModelScope.launch {

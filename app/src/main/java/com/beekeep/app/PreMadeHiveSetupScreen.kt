@@ -58,7 +58,7 @@ internal fun PreMadeHiveSetupScreen(
     var apiaryNames by rememberSaveable { mutableStateOf(listOf("Apiary 1", "Apiary 2")) }
     var startNumbers by rememberSaveable { mutableStateOf(listOf("1", "1")) }
     var hiveCounts by rememberSaveable { mutableStateOf(listOf("10", "10")) }
-    var hivePrefix by rememberSaveable { mutableStateOf("Hive") }
+    var hivePrefix by rememberSaveable { mutableStateOf("") }
     var isSaving by remember { mutableStateOf(false) }
     var errorMessage by rememberSaveable { mutableStateOf<String?>(null) }
 
@@ -145,8 +145,8 @@ internal fun PreMadeHiveSetupScreen(
                             modifier = Modifier.fillMaxWidth(),
                             singleLine = true,
                             shape = RoundedCornerShape(14.dp),
-                            label = { Text("Hive name prefix") },
-                            supportingText = { Text("Examples: Hive 21, Hive 22, Hive 23") },
+                            label = { Text("Hive name prefix (optional)") },
+                            supportingText = { Text("Leave blank for numbers only, or enter a prefix such as Hive") },
                             keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words),
                             enabled = !isSaving
                         )
@@ -234,7 +234,11 @@ internal fun PreMadeHiveSetupScreen(
                                 count == 0 -> "This apiary will be created empty."
                                 start == null -> "Enter a starting number to preview the hive names."
                                 end != null && end > 999_999L -> "The last hive number is too large."
-                                else -> hivePrefix + " " + start + "  →  " + (end ?: start)
+                                else -> if (hivePrefix.trim().isBlank()) {
+                                    start.toString() + "  →  " + (end ?: start)
+                                } else {
+                                    hivePrefix.trim() + " " + start + "  →  " + hivePrefix.trim() + " " + (end ?: start)
+                                }
                             }
                             Text(
                                 preview,
@@ -280,7 +284,6 @@ internal fun PreMadeHiveSetupScreen(
                             val starts = startNumbers.map { it.toIntOrNull() }
                             val counts = hiveCounts.map { if (it.isBlank()) 0 else it.toIntOrNull() ?: -1 }
                             errorMessage = when {
-                                hivePrefix.trim().isBlank() -> "Enter a hive name prefix."
                                 cleanedNames.any(String::isBlank) -> "Enter a name for every apiary."
                                 normalizedNames.distinct().size != normalizedNames.size -> "Each apiary needs a unique name."
                                 starts.any { it?.let { value -> value !in 1..999_999 } ?: true } -> "Starting numbers must be between 1 and 999,999."

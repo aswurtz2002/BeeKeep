@@ -487,7 +487,7 @@ internal fun InspectionScreen(
     val speechIntent = remember(hive.id, hive.number) {
         Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-            putExtra(RecognizerIntent.EXTRA_PROMPT, "Speak inspection notes for Hive ${hive.number}")
+            putExtra(RecognizerIntent.EXTRA_PROMPT, "Speak inspection notes for ${hiveReferenceName(hive.number)}")
             putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
             putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
@@ -676,7 +676,7 @@ internal fun InspectionScreen(
                 ) {
                     IconButton(onBack) { Icon(Icons.Rounded.ArrowBack, "Back") }
                     Column(Modifier.weight(1f)) {
-                        Text("Hive ${hive.number}", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.ExtraBold)
+                        Text(hiveDisplayName(hive.number), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.ExtraBold)
                         Text("FIELD INSPECTION", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onPrimaryContainer)
                     }
                     IconButton(onClick = onHome) {
