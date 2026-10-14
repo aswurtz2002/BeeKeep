@@ -232,10 +232,8 @@ internal fun ApiariesScreen(
                             )
                         ) {
                             Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                                Surface(shape = RoundedCornerShape(16.dp), color = Color(0xFFFFE8C2), modifier = Modifier.size(52.dp)) {
-                                    Box(contentAlignment = Alignment.Center) {
-                                        Icon(Icons.Rounded.Yard, "Apiary", tint = Color(0xFF78350F))
-                                    }
+                                Box(modifier = Modifier.size(52.dp), contentAlignment = Alignment.Center) {
+                                    Icon(Icons.Rounded.Yard, "Apiary", tint = Color(0xFF78350F))
                                 }
                                 Spacer(Modifier.width(12.dp))
                                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
