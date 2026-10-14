@@ -6,7 +6,7 @@ import org.junit.Test
 class MiteMathTest {
     @Test
     fun calculatesInfestationPercent() {
-        val inspection = Inspection(1, 1, 1, 7, "Laying", 9, 300, "", null, null, null, 0, 0, 0, 0, 0, 0, 0, 0, 0, "")
+        val inspection = Inspection(1, 1, 1, 7, "Laying", 9, 300, "", null, null, null, 0, 0, 0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, "")
         assertEquals(3.0, inspection.mitePercent, 0.0001)
     }
 
