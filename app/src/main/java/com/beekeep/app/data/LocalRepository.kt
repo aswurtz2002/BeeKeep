@@ -502,7 +502,7 @@ class LocalHiveRepository(context: Context) {
                 createdAt = changedAt,
                 type = "bee_count_change",
                 title = "Bee count changed",
-                detail = "Frames changed from ${formatBeeCountFrames(previousFrames)} to ${formatBeeCountFrames(newFrames)}"
+                detail = "Frames of bees changed from ${formatBeeCountFrames(previousFrames)} to ${formatBeeCountFrames(newFrames)}"
             )
             db.events().upsert(event)
             enqueue("event", event.id, "upsert", eventPayload(event))

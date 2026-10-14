@@ -365,15 +365,56 @@ internal fun InspectionScreen(
             )
         )
     }
-    var beeCountHalfSteps by rememberSaveable(hive.id, formStateKey, lastInspection?.id) {
+    val initialBeeCountHalfSteps = run {
         val previousFrames = if (rememberLastInspectionValues) {
             lastInspection?.beeCountFrames ?: hive.beeCountFrames
         } else null
-        mutableIntStateOf(
-            (formDraft?.beeCountHalfSteps
-                ?: previousFrames?.let { (it * 2.0).roundToInt() }
-                ?: 1).coerceIn(1, 20)
-        )
+        (formDraft?.beeCountHalfSteps
+            ?: previousFrames?.let { (it * 2.0).roundToInt() }
+            ?: 1).coerceIn(1, 20)
+    }
+    val beeCountHistoryStartKey = remember(hive.id) { "bee_count_history_start_${hive.id}" }
+    val savedBeeCountHistoryStart = formDraftPrefs.getInt(
+        beeCountHistoryStartKey,
+        initialBeeCountHalfSteps
+    ).coerceIn(1, 20)
+    var beeCountHalfSteps by rememberSaveable(hive.id, formStateKey, lastInspection?.id) {
+        mutableIntStateOf(initialBeeCountHalfSteps)
+    }
+    var beeCountHistoryStartHalfSteps by rememberSaveable(hive.id, formStateKey, lastInspection?.id) {
+        mutableIntStateOf(savedBeeCountHistoryStart)
+    }
+    // Hold the latest values in per-hive state objects so lifecycle/disposal callbacks
+    // can finalize safely even if an NFC scan switches the displayed hive.
+    val latestBeeCountForHistory = remember(hive.id, formStateKey, lastInspection?.id) {
+        mutableIntStateOf(beeCountHalfSteps)
+    }
+    val latestBeeCountStartForHistory = remember(hive.id, formStateKey, lastInspection?.id) {
+        mutableIntStateOf(beeCountHistoryStartHalfSteps)
+    }
+    val latestBeeCountRecorder = rememberUpdatedState(onRecordBeeCountChange)
+    androidx.compose.runtime.SideEffect {
+        latestBeeCountForHistory.intValue = beeCountHalfSteps
+        latestBeeCountStartForHistory.intValue = beeCountHistoryStartHalfSteps
+    }
+    val finalizeBeeCountHistory = remember(hive.id, formStateKey, lastInspection?.id) {
+        {
+            val startingValue = latestBeeCountStartForHistory.intValue
+            val finalValue = latestBeeCountForHistory.intValue
+            if (startingValue != finalValue) {
+                // Move the baseline first so ON_STOP and onDispose cannot record it twice.
+                latestBeeCountStartForHistory.intValue = finalValue
+                beeCountHistoryStartHalfSteps = finalValue
+                formDraftPrefs.edit {
+                    putInt(beeCountHistoryStartKey, finalValue)
+                }
+                latestBeeCountRecorder.value(
+                    hive.id,
+                    startingValue / 2.0,
+                    finalValue / 2.0
+                )
+            }
+        }
     }
     var queen by rememberSaveable(hive.id, formStateKey, lastInspection?.id) {
         mutableStateOf(formDraft?.queenStatus ?: (if (rememberLastInspectionValues) lastInspection?.queenStatus else null) ?: hive.queenStatus)
@@ -463,11 +504,19 @@ internal fun InspectionScreen(
     ) {
         saveInspectionFormDraft(formDraftPrefs, hive.id, currentFormDraft)
     }
-    DisposableEffect(hive.id) {
+    androidx.compose.runtime.LaunchedEffect(hive.id, beeCountHistoryStartHalfSteps) {
+        formDraftPrefs.edit {
+            putInt(beeCountHistoryStartKey, beeCountHistoryStartHalfSteps)
+        }
+    }
+
+    DisposableEffect(hive.id, formStateKey, lastInspection?.id) {
         val hiveIdForDraft = hive.id
         val formDraftForThisHive = latestFormDraft
+        val finalizeThisHiveBeeCount = finalizeBeeCountHistory
         onDispose {
             saveInspectionFormDraft(formDraftPrefs, hiveIdForDraft, formDraftForThisHive.value)
+            finalizeThisHiveBeeCount()
         }
     }
 
@@ -666,6 +715,9 @@ internal fun InspectionScreen(
     val voiceLifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(voiceLifecycleOwner, speechRecognizer) {
         val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_STOP) {
+                finalizeBeeCountHistory()
+            }
             if (event == Lifecycle.Event.ON_PAUSE && keepVoiceListening) {
                 voiceListeningRequested = false
                 voicePartialText = ""
@@ -935,10 +987,9 @@ internal fun InspectionScreen(
                     valueLabel = "${formatBeeCountFrames(beeCountHalfSteps / 2.0)} Frames",
                     previousValueLabel = previousForComparison?.beeCountFrames?.let { "${formatBeeCountFrames(it)} Frames" }
                 ) { updatedValue ->
-                    val previousValue = beeCountHalfSteps
-                    if (updatedValue != previousValue) {
+                    if (updatedValue != beeCountHalfSteps) {
                         beeCountHalfSteps = updatedValue
-                        onRecordBeeCountChange(hive.id, previousValue / 2.0, updatedValue / 2.0)
+                        latestBeeCountForHistory.intValue = updatedValue
                     }
                 }
             }
