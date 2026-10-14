@@ -145,7 +145,8 @@ class LocalHiveRepository(context: Context) {
      */
     suspend fun createStarterSetup(
         apiaryNames: List<String>,
-        hiveNumbersByApiary: List<List<String>>
+        hiveNumbersByApiary: List<List<String>>,
+        allowExistingWorkspace: Boolean = false
     ) = withContext(Dispatchers.IO) {
         require(apiaryNames.isNotEmpty()) { "Create at least one apiary." }
         require(apiaryNames.size <= 50) { "Create no more than 50 apiaries at a time." }
@@ -168,9 +169,48 @@ class LocalHiveRepository(context: Context) {
         require(cleanHiveNumbers.sumOf { it.size } <= 5_000) { "Create no more than 5,000 hives at a time." }
 
         db.withTransaction {
-            require(db.apiaries().allForBackup().isEmpty() && db.hives().allForBackup().isEmpty()) {
-                "Starter setup is only available when the workspace is empty. Existing records were left unchanged."
+            val existingApiaries = db.apiaries().allForBackup()
+            val existingHives = db.hives().allForBackup()
+            if (!allowExistingWorkspace) {
+                require(existingApiaries.isEmpty() && existingHives.isEmpty()) {
+                    "Starter setup is only available when the workspace is empty. Existing records were left unchanged."
+                }
+            } else {
+                val existingApiaryNames = existingApiaries
+                    .map { it.name.trim().lowercase(java.util.Locale.ROOT) }
+                    .toSet()
+                val duplicateApiaryName = cleanApiaryNames.firstOrNull {
+                    it.lowercase(java.util.Locale.ROOT) in existingApiaryNames
+                }
+                require(duplicateApiaryName == null) {
+                    "An apiary named \"$duplicateApiaryName\" already exists. Choose a different name."
+                }
+
+                val existingHiveKeys = existingHives
+                    .filter { !it.deleted && it.status == HiveStatus.ACTIVE }
+                    .map {
+                        it.apiaryName.trim().lowercase(java.util.Locale.ROOT) to
+                            it.number.trim().lowercase(java.util.Locale.ROOT)
+                    }
+                    .toSet()
+                cleanApiaryNames.forEachIndexed { index, apiaryName ->
+                    val apiaryKey = apiaryName.lowercase(java.util.Locale.ROOT)
+                    val duplicateHiveNumber = cleanHiveNumbers[index].firstOrNull { hiveNumber ->
+                        (apiaryKey to hiveNumber.lowercase(java.util.Locale.ROOT)) in existingHiveKeys
+                    }
+                    require(duplicateHiveNumber == null) {
+                        "Hive $duplicateHiveNumber already exists in $apiaryName."
+                    }
+                }
             }
+
+            require(existingApiaries.count { !it.deleted } + cleanApiaryNames.size <= 50) {
+                "Your workspace can contain no more than 50 apiaries total."
+            }
+            require(existingHives.count { !it.deleted } + cleanHiveNumbers.sumOf { it.size } <= 5_000) {
+                "Your workspace can contain no more than 5,000 hives total."
+            }
+
             val now = System.currentTimeMillis()
             cleanApiaryNames.forEachIndexed { index, apiaryName ->
                 val apiary = ApiaryEntity(

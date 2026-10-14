@@ -52,19 +52,40 @@ import java.util.Locale
 @Composable
 internal fun PreMadeHiveSetupScreen(
     vm: BeeKeepViewModel,
+    existingApiaryNames: List<String> = emptyList(),
+    existingHiveCount: Int = 0,
+    addToExistingWorkspace: Boolean = false,
     onBack: () -> Unit,
     onComplete: (createdApiaries: Int, createdHives: Int) -> Unit
 ) {
-    var apiaryNames by rememberSaveable { mutableStateOf(listOf("Apiary 1", "Apiary 2")) }
-    var startNumbers by rememberSaveable { mutableStateOf(listOf("1", "1")) }
-    var hiveCounts by rememberSaveable { mutableStateOf(listOf("10", "10")) }
-    var hivePrefix by rememberSaveable { mutableStateOf("") }
+    val suggestedApiaryName = remember(existingApiaryNames) {
+        val existing = existingApiaryNames.map { it.trim().lowercase(Locale.ROOT) }.toSet()
+        var suffix = 1
+        while ("apiary $suffix" in existing) suffix++
+        "Apiary $suffix"
+    }
+    var apiaryNames by rememberSaveable(addToExistingWorkspace) {
+        mutableStateOf(if (addToExistingWorkspace) listOf(suggestedApiaryName) else listOf("Apiary 1", "Apiary 2"))
+    }
+    var startNumbers by rememberSaveable(addToExistingWorkspace) {
+        mutableStateOf(if (addToExistingWorkspace) listOf("1") else listOf("1", "1"))
+    }
+    val maximumNewHives = if (addToExistingWorkspace) (5_000 - existingHiveCount).coerceAtLeast(0) else 5_000
+    var hiveCounts by rememberSaveable(addToExistingWorkspace) {
+        mutableStateOf(if (addToExistingWorkspace) listOf(minOf(10, maximumNewHives).toString()) else listOf("10", "10"))
+    }
+    var hivePrefix by rememberSaveable(addToExistingWorkspace) { mutableStateOf("") }
     var isSaving by remember { mutableStateOf(false) }
     var errorMessage by rememberSaveable { mutableStateOf<String?>(null) }
 
     val totalHives = hiveCounts.sumOf { it.toIntOrNull() ?: 0 }
-    val maximumApiaries = 50
-    val maximumHives = 5_000
+    val totalApiaryLimit = 50
+    val maximumApiaries = if (addToExistingWorkspace) {
+        (totalApiaryLimit - existingApiaryNames.size).coerceAtLeast(0)
+    } else totalApiaryLimit
+    val existingApiaryNamesNormalized = remember(existingApiaryNames) {
+        existingApiaryNames.map { it.trim().lowercase(Locale.ROOT) }.toSet()
+    }
     val canAddApiary = apiaryNames.size < maximumApiaries
 
     BackHandler { if (!isSaving) onBack() }
@@ -84,12 +105,25 @@ internal fun PreMadeHiveSetupScreen(
         errorMessage = null
     }
 
+    fun nextAvailableApiaryName(): String {
+        val alreadyUsed = (existingApiaryNames + apiaryNames)
+            .map { it.trim().lowercase(Locale.ROOT) }
+            .toSet()
+        var suffix = 1
+        while ("apiary $suffix" in alreadyUsed) suffix++
+        return "Apiary $suffix"
+    }
+
     fun addApiary() {
         if (!canAddApiary) {
-            errorMessage = "You can create up to $maximumApiaries apiaries at once."
+            errorMessage = if (addToExistingWorkspace) {
+                "Your workspace has room for no more than 50 apiaries total."
+            } else {
+                "You can create up to $maximumApiaries apiaries at once."
+            }
             return
         }
-        apiaryNames = apiaryNames + ("Apiary " + (apiaryNames.size + 1))
+        apiaryNames = apiaryNames + nextAvailableApiaryName()
         startNumbers = startNumbers + "1"
         hiveCounts = hiveCounts + ""
         errorMessage = null
@@ -117,8 +151,17 @@ internal fun PreMadeHiveSetupScreen(
                     Icon(Icons.Rounded.ArrowBack, contentDescription = "Back")
                 }
                 Column(modifier = Modifier.weight(1f)) {
-                    Text("Set up your apiaries", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.ExtraBold)
-                    Text("Customize every yard and hive range", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(
+                        if (addToExistingWorkspace) "Add Apiaries and Hives" else "Set up your apiaries",
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.ExtraBold
+                    )
+                    Text(
+                        if (addToExistingWorkspace) "Add starter colonies without resetting your existing apiaries"
+                        else "Customize every yard and hive range",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
             }
 
@@ -127,7 +170,11 @@ internal fun PreMadeHiveSetupScreen(
                 verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
                 Text(
-                    "Give each apiary its own name, starting hive number, and hive count. Leave a hive count blank or set it to 0 to create an apiary without starter hives.",
+                    if (addToExistingWorkspace) {
+                        "Add one or more apiaries and choose how many starter hives each should contain. Your current apiaries and hive records will be kept."
+                    } else {
+                        "Give each apiary its own name, starting hive number, and hive count. Leave a hive count blank or set it to 0 to create an apiary without starter hives."
+                    },
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -153,7 +200,11 @@ internal fun PreMadeHiveSetupScreen(
                     }
                 }
 
-                Text("Your apiaries (" + apiaryNames.size + ")", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.ExtraBold)
+                Text(
+                    (if (addToExistingWorkspace) "New apiaries (" else "Your apiaries (") + apiaryNames.size + ")",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.ExtraBold
+                )
 
                 apiaryNames.indices.forEach { index ->
                     val cleanName = apiaryNames[index].trim()
@@ -176,7 +227,11 @@ internal fun PreMadeHiveSetupScreen(
                                     Icon(Icons.Rounded.Yard, contentDescription = null, tint = BeeKeepAccent, modifier = Modifier.padding(8.dp))
                                 }
                                 Column(modifier = Modifier.weight(1f)) {
-                                    Text("Apiary " + (index + 1), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                                    Text(
+                                        (if (addToExistingWorkspace) "New apiary " else "Apiary ") + (index + 1),
+                                        style = MaterialTheme.typography.titleSmall,
+                                        fontWeight = FontWeight.Bold
+                                    )
                                     Text(
                                         if (count == 0) "No starter hives"
                                         else count.toString() + " starter " + (if (count == 1) "hive" else "hives"),
@@ -260,7 +315,12 @@ internal fun PreMadeHiveSetupScreen(
                     Text("Add another apiary", modifier = Modifier.padding(start = 8.dp))
                 }
                 if (apiaryNames.size >= maximumApiaries) {
-                    Text("A maximum of $maximumApiaries apiaries can be created at once.", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+                    Text(
+                        if (addToExistingWorkspace) "A maximum of 50 apiaries can exist in your workspace."
+                        else "A maximum of $maximumApiaries apiaries can be created at once.",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodySmall
+                    )
                 }
                 errorMessage?.let { message ->
                     Text(message, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
@@ -284,11 +344,17 @@ internal fun PreMadeHiveSetupScreen(
                             val starts = startNumbers.map { it.toIntOrNull() }
                             val counts = hiveCounts.map { if (it.isBlank()) 0 else it.toIntOrNull() ?: -1 }
                             errorMessage = when {
+                                addToExistingWorkspace && apiaryNames.size > maximumApiaries ->
+                                    "Your workspace can contain no more than 50 apiaries total."
+                                totalHives > maximumNewHives ->
+                                    if (addToExistingWorkspace) "You can add only $maximumNewHives more hives before reaching the 5,000-hive workspace limit."
+                                    else "You can create no more than 5,000 hives at once."
                                 cleanedNames.any(String::isBlank) -> "Enter a name for every apiary."
                                 normalizedNames.distinct().size != normalizedNames.size -> "Each apiary needs a unique name."
+                                addToExistingWorkspace && cleanedNames.any { it.lowercase(Locale.ROOT) in existingApiaryNamesNormalized } ->
+                                    "An apiary with that name already exists. Choose a different name."
                                 starts.any { it?.let { value -> value !in 1..999_999 } ?: true } -> "Starting numbers must be between 1 and 999,999."
                                 counts.any { it < 0 || it > 5_000 } -> "Each hive count must be between 0 and 5,000 (or left blank)."
-                                counts.sum() > maximumHives -> "You can create no more than $maximumHives hives at once."
                                 starts.indices.any { i ->
                                     starts[i]?.let { start -> counts[i] > 0 && start.toLong() + counts[i].toLong() - 1L > 999_999L } ?: false
                                 } -> "A hive range cannot end above 999,999."
@@ -300,7 +366,8 @@ internal fun PreMadeHiveSetupScreen(
                                     hivePrefix = hivePrefix.trim(),
                                     apiaryNames = cleanedNames,
                                     startingHiveNumbers = starts.map { it!! },
-                                    hiveCounts = counts
+                                    hiveCounts = counts,
+                                    allowExistingWorkspace = addToExistingWorkspace
                                 ) { success, error ->
                                     isSaving = false
                                     if (success) onComplete(cleanedNames.size, counts.sum())
@@ -312,7 +379,15 @@ internal fun PreMadeHiveSetupScreen(
                         shape = RoundedCornerShape(14.dp),
                         enabled = !isSaving
                     ) {
-                        Text(if (isSaving) "Creating your apiaries…" else "Create Apiaries and Hives", fontWeight = FontWeight.Bold)
+                        Text(
+                            when {
+                                isSaving && addToExistingWorkspace -> "Adding apiaries…"
+                                isSaving -> "Creating your apiaries…"
+                                addToExistingWorkspace -> "Add Apiaries and Hives"
+                                else -> "Create Apiaries and Hives"
+                            },
+                            fontWeight = FontWeight.Bold
+                        )
                     }
                 }
             }

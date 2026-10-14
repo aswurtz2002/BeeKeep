@@ -1,7 +1,10 @@
 package com.beekeep.app
 
 import android.Manifest
+import android.content.BroadcastReceiver
 import android.content.Intent
+import android.content.IntentFilter
+import android.nfc.NfcAdapter
 import android.media.AudioManager
 import android.media.ToneGenerator
 import android.content.pm.PackageManager
@@ -378,6 +381,8 @@ fun BeeKeepApp(
     var addHive by rememberSaveable { mutableStateOf(false) }
     var logType by rememberSaveable { mutableStateOf<HiveLogType?>(null) }
     var addApiary by rememberSaveable { mutableStateOf(false) }
+    var addApiaryOptionsVisible by rememberSaveable { mutableStateOf(false) }
+    var addingApiariesWithHives by rememberSaveable { mutableStateOf(false) }
     var editingApiary by remember { mutableStateOf<Apiary?>(null) }
     var unassignedTagUid by rememberSaveable { mutableStateOf<String?>(null) }
     var lastHiveTagSuccessHiveId by rememberSaveable { mutableStateOf<Long?>(null) }
@@ -412,7 +417,18 @@ fun BeeKeepApp(
     var nfcEnabledForIndicator by remember(nfc) {
         mutableStateOf(nfc.isAvailable() && nfc.isEnabled())
     }
-    DisposableEffect(lifecycleOwner, nfc) {
+    DisposableEffect(lifecycleOwner, nfc, context) {
+        // NFC state broadcasts keep the Home indicator in sync while Settings is
+        // open; ON_RESUME also refreshes it if the app returns from system settings.
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(receiveContext: android.content.Context?, intent: Intent?) {
+                if (intent?.action == NfcAdapter.ACTION_ADAPTER_STATE_CHANGED) {
+                    nfcEnabledForIndicator = nfc.isAvailable() && nfc.isEnabled()
+                }
+            }
+        }
+        val filter = IntentFilter(NfcAdapter.ACTION_ADAPTER_STATE_CHANGED)
+        ContextCompat.registerReceiver(context, receiver, filter, ContextCompat.RECEIVER_EXPORTED)
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
                 nfcEnabledForIndicator = nfc.isAvailable() && nfc.isEnabled()
@@ -420,7 +436,10 @@ fun BeeKeepApp(
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         nfcEnabledForIndicator = nfc.isAvailable() && nfc.isEnabled()
-        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+            runCatching { context.unregisterReceiver(receiver) }
+        }
     }
 
     // Offer first-run setup only after every record stream has hydrated. Existing
@@ -967,18 +986,33 @@ fun BeeKeepApp(
         return
     }
     if (screen == Screen.PREMADE_SETUP) {
+        val isAddingToExistingWorkspace = addingApiariesWithHives
         PreMadeHiveSetupScreen(
             vm = vm,
+            existingApiaryNames = if (isAddingToExistingWorkspace) apiaries.map { it.name } else emptyList(),
+            existingHiveCount = if (isAddingToExistingWorkspace) hives.size + deadHives.size else 0,
+            addToExistingWorkspace = isAddingToExistingWorkspace,
             onBack = {
-                screen = Screen.HOME
-                firstRunPromptVisible = !autoVoicePrefs.getBoolean("initial_setup_completed", false)
+                if (isAddingToExistingWorkspace) {
+                    addingApiariesWithHives = false
+                    screen = Screen.APIARIES
+                } else {
+                    screen = Screen.HOME
+                    firstRunPromptVisible = !autoVoicePrefs.getBoolean("initial_setup_completed", false)
+                }
             },
             onComplete = { createdApiaries, createdHives ->
                 autoVoicePrefs.edit { putBoolean("initial_setup_completed", true) }
                 firstRunPromptVisible = false
-                screen = Screen.HOME
+                addingApiariesWithHives = false
+                screen = if (isAddingToExistingWorkspace) Screen.APIARIES else Screen.HOME
                 scope.launch {
-                    snackbarHostState.showSnackbar("Created $createdApiaries apiaries and $createdHives hives.")
+                    val message = if (isAddingToExistingWorkspace) {
+                        "Added $createdApiaries apiaries and $createdHives hives."
+                    } else {
+                        "Created $createdApiaries apiaries and $createdHives hives."
+                    }
+                    snackbarHostState.showSnackbar(message)
                 }
             }
         )
@@ -1042,7 +1076,7 @@ fun BeeKeepApp(
             )
             Screen.APIARIES -> ApiariesScreen(
                 apiaries, hives, padding,
-                onAddApiary = { addApiary = true },
+                onAddApiary = { addApiaryOptionsVisible = true },
                 onEditApiary = { editingApiary = it },
                 onOpenMap = { apiary ->
                     mapOrigin = Screen.APIARIES
@@ -1141,6 +1175,49 @@ fun BeeKeepApp(
             )
             Screen.SCAN, Screen.APIARY_HIVES, Screen.PREMADE_SETUP -> Unit
         }
+    }
+
+    if (addApiaryOptionsVisible && screen == Screen.APIARIES) {
+        val apiaryLimitReached = apiaries.size >= 50
+        AlertDialog(
+            onDismissRequest = { addApiaryOptionsVisible = false },
+            title = { Text("Add an Apiary", fontWeight = FontWeight.ExtraBold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("How would you like to add your next apiary?")
+                    Button(
+                        onClick = {
+                            addApiaryOptionsVisible = false
+                            addingApiariesWithHives = true
+                            screen = Screen.PREMADE_SETUP
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        enabled = !apiaryLimitReached,
+                        shape = RoundedCornerShape(14.dp)
+                    ) { Text("Add Apiary with Pre-made Hives") }
+                    OutlinedButton(
+                        onClick = {
+                            addApiaryOptionsVisible = false
+                            addApiary = true
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        enabled = !apiaryLimitReached,
+                        shape = RoundedCornerShape(14.dp)
+                    ) { Text("Create Empty Apiary") }
+                    if (apiaryLimitReached) {
+                        Text(
+                            "BeeKeep supports up to 50 apiaries. Remove an apiary before adding another.",
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = {
+                TextButton(onClick = { addApiaryOptionsVisible = false }) { Text("Cancel") }
+            }
+        )
     }
 
     if (firstRunPromptVisible && screen == Screen.HOME) {

@@ -118,6 +118,7 @@ class BeeKeepViewModel(
         apiaryNames: List<String>,
         startingHiveNumbers: List<Int>,
         hiveCounts: List<Int>,
+        allowExistingWorkspace: Boolean = false,
         onResult: (Boolean, String?) -> Unit = { _, _ -> }
     ) {
         val cleanPrefix = hivePrefix.trim()
@@ -148,6 +149,21 @@ class BeeKeepViewModel(
             onResult(false, "Choose between 0 and 5,000 hives per apiary, with no more than 5,000 total.")
             return
         }
+        if (allowExistingWorkspace && _apiaries.value.size + cleanApiaryNames.size > 50) {
+            onResult(false, "Your workspace can contain no more than 50 apiaries total.")
+            return
+        }
+        if (allowExistingWorkspace && _hives.value.size + _deadHives.value.size + hiveCounts.sum() > 5_000) {
+            onResult(false, "Your workspace can contain no more than 5,000 hives total.")
+            return
+        }
+        if (allowExistingWorkspace) {
+            val existingNames = _apiaries.value.map { it.name.trim().lowercase(java.util.Locale.ROOT) }.toSet()
+            if (cleanApiaryNames.any { it.lowercase(java.util.Locale.ROOT) in existingNames }) {
+                onResult(false, "An apiary with that name already exists. Choose a different name.")
+                return
+            }
+        }
         if (startingHiveNumbers.indices.any { i ->
             hiveCounts[i] > 0 &&
                 startingHiveNumbers[i].toLong() + hiveCounts[i].toLong() - 1L > 999_999L
@@ -166,7 +182,13 @@ class BeeKeepViewModel(
         }
 
         viewModelScope.launch {
-            runCatching { repo.createStarterSetup(cleanApiaryNames, hiveNumbersByApiary) }
+            runCatching {
+                repo.createStarterSetup(
+                    cleanApiaryNames,
+                    hiveNumbersByApiary,
+                    allowExistingWorkspace = allowExistingWorkspace
+                )
+            }
                 .onSuccess { onResult(true, null) }
                 .onFailure { onResult(false, it.message ?: "Could not create the starter apiaries and hives.") }
         }
