@@ -53,7 +53,8 @@ data class HiveEntity(
     @ColumnInfo(name = "status_changed_at", defaultValue = "0") val statusChangedAt: Long = 0L,
     // Last known physical position for this individual hive, independent of its apiary.
     val latitude: Double? = null,
-    val longitude: Double? = null
+    val longitude: Double? = null,
+    @ColumnInfo(name = "bee_count_frames") val beeCountFrames: Double? = null
 )
 
 @Entity(
@@ -98,7 +99,8 @@ data class InspectionEntity(
     val pollen: Int = 0,
     @ColumnInfo(name = "empty_drawn_comb") val emptyDrawnComb: Int = 0,
     @ColumnInfo(name = "disease_flags") val diseaseFlags: String = "",
-    @ColumnInfo(name = "updated_at") val updatedAt: Long = System.currentTimeMillis()
+    @ColumnInfo(name = "updated_at") val updatedAt: Long = System.currentTimeMillis(),
+    @ColumnInfo(name = "bee_count_frames") val beeCountFrames: Double? = null
 ) {
     val mitePercent: Double get() = if (sampleSize > 0) miteCount * 100.0 / sampleSize else 0.0
 }
@@ -222,7 +224,8 @@ data class Hive(
     val status: String = HiveStatus.ACTIVE,
     val deadAt: Long? = null,
     val latitude: Double? = null,
-    val longitude: Double? = null
+    val longitude: Double? = null,
+    val beeCountFrames: Double? = null
 ) {
     val isDead: Boolean get() = status != HiveStatus.ACTIVE
 }
@@ -248,7 +251,8 @@ data class Inspection(
     val honeyStores: Int = 0,
     val pollen: Int = 0,
     val emptyDrawnComb: Int = 0,
-    val diseaseFlags: String = ""
+    val diseaseFlags: String = "",
+    val beeCountFrames: Double? = null
 ) {
     val mitePercent: Double get() = if (sampleSize > 0) miteCount * 100.0 / sampleSize else 0.0
 }
