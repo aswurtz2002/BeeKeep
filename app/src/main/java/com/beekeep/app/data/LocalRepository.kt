@@ -148,6 +148,7 @@ class LocalHiveRepository(context: Context) {
         hiveNumbersByApiary: List<List<String>>
     ) = withContext(Dispatchers.IO) {
         require(apiaryNames.isNotEmpty()) { "Create at least one apiary." }
+        require(apiaryNames.size <= 50) { "Create no more than 50 apiaries at a time." }
         require(apiaryNames.size == hiveNumbersByApiary.size) { "Each apiary needs a hive-name list." }
 
         val cleanApiaryNames = apiaryNames.map(String::trim)
