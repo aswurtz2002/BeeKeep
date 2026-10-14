@@ -279,7 +279,8 @@ internal fun HomeScreen(
                             softWrap = false
                         )
                         Text(
-                            text = "APIARY DASHBOARD",
+                            text = "MADE BY BEEKEEPERS
+FOR BEEKEEPERS",
                             style = MaterialTheme.typography.labelMedium,
                             color = Color(0xFF524B45),
                             fontWeight = FontWeight.SemiBold,
