@@ -63,8 +63,8 @@ internal fun PreMadeHiveSetupScreen(
     var errorMessage by rememberSaveable { mutableStateOf<String?>(null) }
 
     val totalHives = hiveCounts.sumOf { it.toIntOrNull() ?: 0 }
-    val maximumApiaries = 30
-    val maximumHives = 1_000
+    val maximumApiaries = 50
+    val maximumHives = 5_000
     val canAddApiary = apiaryNames.size < maximumApiaries
 
     BackHandler { if (!isSaving) onBack() }
@@ -287,7 +287,7 @@ internal fun PreMadeHiveSetupScreen(
                                 cleanedNames.any(String::isBlank) -> "Enter a name for every apiary."
                                 normalizedNames.distinct().size != normalizedNames.size -> "Each apiary needs a unique name."
                                 starts.any { it?.let { value -> value !in 1..999_999 } ?: true } -> "Starting numbers must be between 1 and 999,999."
-                                counts.any { it < 0 || it > 1_000 } -> "Each hive count must be between 0 and 1,000 (or left blank)."
+                                counts.any { it < 0 || it > 5_000 } -> "Each hive count must be between 0 and 5,000 (or left blank)."
                                 counts.sum() > maximumHives -> "You can create no more than $maximumHives hives at once."
                                 starts.indices.any { i ->
                                     starts[i]?.let { start -> counts[i] > 0 && start.toLong() + counts[i].toLong() - 1L > 999_999L } ?: false
