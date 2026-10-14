@@ -70,6 +70,8 @@ internal fun ApiaryMapScreen(
         mutableStateOf(initialFocusApiaryId)
     }
     var currentLocation by remember { mutableStateOf<LocationController.Result?>(null) }
+    // Each successful location request must trigger a camera move, even when GPS returns identical coordinates.
+    var locationRequestId by remember { mutableStateOf(0L) }
     var locationMessage by remember { mutableStateOf<String?>(null) }
 
     fun applyCurrentLocation(location: LocationController.Result?) {
@@ -78,6 +80,7 @@ internal fun ApiaryMapScreen(
             locationMessage = "Couldn't get your location. Make sure Location is enabled and try again."
         } else {
             currentLocation = location
+            locationRequestId += 1L
             focusedApiaryId = null
             locationMessage = null
         }
@@ -124,6 +127,7 @@ internal fun ApiaryMapScreen(
             apiaries = locatedApiaries,
             focusedApiaryId = focusedId,
             currentLocation = currentLocation,
+            locationRequestId = locationRequestId,
             modifier = Modifier
                 .fillMaxSize()
                 .padding(4.dp)
@@ -169,29 +173,6 @@ internal fun ApiaryMapScreen(
                 }) {
                     Icon(Icons.Rounded.GpsFixed, "Show all saved apiary locations")
                 }
-            }
-        }
-
-        Surface(
-            modifier = Modifier
-                .align(Alignment.CenterEnd)
-                .padding(end = 14.dp),
-            shape = CircleShape,
-            color = MaterialTheme.colorScheme.surface.copy(alpha = 0.97f),
-            tonalElevation = 5.dp,
-            shadowElevation = 4.dp,
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
-        ) {
-            IconButton(
-                onClick = { showMyLocation() },
-                modifier = Modifier.size(52.dp)
-            ) {
-                Icon(
-                    Icons.Rounded.MyLocation,
-                    contentDescription = "My location",
-                    tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(25.dp)
-                )
             }
         }
 
@@ -289,12 +270,39 @@ internal fun ApiaryMapScreen(
                 }
             }
         }
+        Surface(
+            modifier = Modifier
+                .align(Alignment.BottomStart)
+                .padding(
+                    start = 14.dp,
+                    bottom = if (locatedApiaries.isEmpty()) 112.dp else 14.dp
+                ),
+            shape = CircleShape,
+            color = MaterialTheme.colorScheme.surface.copy(alpha = 0.97f),
+            tonalElevation = 5.dp,
+            shadowElevation = 4.dp,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+        ) {
+            IconButton(
+                onClick = { showMyLocation() },
+                modifier = Modifier.size(52.dp)
+            ) {
+                Icon(
+                    Icons.Rounded.MyLocation,
+                    contentDescription = "My location",
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(25.dp)
+                )
+            }
+        }
+
     }
 }
 
 private data class ApiaryMapWebViewState(
     val htmlHash: Int,
-    val currentLocation: LocationController.Result?
+    val currentLocation: LocationController.Result?,
+    val locationRequestId: Long
 )
 
 @Composable
@@ -302,6 +310,7 @@ internal fun ApiarySatelliteMap(
     apiaries: List<Apiary>,
     focusedApiaryId: Long?,
     currentLocation: LocationController.Result?,
+    locationRequestId: Long = 0L,
     modifier: Modifier = Modifier
 ) {
     // Keep the WebView and MapLibre map alive when only the GPS position changes.
@@ -335,7 +344,7 @@ internal fun ApiarySatelliteMap(
                 isVerticalScrollBarEnabled = false
                 isHorizontalScrollBarEnabled = false
                 overScrollMode = View.OVER_SCROLL_NEVER
-                tag = ApiaryMapWebViewState(html.hashCode(), currentLocation)
+                tag = ApiaryMapWebViewState(html.hashCode(), currentLocation, locationRequestId)
                 // Compose can resize AndroidView without firing a browser window resize.
                 // Notify MapLibre whenever the native WebView viewport changes size.
                 addOnLayoutChangeListener { view, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom ->
@@ -359,10 +368,10 @@ internal fun ApiarySatelliteMap(
             if (previous == null || previous.htmlHash != htmlHash) {
                 // A changed apiary list or selected apiary requires fresh map content.
                 // Store the latest GPS so onPageFinished can restore it after loading.
-                webView.tag = ApiaryMapWebViewState(htmlHash, currentLocation)
+                webView.tag = ApiaryMapWebViewState(htmlHash, currentLocation, locationRequestId)
                 webView.loadDataWithBaseURL("https://beekeep.local/map/", html, "text/html", "UTF-8", null)
-            } else if (previous.currentLocation != currentLocation) {
-                webView.tag = ApiaryMapWebViewState(htmlHash, currentLocation)
+            } else if (previous.currentLocation != currentLocation || previous.locationRequestId != locationRequestId) {
+                webView.tag = ApiaryMapWebViewState(htmlHash, currentLocation, locationRequestId)
                 if (currentLocation != null) {
                     webView.evaluateJavascript(
                         "window.beekeepQueueLocation && window.beekeepQueueLocation(${currentLocation.latitude}, ${currentLocation.longitude});",
