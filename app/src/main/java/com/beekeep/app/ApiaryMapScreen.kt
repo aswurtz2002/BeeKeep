@@ -375,6 +375,14 @@ internal fun ApiarySatelliteMap(
                     )
                 }
             }
+        },
+        onRelease = { webView ->
+            // Release WebGL, network, and DOM resources when leaving the map screen.
+            webView.stopLoading()
+            webView.loadUrl("about:blank")
+            webView.clearHistory()
+            webView.removeAllViews()
+            webView.destroy()
         }
     )
 }

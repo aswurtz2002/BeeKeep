@@ -85,6 +85,7 @@ import com.beekeep.app.cloud.CloudResult
 import com.beekeep.app.cloud.SupabaseGateway
 import com.beekeep.app.data.DataBackupPreview
 import com.beekeep.app.data.LocalHiveRepository
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -189,7 +190,9 @@ internal fun SettingsScreen(
                         output.use { it.write(json.toByteArray(Charsets.UTF_8)) }
                     }
                     backupMessage = "Backup saved successfully."
-                } catch (error: Throwable) {
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (error: Exception) {
                     backupMessage = "Backup failed: ${error.message ?: "unknown error"}"
                 } finally {
                     busy = false
@@ -207,16 +210,20 @@ internal fun SettingsScreen(
                         val input = context.contentResolver.openInputStream(uri)
                             ?: throw IllegalStateException("Android could not read the selected file.")
                         input.use {
-                            val bytes = it.readBytes()
-                            require(bytes.size <= 25 * 1024 * 1024) { "The backup file is larger than 25 MB." }
-                            String(bytes, Charsets.UTF_8)
+                            readUtf8Limited(
+                                input = it,
+                                maxBytes = MAX_BACKUP_FILE_BYTES,
+                                tooLargeMessage = "The backup file is larger than 25 MB."
+                            )
                         }
                     }
                     val preview = repository.previewDataBackup(raw)
                     pendingBackupJson = raw
                     pendingBackupPreview = preview
                     backupMessage = ""
-                } catch (error: Throwable) {
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (error: Exception) {
                     pendingBackupJson = null
                     pendingBackupPreview = null
                     backupMessage = "Could not use this backup: ${error.message ?: "the file is invalid"}"
@@ -575,7 +582,9 @@ if (backupMessage.isNotBlank()) Text(backupMessage, color = if (backupMessage.st
                                     CloudResult.NotConfigured -> backupMessage += " Cloud sync is not configured."
                                     is CloudResult.Failure -> backupMessage += " Cloud sync did not finish: ${syncResult.message}"
                                 }
-                            } catch (error: Throwable) {
+                            } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (error: Exception) {
                                 backupMessage = "Restore failed: ${error.message ?: "unknown error"}"
                             } finally {
                                 busy = false
