@@ -286,7 +286,9 @@ internal fun PreMadeHiveSetupScreen(
                                 starts.any { it?.let { value -> value !in 1..999_999 } ?: true } -> "Starting numbers must be between 1 and 999,999."
                                 counts.any { it < 0 || it > 1_000 } -> "Each hive count must be between 0 and 1,000 (or left blank)."
                                 counts.sum() > maximumHives -> "You can create no more than $maximumHives hives at once."
-                                starts.indices.any { i -> counts[i] > 0 && starts[i]!!.toLong() + counts[i].toLong() - 1L > 999_999L } -> "A hive range cannot end above 999,999."
+                                starts.indices.any { i ->
+                                    starts[i]?.let { start -> counts[i] > 0 && start.toLong() + counts[i].toLong() - 1L > 999_999L } ?: false
+                                } -> "A hive range cannot end above 999,999."
                                 else -> null
                             }
                             if (errorMessage == null) {
