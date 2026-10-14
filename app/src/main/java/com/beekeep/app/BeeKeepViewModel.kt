@@ -40,6 +40,7 @@ class BeeKeepViewModel(
     val ready: StateFlow<Boolean> = _ready
 
     private var detailJob: Job? = null
+    private var selectionRequestGeneration = 0L
 
     init {
         viewModelScope.launch {
@@ -55,11 +56,23 @@ class BeeKeepViewModel(
     }
 
     fun openHive(id: Long) {
+        val requestGeneration = ++selectionRequestGeneration
         viewModelScope.launch {
+            val openedHive = repo.getHive(id)
+            // If another NFC tap or navigation request arrived while this query was running,
+            // only the latest requested hive is allowed to replace the selected record.
+            if (requestGeneration != selectionRequestGeneration) return@launch
+
             detailJob?.cancel()
-            _selected.value = repo.getHive(id)
-            _inspections.value = emptyList(); _feedings.value = emptyList(); _treatments.value = emptyList(); _harvests.value = emptyList(); _events.value = emptyList(); _photos.value = emptyList()
-            if (_selected.value != null) {
+            _selected.value = openedHive
+            _inspections.value = emptyList()
+            _feedings.value = emptyList()
+            _treatments.value = emptyList()
+            _harvests.value = emptyList()
+            _events.value = emptyList()
+            _photos.value = emptyList()
+
+            if (openedHive != null) {
                 detailJob = launch {
                     launch { repo.observeInspections(id).collect { _inspections.value = it } }
                     launch { repo.observeFeedings(id).collect { _feedings.value = it } }
@@ -78,7 +91,25 @@ class BeeKeepViewModel(
 
     suspend fun getUnassignedNfcTagUids(): Set<String> = repo.getUnassignedNfcTagUids()
 
-    fun clearHive() { detailJob?.cancel(); _selected.value = null; _photos.value = emptyList() }
+    fun clearHive() {
+        // Invalidate in-flight openHive database reads so closing the hive cannot be undone by a late result.
+        selectionRequestGeneration++
+        detailJob?.cancel()
+        _selected.value = null
+        _inspections.value = emptyList()
+        _feedings.value = emptyList()
+        _treatments.value = emptyList()
+        _harvests.value = emptyList()
+        _events.value = emptyList()
+        _photos.value = emptyList()
+    }
+
+    private suspend fun refreshSelectedHiveIfCurrent(hiveId: Long) {
+        if (_selected.value?.id != hiveId) return
+        val refreshed = runCatching { repo.getHive(hiveId) }.getOrNull() ?: return
+        // Read from Room first, then re-check after suspension before publishing to StateFlow.
+        if (_selected.value?.id == hiveId) _selected.value = refreshed
+    }
 
     fun createHive(number: String, apiary: String, queen: String, strength: Int, tagUid: String? = null, onResult: (Boolean, String?) -> Unit = { _, _ -> }) {
         val clean = number.trim(); if (clean.isBlank()) { onResult(false, "Enter a hive number."); return }
@@ -111,7 +142,7 @@ class BeeKeepViewModel(
         viewModelScope.launch {
             runCatching { repo.updateHiveLocation(hiveId, latitude, longitude) }
                 .onSuccess {
-                    if (_selected.value?.id == hiveId) _selected.value = repo.getHive(hiveId)
+                    refreshSelectedHiveIfCurrent(hiveId)
                     onResult(null)
                 }
                 .onFailure { onResult(it.message ?: "Could not save this hive's GPS location.") }
@@ -122,7 +153,7 @@ class BeeKeepViewModel(
         viewModelScope.launch {
             runCatching {
                 repo.markHiveDead(hiveId)
-                if (_selected.value?.id == hiveId) _selected.value = repo.getHive(hiveId)
+                refreshSelectedHiveIfCurrent(hiveId)
             }.onSuccess { onResult(true, null) }
                 .onFailure { onResult(false, it.message ?: "Could not mark the colony dead.") }
         }
@@ -132,7 +163,7 @@ class BeeKeepViewModel(
         viewModelScope.launch {
             runCatching {
                 repo.restoreHive(hiveId)
-                if (_selected.value?.id == hiveId) _selected.value = repo.getHive(hiveId)
+                refreshSelectedHiveIfCurrent(hiveId)
             }.onSuccess { onResult(true, null) }
                 .onFailure { onResult(false, it.message ?: "Could not restore the colony.") }
         }
@@ -158,7 +189,7 @@ class BeeKeepViewModel(
         viewModelScope.launch {
             runCatching {
                 repo.assignNfcTag(hiveId, normalized, reassign)
-                if (_selected.value?.id == hiveId) _selected.value = repo.getHive(hiveId)
+                refreshSelectedHiveIfCurrent(hiveId)
             }.onSuccess { onResult(true, null) }
                 .onFailure { onResult(false, it.message ?: "Could not assign the NFC tag.") }
         }
@@ -176,7 +207,7 @@ class BeeKeepViewModel(
         viewModelScope.launch {
             runCatching { repo.unassignNfcTag(hiveId) }
                 .onSuccess { removed ->
-                    if (_selected.value?.id == hiveId) _selected.value = repo.getHive(hiveId)
+                    refreshSelectedHiveIfCurrent(hiveId)
                     onResult(
                         removed,
                         if (removed) null else "This hive has no NFC tag assigned to remove."
@@ -192,7 +223,7 @@ class BeeKeepViewModel(
         val h = _selected.value ?: return
         viewModelScope.launch {
             repo.saveHive(h.copy(queenStatus = status, queenMarkColor = markColor, queenOrigin = origin, queenAgeMonths = ageMonths, queenTemperament = temperament.coerceIn(1, 5)))
-            _selected.value = repo.getHive(h.id)
+            refreshSelectedHiveIfCurrent(h.id)
         }
     }
 
@@ -220,7 +251,7 @@ class BeeKeepViewModel(
         )
         return runCatching {
             repo.saveInspection(normalized)
-            _selected.value = repo.getHive(h.id)
+            refreshSelectedHiveIfCurrent(h.id)
             true
         }.getOrElse { false }
     }
@@ -281,7 +312,7 @@ class BeeKeepViewModel(
             runCatching {
                 val hive = repo.getHive(hiveId) ?: throw IllegalArgumentException("Hive not found.")
                 repo.saveHive(hive.copy(apiary = target))
-                if (_selected.value?.id == hiveId) _selected.value = repo.getHive(hiveId)
+                refreshSelectedHiveIfCurrent(hiveId)
             }.onSuccess { onResult(true, null) }
                 .onFailure { onResult(false, it.message ?: "Could not move the hive.") }
         }

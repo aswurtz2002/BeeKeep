@@ -389,10 +389,10 @@ internal fun InspectionScreen(
     var lon by rememberSaveable(hive.id, formStateKey) { mutableStateOf(formDraft?.longitude) }
     var locationStatus by rememberSaveable(hive.id) { mutableStateOf("No GPS captured") }
     var pendingGpsHiveId by rememberSaveable { mutableStateOf<Long?>(null) }
-    var voiceStatus by rememberSaveable { mutableStateOf("") }
+    var voiceStatus by rememberSaveable(hive.id) { mutableStateOf("") }
     var voiceListeningRequested by rememberSaveable(hive.id) { mutableStateOf(false) }
     var voicePartialText by rememberSaveable(hive.id) { mutableStateOf("") }
-    var saving by rememberSaveable { mutableStateOf(false) }
+    var saving by rememberSaveable(hive.id) { mutableStateOf(false) }
     var saveError by rememberSaveable(hive.id) { mutableStateOf("") }
 
     val currentFormDraft = InspectionFormDraft(

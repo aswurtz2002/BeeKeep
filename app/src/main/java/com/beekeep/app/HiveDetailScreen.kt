@@ -100,11 +100,11 @@ internal fun HiveDetailScreen(
     onRestore: () -> Unit,
     onDelete: () -> Unit
 ) {
-    var writeStatus by rememberSaveable { mutableStateOf("") }
+    var writeStatus by rememberSaveable(hive.id) { mutableStateOf("") }
     var removingTag by rememberSaveable(hive.id) { mutableStateOf(false) }
     var showRecentActivity by rememberSaveable(hive.id) { mutableStateOf(false) }
-    var confirmDead by rememberSaveable { mutableStateOf(false) }
-    var confirmDelete by rememberSaveable { mutableStateOf(false) }
+    var confirmDead by rememberSaveable(hive.id) { mutableStateOf(false) }
+    var confirmDelete by rememberSaveable(hive.id) { mutableStateOf(false) }
     var confirmRemoveTag by rememberSaveable(hive.id) { mutableStateOf(false) }
     BackHandler { onBack() }
 

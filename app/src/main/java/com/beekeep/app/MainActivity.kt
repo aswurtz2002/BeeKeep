@@ -455,14 +455,13 @@ fun BeeKeepApp(
                 // clearly away from the assigned yard and close to another saved yard.
                 if (assignedDistance <= 300f) return@launch
                 val nearestOther = apiaries
-                    .filter { apiary ->
-                        apiary.latitude != null && apiary.longitude != null &&
-                            (currentApiary == null || apiary.id != currentApiary.id)
-                    }
-                    .map { apiary ->
+                    .filter { apiary -> currentApiary == null || apiary.id != currentApiary.id }
+                    .mapNotNull { apiary ->
+                        val latitude = apiary.latitude ?: return@mapNotNull null
+                        val longitude = apiary.longitude ?: return@mapNotNull null
                         apiary to distanceMeters(
                             phoneLocation.latitude, phoneLocation.longitude,
-                            apiary.latitude!!, apiary.longitude!!
+                            latitude, longitude
                         )
                     }
                     .filter { it.second <= 500f }
@@ -647,8 +646,8 @@ fun BeeKeepApp(
         }
         return
     }
-    if (editingApiary != null) {
-        val apiaryToEdit = editingApiary!!
+    val apiaryToEdit = editingApiary
+    if (apiaryToEdit != null) {
         AddApiaryScreen(
             locationController = locationController,
             existingApiary = apiaryToEdit,
@@ -719,8 +718,12 @@ fun BeeKeepApp(
                     // Keep the full note log (including an intentional empty value) available for the next Inspect session.
                     activity.getSharedPreferences(INSPECTION_NOTE_DRAFTS, android.content.Context.MODE_PRIVATE)
                         .edit { putString("hive_${inspection.hiveId}", inspection.notes) }
-                    pendingAutoStartVoiceHiveId = null
-                    inspecting = false
+                    if (vm.selected.value?.id == inspection.hiveId) {
+                        if (pendingAutoStartVoiceHiveId == inspection.hiveId) {
+                            pendingAutoStartVoiceHiveId = null
+                        }
+                        inspecting = false
+                    }
                     scope.launch { snackbarHostState.showSnackbar("Inspection saved") }
                 } else {
                     scope.launch { snackbarHostState.showSnackbar("Could not save inspection. Your field screen is still open; try again.") }
