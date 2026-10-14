@@ -9,7 +9,7 @@ import androidx.room.RoomDatabase
 
 @Database(
     entities = [ApiaryEntity::class, HiveEntity::class, InspectionEntity::class, FeedingEntity::class, TreatmentEntity::class, HarvestEntity::class, ActivityEventEntity::class, SyncOutboxEntity::class, TaskEntity::class, PhotoEntity::class, NfcTagAssignmentEntity::class],
-    version = 9,
+    version = 10,
     exportSchema = false
 )
 abstract class BeeKeepRoomDb : RoomDatabase() {
@@ -166,10 +166,19 @@ abstract class BeeKeepRoomDb : RoomDatabase() {
             }
         }
 
+        val MIGRATION_9_10 = object : Migration(9, 10) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE hives ADD COLUMN bee_count_frames REAL")
+                db.execSQL("ALTER TABLE inspections ADD COLUMN bee_count_frames REAL")
+                // Existing records have no recorded bee-frame estimate, so leave it null
+                // rather than showing a made-up value in the hive list.
+            }
+        }
+
         @Volatile private var INSTANCE: BeeKeepRoomDb? = null
         fun get(context: Context): BeeKeepRoomDb = INSTANCE ?: synchronized(this) {
             INSTANCE ?: Room.databaseBuilder(context.applicationContext, BeeKeepRoomDb::class.java, "beekeep_room.db")
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10)
                 .setJournalMode(RoomDatabase.JournalMode.WRITE_AHEAD_LOGGING)
                 .build()
                 .also { INSTANCE = it }
