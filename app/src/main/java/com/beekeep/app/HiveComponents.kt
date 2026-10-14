@@ -79,7 +79,13 @@ internal fun HiveRow(hive: Hive, supporting: String? = null, onClick: () -> Unit
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 Text(hiveDisplayName(hive.number), fontWeight = FontWeight.ExtraBold, style = MaterialTheme.typography.titleMedium)
                 Text(hive.apiary, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Text("Queen ${hive.queenStatus}", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+                Text(
+                    hive.beeCountFrames?.let { frames ->
+                        "Queen ${hive.queenStatus} ~ ${formatBeeCountFrames(frames)} Frames of Bees"
+                    } ?: "Queen ${hive.queenStatus}",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodySmall
+                )
                 supporting?.let { Text(it, color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelMedium) }
             }
             Column(
