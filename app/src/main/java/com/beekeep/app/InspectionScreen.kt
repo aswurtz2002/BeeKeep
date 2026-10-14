@@ -92,6 +92,7 @@ import kotlinx.coroutines.launch
 import java.text.DateFormat
 import java.util.Date
 import java.util.Locale
+import kotlin.math.roundToInt
 import org.json.JSONObject
 
 internal const val INSPECTION_NOTE_DRAFTS = "beekeep_inspection_note_drafts"
@@ -114,7 +115,8 @@ private data class InspectionFormDraft(
     val diseaseFlags: String,
     val updatedAt: Long,
     val latitude: Double? = null,
-    val longitude: Double? = null
+    val longitude: Double? = null,
+    val beeCountHalfSteps: Int? = null
 )
 
 private fun readInspectionFormDraft(
@@ -141,7 +143,10 @@ private fun readInspectionFormDraft(
             diseaseFlags = json.optString("diseaseFlags", ""),
             updatedAt = json.optLong("updatedAt", 0L),
             latitude = if (json.has("latitude") && !json.isNull("latitude")) json.optDouble("latitude") else null,
-            longitude = if (json.has("longitude") && !json.isNull("longitude")) json.optDouble("longitude") else null
+            longitude = if (json.has("longitude") && !json.isNull("longitude")) json.optDouble("longitude") else null,
+            beeCountHalfSteps = if (json.has("beeCountHalfSteps") && !json.isNull("beeCountHalfSteps")) {
+                json.optInt("beeCountHalfSteps", 1).coerceIn(1, 20)
+            } else null
         )
     }.getOrNull()
 }
@@ -169,6 +174,7 @@ private fun saveInspectionFormDraft(
         .put("updatedAt", System.currentTimeMillis())
         .put("latitude", draft.latitude ?: JSONObject.NULL)
         .put("longitude", draft.longitude ?: JSONObject.NULL)
+        .put("beeCountHalfSteps", draft.beeCountHalfSteps ?: JSONObject.NULL)
     prefs.edit { putString("hive_$hiveId", json.toString()) }
 }
 
@@ -342,6 +348,16 @@ internal fun InspectionScreen(
             )
         )
     }
+    var beeCountHalfSteps by rememberSaveable(hive.id, formStateKey, lastInspection?.id) {
+        val previousFrames = if (rememberLastInspectionValues) {
+            lastInspection?.beeCountFrames ?: hive.beeCountFrames
+        } else null
+        mutableIntStateOf(
+            (formDraft?.beeCountHalfSteps
+                ?: previousFrames?.let { (it * 2.0).roundToInt() }
+                ?: 1).coerceIn(1, 20)
+        )
+    }
     var queen by rememberSaveable(hive.id, formStateKey, lastInspection?.id) {
         mutableStateOf(formDraft?.queenStatus ?: (if (rememberLastInspectionValues) lastInspection?.queenStatus else null) ?: hive.queenStatus)
     }
@@ -412,7 +428,8 @@ internal fun InspectionScreen(
         diseaseFlags = diseasesCsv,
         updatedAt = formStateKey,
         latitude = lat,
-        longitude = lon
+        longitude = lon,
+        beeCountHalfSteps = beeCountHalfSteps
     )
     // Keep a separate latest-draft state per hive. A single rememberUpdatedState
     // here was shared while the screen stayed open during NFC cycling, allowing the
@@ -423,7 +440,7 @@ internal fun InspectionScreen(
     }
 
     androidx.compose.runtime.LaunchedEffect(
-        hive.id, strength, queen, mites, sample, eggs, openBrood, cappedBrood,
+        hive.id, strength, beeCountHalfSteps, queen, mites, sample, eggs, openBrood, cappedBrood,
         honey, pollen, emptyComb, emergency, supercedure, swarm, diseasesCsv, lat, lon
     ) {
         saveInspectionFormDraft(formDraftPrefs, hive.id, currentFormDraft)
@@ -755,7 +772,8 @@ internal fun InspectionScreen(
                                             IdGenerator.nextLong(), hive.id, now, ColonyStrength.storedFromGrade(strength), queen, mites,
                                             sample.coerceAtLeast(1), notes.trim(), null, lat, lon,
                                             emergency, supercedure, swarm, eggs, openBrood, cappedBrood,
-                                            honey, pollen, emptyComb, diseasesCsv
+                                            honey, pollen, emptyComb, diseasesCsv,
+                                            beeCountFrames = beeCountHalfSteps / 2.0
                                         )
                                         scope.launch {
                                             try {
@@ -888,6 +906,17 @@ internal fun InspectionScreen(
                     haptic,
                     valueLabel = ColonyStrength.labelForGrade(strength)
                 ) { strength = it }
+            }
+            item {
+                ComparisonCounter(
+                    label = "Bee Count",
+                    value = beeCountHalfSteps,
+                    previous = previousForComparison?.beeCountFrames?.let { (it * 2.0).roundToInt().coerceIn(1, 20) },
+                    range = 1..20,
+                    haptic = haptic,
+                    valueLabel = "${formatBeeCountFrames(beeCountHalfSteps / 2.0)} Frames",
+                    previousValueLabel = previousForComparison?.beeCountFrames?.let { "${formatBeeCountFrames(it)} Frames" }
+                ) { beeCountHalfSteps = it }
             }
             item {
                 Card(
@@ -1035,6 +1064,7 @@ private fun ComparisonCounter(
     range: IntRange,
     haptic: androidx.compose.ui.hapticfeedback.HapticFeedback,
     valueLabel: String? = null,
+    previousValueLabel: String? = null,
     onChange: (Int) -> Unit
 ) {
     Card(
@@ -1050,7 +1080,7 @@ private fun ComparisonCounter(
                 Text(label, Modifier.weight(1f), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.ExtraBold, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 previous?.let {
                     Text(
-                        "Prev: ${ColonyStrength.labelForGrade(it)}",
+                        "Prev: ${previousValueLabel ?: ColonyStrength.labelForGrade(it)}",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
