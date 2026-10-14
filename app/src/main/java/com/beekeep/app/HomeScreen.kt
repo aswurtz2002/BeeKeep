@@ -6,6 +6,7 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -58,11 +59,12 @@ private fun MetricCard(
     title: String,
     value: String,
     modifier: Modifier = Modifier,
-    onClick: () -> Unit
+    onClick: (() -> Unit)? = null
 ) {
+    val clickHandler = onClick
+    val cardModifier = if (clickHandler != null) modifier.clickable { clickHandler() } else modifier
     ElevatedCard(
-        onClick = onClick,
-        modifier = modifier,
+        modifier = cardModifier,
         shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.elevatedCardColors(
             containerColor = MaterialTheme.colorScheme.primaryContainer
@@ -90,12 +92,14 @@ private fun MetricCard(
                     style = MaterialTheme.typography.bodyMedium
                 )
             }
-            Icon(
-                Icons.Rounded.ChevronRight,
-                contentDescription = "Open $title page",
-                tint = MaterialTheme.colorScheme.onPrimaryContainer,
-                modifier = Modifier.padding(start = 8.dp).size(22.dp)
-            )
+            if (clickHandler != null) {
+                Icon(
+                    Icons.Rounded.ChevronRight,
+                    contentDescription = "Open $title page",
+                    tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                    modifier = Modifier.padding(start = 8.dp).size(22.dp)
+                )
+            }
         }
     }
 }
@@ -188,7 +192,6 @@ internal fun HomeScreen(
     apiaries: List<Apiary>,
     padding: androidx.compose.foundation.layout.PaddingValues,
     nfcEnabled: Boolean,
-    onOpenHives: () -> Unit,
     onOpenApiaries: () -> Unit
 ) {
     LazyColumn(
@@ -301,7 +304,7 @@ internal fun HomeScreen(
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 MetricCard("Apiaries", apiaries.size.toString(), Modifier.weight(1f), onClick = onOpenApiaries)
-                MetricCard("Hives", hives.size.toString(), Modifier.weight(1f), onClick = onOpenHives)
+                MetricCard("Hives", hives.size.toString(), Modifier.weight(1f))
             }
         }
         item {
