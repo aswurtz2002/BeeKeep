@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.animateItemPlacement
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -95,8 +96,8 @@ internal fun ApiariesScreen(
                 reordered.add(targetIndex, movingId)
                 val encoded = reordered.joinToString(",")
                 savedOrderIds = encoded
-                // Commit on each actual move so the latest order is durable immediately.
-                orderPreferences.edit().putString("apiary_order_ids", encoded).commit()
+                // apply() updates preferences immediately and writes asynchronously, avoiding UI-thread stalls while dragging.
+                orderPreferences.edit().putString("apiary_order_ids", encoded).apply()
             }
         }
     }
@@ -159,6 +160,8 @@ internal fun ApiariesScreen(
                             onClick = { if (draggingApiaryId == null) onOpenApiary(apiary.name) },
                             modifier = Modifier
                                 .fillMaxWidth()
+                                // Animate neighbors into their new slots, but let the active card stay directly under the finger.
+                                .then(if (isDragging) Modifier else Modifier.animateItemPlacement())
                                 .zIndex(if (isDragging) 1f else 0f)
                                 .graphicsLayer {
                                     translationY = if (isDragging && listItemInfo != null) {
