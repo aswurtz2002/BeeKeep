@@ -382,6 +382,7 @@ fun BeeKeepApp(
     var scanning by remember { mutableStateOf(false) }
     var firstRunPromptVisible by rememberSaveable { mutableStateOf(false) }
     var firstRunPromptChecked by rememberSaveable { mutableStateOf(false) }
+    var pendingResetWarning by rememberSaveable { mutableStateOf<String?>(null) }
     var pendingLocationHive by remember { mutableStateOf<Hive?>(null) }
     var pendingApiaryMove by remember { mutableStateOf<Pair<Hive, Apiary>?>(null) }
     var locationCheckCallback by remember { mutableStateOf<(() -> Unit)?>(null) }
@@ -424,6 +425,15 @@ fun BeeKeepApp(
             firstRunPromptVisible = true
         } else if (!setupAlreadyCompleted) {
             autoVoicePrefs.edit { putBoolean("initial_setup_completed", true) }
+        }
+    }
+
+    // Show any cloud-reset warning after the user dismisses the fresh-start prompt.
+    androidx.compose.runtime.LaunchedEffect(firstRunPromptVisible, pendingResetWarning, screen) {
+        val warning = pendingResetWarning ?: return@LaunchedEffect
+        if (!firstRunPromptVisible && screen == Screen.HOME) {
+            snackbarHostState.showSnackbar(warning)
+            pendingResetWarning = null
         }
     }
 
@@ -1004,7 +1014,6 @@ fun BeeKeepApp(
                 apiaries = apiaries,
                 padding = padding,
                 nfcEnabled = nfcEnabledForIndicator,
-                onOpenHives = { screen = Screen.HIVES },
                 onOpenApiaries = {
                     selectedApiaryName = null
                     screen = Screen.APIARIES
@@ -1059,7 +1068,28 @@ fun BeeKeepApp(
                 onLargeFieldTextChange = onLargeFieldTextChange,
                 cloud = cloud,
                 onBack = { screen = Screen.HOME },
-                onOpenMore = { screen = Screen.MORE }
+                onOpenMore = { screen = Screen.MORE },
+                onResetApiaries = { warning ->
+                    vm.clearHive()
+                    nfc.stop(activity)
+                    scanning = false
+                    inspecting = false
+                    selectedHiveOpen = false
+                    selectedApiaryName = null
+                    addApiary = false
+                    addHive = false
+                    editingApiary = null
+                    pendingApiaryMove = null
+                    pendingLocationHive = null
+                    pendingTagUid = null
+                    unassignedTagUid = null
+                    pendingInspectionHiveId = null
+                    pendingAutoStartVoiceHiveId = null
+                    pendingResetWarning = warning
+                    firstRunPromptChecked = true
+                    firstRunPromptVisible = true
+                    screen = Screen.HOME
+                }
             )
             Screen.TAG_MANAGER -> TagManagementScreen(
                 padding = padding,
