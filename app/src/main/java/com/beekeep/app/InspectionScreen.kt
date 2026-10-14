@@ -713,7 +713,7 @@ internal fun InspectionScreen(
 
     // Do not leave the microphone active if the beekeeper backgrounds BeeKeep or locks the phone.
     val voiceLifecycleOwner = LocalLifecycleOwner.current
-    DisposableEffect(voiceLifecycleOwner, speechRecognizer) {
+    DisposableEffect(voiceLifecycleOwner, speechRecognizer, hive.id, formStateKey, lastInspection?.id) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_STOP) {
                 finalizeBeeCountHistory()
