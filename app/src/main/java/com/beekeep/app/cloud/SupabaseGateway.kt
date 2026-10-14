@@ -125,6 +125,80 @@ class SupabaseGateway(
         CloudResult.Failure(t.message ?: "Sign out failed")
     }
 
+    /**
+     * Permanently clears this signed-in workspace in cloud sync. Deletion tombstones are
+     * retained instead of simply dropping rows, so another device won't restore old records.
+     */
+    suspend fun resetWorkspace(): CloudResult = syncMutex.withLock {
+        val supabase = client ?: return@withLock CloudResult.NotConfigured
+        val session = supabase.auth.currentSessionOrNull() ?: run {
+            refreshAccount()
+            return@withLock CloudResult.NotSignedIn
+        }
+        val userId = session.user?.id ?: return@withLock CloudResult.NotSignedIn
+        _account.value = _account.value.copy(syncing = true, error = null)
+        try {
+            // RLS limits this query to the signed-in user's workspace.
+            val remoteRows = supabase.from("beekeep_documents").select()
+                .decodeList<CloudDocumentRow>()
+                .filter { it.user_id == userId }
+            val resetAt = System.currentTimeMillis()
+            val tombstones = remoteRows.map { row ->
+                val existingPayload = runCatching { JSONObject(row.payload) }.getOrDefault(JSONObject())
+                val payload = JSONObject()
+                    .put("id", row.entity_id)
+                    .put("updated_at", resetAt)
+                    .put("deleted", true)
+
+                if (row.entity_type == "photo") {
+                    val cloudPath = existingPayload.optString("cloud_path").takeIf { it.isNotBlank() }
+                    if (cloudPath != null) {
+                        payload.put("cloud_path", cloudPath)
+                        val alreadyRemoved = existingPayload.optBoolean("cloud_deleted", false)
+                        val storageRemoved = if (alreadyRemoved) true else try {
+                            supabase.storage["inspection-photos"].delete(cloudPath)
+                            true
+                        } catch (cancelled: CancellationException) {
+                            throw cancelled
+                        } catch (_: Throwable) {
+                            false
+                        }
+                        if (storageRemoved) payload.put("cloud_deleted", true)
+                    }
+                }
+
+                row.copy(
+                    payload = payload.toString(),
+                    updated_at = resetAt,
+                    deleted = true,
+                    device_id = deviceId
+                )
+            }
+
+            tombstones.chunked(100).forEach { batch ->
+                supabase.from("beekeep_documents").upsert(batch) {
+                    onConflict = "user_id,entity_type,entity_id"
+                }
+            }
+
+            _account.value = _account.value.copy(
+                syncing = false,
+                lastSyncAt = resetAt,
+                error = null,
+                signedIn = true,
+                email = session.user?.email ?: ""
+            )
+            CloudResult.Success
+        } catch (cancelled: CancellationException) {
+            _account.value = _account.value.copy(syncing = false)
+            throw cancelled
+        } catch (error: Throwable) {
+            val message = error.message ?: "Cloud workspace reset failed"
+            _account.value = _account.value.copy(syncing = false, error = message)
+            CloudResult.Failure(message)
+        }
+    }
+
     fun startRealtime() {
         val supabase = client
         if (!configured || supabase == null || realtimeJob?.isActive == true) return
