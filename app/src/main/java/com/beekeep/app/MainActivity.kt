@@ -209,7 +209,7 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
         setContent {
             var darkMode by rememberSaveable { mutableStateOf(prefs.getBoolean("dark_mode", false)) }
             var largeFieldText by rememberSaveable { mutableStateOf(prefs.getBoolean("large_field_text", false)) }
-            var compactHiveRows by rememberSaveable { mutableStateOf(prefs.getBoolean("compact_hive_rows", false)) }
+            var compactHiveRows by rememberSaveable { mutableStateOf(prefs.getBoolean("compact_hive_rows", true)) }
             BeeKeepTheme(darkMode = darkMode) {
                 val baseDensity = androidx.compose.ui.platform.LocalDensity.current
                 androidx.compose.runtime.CompositionLocalProvider(
