@@ -525,6 +525,7 @@ fun BeeKeepApp(
         val assignedHive = vm.findHiveByTag(result.uid)
         val resolvedHiveId = NfcTagResolution.resolveHiveId(assignedHive?.id)
         val resolvedHive = assignedHive?.takeIf { it.id == resolvedHiveId }
+        val openHiveForTagAssignment = selected?.takeIf { selectedHiveOpen && !it.isDead }
         if (resolvedHive != null) {
             checkHiveLocation(resolvedHive)
             // Announce every accepted tag read, even when this hive is already open.
@@ -544,11 +545,11 @@ fun BeeKeepApp(
                 pendingInspectionHiveId = resolvedHive.id
             }
             if (!alreadyOpen) scope.launch { snackbarHostState.showSnackbar("${hiveReferenceName(resolvedHive.number)} recognized • inspection ready") }
-        } else if (selectedHiveOpen && selected != null && !selected.isDead) {
+        } else if (openHiveForTagAssignment != null) {
             // When a hive is already open, treat a newly scanned unassigned tag as
             // belonging to that hive. Keep the beekeeper on this page instead of
             // showing the generic "assign or create" dialog.
-            val targetHive = selected
+            val targetHive = openHiveForTagAssignment
             lastHiveTagSuccessHiveId = null
             lastHiveTagSuccessUid = null
             if (result.launchPreparationError != null) {
