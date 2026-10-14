@@ -320,6 +320,7 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
 
 enum class Screen {
     HOME,
+    HIVES,
     PREMADE_SETUP,
     APIARIES,
     APIARY_HIVES,
@@ -397,6 +398,21 @@ fun BeeKeepApp(
     val treatments by vm.treatments.collectAsStateWithLifecycle()
     val harvests by vm.harvests.collectAsStateWithLifecycle()
     val ready by vm.ready.collectAsStateWithLifecycle()
+
+    val lifecycleOwner = LocalLifecycleOwner.current
+    var nfcEnabledForIndicator by remember(nfc) {
+        mutableStateOf(nfc.isAvailable() && nfc.isEnabled())
+    }
+    DisposableEffect(lifecycleOwner, nfc) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                nfcEnabledForIndicator = nfc.isAvailable() && nfc.isEnabled()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        nfcEnabledForIndicator = nfc.isAvailable() && nfc.isEnabled()
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
 
     // Offer first-run setup only after every record stream has hydrated. Existing
     // workspaces are marked as initialized silently so upgrades are never interrupted.
@@ -971,7 +987,7 @@ fun BeeKeepApp(
                 contentColor = OnNavBar,
                 tonalElevation = 0.dp
             ) {
-                NavItem("Home", Icons.Rounded.Home, screen == Screen.HOME) { screen = Screen.HOME }
+                NavItem("Home", Icons.Rounded.Home, screen == Screen.HOME || screen == Screen.HIVES) { screen = Screen.HOME }
                 NavItem("Apiaries", Icons.Rounded.Yard, screen == Screen.APIARIES || screen == Screen.APIARY_HIVES) { selectedApiaryName = null; screen = Screen.APIARIES }
                 NavItem("Map", Icons.Rounded.Map, screen == Screen.MAP) {
                     mapOrigin = Screen.HOME
@@ -987,49 +1003,19 @@ fun BeeKeepApp(
                 hives = hives,
                 apiaries = apiaries,
                 padding = padding,
-                scanning = scanning,
-                onCancelScan = { nfc.stop(activity); scanning = false },
-                onScan = {
-                    if (scanning) {
-                        // A second tap cancels the in-place scan.
-                        nfc.stop(activity)
-                        scanning = false
-                    } else {
-                        scanning = true
-                        nfc.startReadAndPrepareForBeeKeep(activity) { result ->
-                            scanning = false
-                            when (result) {
-                                is NfcResult.Read -> {
-                                    result.launchPreparationError?.let { message ->
-                                        scope.launch { snackbarHostState.showSnackbar(message) }
-                                    }
-                                    scope.launch {
-                                        val assignedHive = vm.findHiveByTag(result.uid)
-                                        val resolvedHiveId = NfcTagResolution.resolveHiveId(assignedHive?.id)
-                                        val resolvedHive = assignedHive?.takeIf { it.id == resolvedHiveId }
-                                        if (resolvedHive != null) {
-                                            checkHiveLocation(resolvedHive)
-                                            if (autoVoicePrefs.getBoolean("speak_hive_number_on_scan", true)) onSpeakHiveNumber(resolvedHive.number)
-                                            vm.openHive(resolvedHive.id)
-                                            selectedHiveOpen = true
-                                            screen = Screen.HOME
-                                            pendingAutoStartVoiceHiveId = resolvedHive.id
-                                            pendingInspectionHiveId = resolvedHive.id
-                                            snackbarHostState.showSnackbar("${hiveReferenceName(resolvedHive.number)} recognized • inspection ready")
-                                        } else {
-                                            unassignedTagOrigin = Screen.HOME
-                                            unassignedTagUid = result.uid
-                                        }
-                                    }
-                                }
-                                is NfcResult.Error -> scope.launch { snackbarHostState.showSnackbar(result.message) }
-                                is NfcResult.Written -> Unit
-                            }
-                        }
-                        // startRead can immediately return an error if NFC is off/unavailable.
-                        scanning = nfc.isScanning()
-                    }
+                nfcEnabled = nfcEnabledForIndicator,
+                onOpenHives = { screen = Screen.HIVES },
+                onOpenApiaries = {
+                    selectedApiaryName = null
+                    screen = Screen.APIARIES
                 }
+            )
+            Screen.HIVES -> AllHivesScreen(
+                hives = hives,
+                padding = padding,
+                onBack = { screen = Screen.HOME },
+                onAddHive = { selectedApiaryName = null; addHive = true },
+                onOpenHive = { hiveId -> vm.openHive(hiveId); selectedHiveOpen = true }
             )
             Screen.APIARIES -> ApiariesScreen(
                 apiaries, hives, padding,
@@ -1160,6 +1146,88 @@ private fun androidx.compose.foundation.layout.RowScope.NavItem(label: String, i
             unselectedTextColor = OnNavBarMuted
         )
     )
+}
+
+@Composable
+private fun AllHivesScreen(
+    hives: List<Hive>,
+    padding: PaddingValues,
+    onBack: () -> Unit,
+    onAddHive: () -> Unit,
+    onOpenHive: (Long) -> Unit
+) {
+    BackHandler { onBack() }
+    var query by rememberSaveable { mutableStateOf("") }
+    val filtered = hives
+        .filter { hive ->
+            query.isBlank() ||
+                hive.number.contains(query, ignoreCase = true) ||
+                hiveDisplayName(hive.number).contains(query, ignoreCase = true) ||
+                hive.apiary.contains(query, ignoreCase = true)
+        }
+        .sortedWith(compareBy<Hive>({ it.apiary.lowercase(Locale.ROOT) }, { it.number.toIntOrNull() ?: Int.MAX_VALUE }, { it.number }))
+
+    Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+        InspectionHoneycombBackground(Modifier.matchParentSize())
+        Column(
+            Modifier.fillMaxSize().padding(padding).padding(horizontal = 16.dp)
+        ) {
+            Row(
+                Modifier.fillMaxWidth().padding(top = 10.dp, bottom = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(onClick = onBack) { Icon(Icons.Rounded.ArrowBack, "Back to home") }
+                Column(Modifier.weight(1f)) {
+                    Text("Hives", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.ExtraBold)
+                    Text(
+                        "${hives.size} ${if (hives.size == 1) "hive" else "hives"} across all apiaries",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                IconButton(onClick = onAddHive, modifier = Modifier.size(52.dp)) {
+                    Icon(Icons.Rounded.Add, "Add hive")
+                }
+            }
+            OutlinedTextField(
+                value = query,
+                onValueChange = { query = it },
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("Search hives or apiaries", color = Color(0xFF78350F)) },
+                leadingIcon = { Icon(Icons.Rounded.Search, null, tint = Color(0xFF78350F)) },
+                singleLine = true,
+                shape = RoundedCornerShape(16.dp),
+                colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
+                    focusedContainerColor = MaterialTheme.colorScheme.surface,
+                    unfocusedContainerColor = MaterialTheme.colorScheme.surface,
+                    focusedBorderColor = Color(0xFFD97706),
+                    unfocusedBorderColor = MaterialTheme.colorScheme.outline,
+                    focusedTextColor = MaterialTheme.colorScheme.onSurface,
+                    unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
+                    cursorColor = Color(0xFFD97706)
+                )
+            )
+            Spacer(Modifier.height(10.dp))
+            if (filtered.isEmpty()) {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    EmptyState(
+                        if (hives.isEmpty()) "No hives yet" else "No matching hives",
+                        if (hives.isEmpty()) "Create an apiary and add hives to see them here." else "Try another hive number or apiary name.",
+                        if (hives.isEmpty()) "ADD HIVE" else null,
+                        if (hives.isEmpty()) onAddHive else null
+                    )
+                }
+            } else {
+                LazyColumn(
+                    contentPadding = PaddingValues(bottom = 20.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    items(filtered, key = { it.id }) { hive ->
+                        HiveRow(hive) { onOpenHive(hive.id) }
+                    }
+                }
+            }
+        }
+    }
 }
 
 @Composable
