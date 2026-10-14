@@ -291,6 +291,16 @@ class BeeKeepViewModel(
     private fun normalizeBroodStoresGauge(value: Double): Double =
         (value.coerceIn(0.0, 10.0) * 2.0).roundToInt() / 2.0
 
+    fun recordBeeCountChange(hiveId: Long, previousFrames: Double, newFrames: Double) {
+        if (previousFrames == newFrames || _selected.value?.id != hiveId) return
+        val changedAt = System.currentTimeMillis()
+        viewModelScope.launch {
+            runCatching {
+                repo.recordBeeCountChange(hiveId, previousFrames, newFrames, changedAt)
+            }
+        }
+    }
+
     suspend fun saveInspection(i: Inspection): Boolean {
         val h = _selected.value ?: return false
         if (i.hiveId != h.id) return false

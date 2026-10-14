@@ -28,6 +28,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -41,8 +42,10 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.GpsFixed
+import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.Home
 import androidx.compose.material.icons.rounded.Mic
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -55,6 +58,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
@@ -85,6 +89,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.core.content.edit
+import com.beekeep.app.data.ActivityEvent
 import com.beekeep.app.data.Hive
 import com.beekeep.app.data.Inspection
 import com.beekeep.app.location.LocationController
@@ -297,6 +302,7 @@ internal fun InspectionScreen(
     locationController: LocationController,
     hive: Hive,
     priorInspections: List<Inspection>,
+    beeCountHistory: List<ActivityEvent>,
     defaultMiteSampleSize: Int,
     defaultStartingStrength: Int,
     rememberLastInspectionValues: Boolean,
@@ -305,6 +311,7 @@ internal fun InspectionScreen(
     autoVoiceEnabled: Boolean,
     onVoiceAutoStartConsumed: () -> Unit,
     onSaveHiveLocation: (Long, Double, Double, (String?) -> Unit) -> Unit,
+    onRecordBeeCountChange: (Long, Double, Double) -> Unit,
     onBack: () -> Unit,
     onHome: () -> Unit,
     onSave: suspend (Inspection) -> Unit
@@ -419,6 +426,7 @@ internal fun InspectionScreen(
     var voicePartialText by rememberSaveable(hive.id) { mutableStateOf("") }
     var saving by rememberSaveable(hive.id) { mutableStateOf(false) }
     var saveError by rememberSaveable(hive.id) { mutableStateOf("") }
+    var showBeeCountHistory by rememberSaveable(hive.id) { mutableStateOf(false) }
 
     val currentFormDraft = InspectionFormDraft(
         strength = strength,
@@ -925,7 +933,28 @@ internal fun InspectionScreen(
                     haptic = haptic,
                     valueLabel = "${formatBeeCountFrames(beeCountHalfSteps / 2.0)} Frames",
                     previousValueLabel = previousForComparison?.beeCountFrames?.let { "${formatBeeCountFrames(it)} Frames" }
-                ) { beeCountHalfSteps = it }
+                ) { updatedValue ->
+                    val previousValue = beeCountHalfSteps
+                    if (updatedValue != previousValue) {
+                        beeCountHalfSteps = updatedValue
+                        onRecordBeeCountChange(hive.id, previousValue / 2.0, updatedValue / 2.0)
+                    }
+                }
+            }
+            item {
+                OutlinedButton(
+                    onClick = { showBeeCountHistory = true },
+                    modifier = Modifier.fillMaxWidth().height(44.dp),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Icon(Icons.Rounded.History, contentDescription = null)
+                    Spacer(Modifier.width(6.dp))
+                    Text("HISTORY", fontWeight = FontWeight.ExtraBold)
+                    if (beeCountHistory.isNotEmpty()) {
+                        Spacer(Modifier.width(6.dp))
+                        Text("(${beeCountHistory.size})", style = MaterialTheme.typography.labelMedium)
+                    }
+                }
             }
             item {
                 Card(
@@ -1025,6 +1054,57 @@ internal fun InspectionScreen(
 
 
 
+            }
+            if (showBeeCountHistory) {
+                AlertDialog(
+                    onDismissRequest = { showBeeCountHistory = false },
+                    title = { Text("Bee Count History", fontWeight = FontWeight.ExtraBold) },
+                    text = {
+                        if (beeCountHistory.isEmpty()) {
+                            Text("No bee-count changes have been recorded for this hive yet.")
+                        } else {
+                            Column(
+                                modifier = Modifier.fillMaxWidth()
+                                    .heightIn(max = 360.dp)
+                                    .verticalScroll(rememberScrollState()),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Text(
+                                    "Every change is recorded with its date and time.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                beeCountHistory
+                                    .sortedWith(compareByDescending<ActivityEvent> { it.createdAt }.thenByDescending { it.id })
+                                    .forEach { entry ->
+                                        Column(
+                                            modifier = Modifier.fillMaxWidth()
+                                                .background(
+                                                    MaterialTheme.colorScheme.surfaceVariant,
+                                                    RoundedCornerShape(12.dp)
+                                                )
+                                                .padding(10.dp),
+                                            verticalArrangement = Arrangement.spacedBy(3.dp)
+                                        ) {
+                                            Text(
+                                                DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT)
+                                                    .format(Date(entry.createdAt)),
+                                                style = MaterialTheme.typography.labelMedium,
+                                                fontWeight = FontWeight.Bold,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                            Text(entry.detail, style = MaterialTheme.typography.bodyMedium)
+                                        }
+                                    }
+                            }
+                        }
+                    },
+                    confirmButton = {
+                        TextButton(onClick = { showBeeCountHistory = false }) {
+                            Text("CLOSE", fontWeight = FontWeight.ExtraBold)
+                        }
+                    }
+                )
             }
         }
     }

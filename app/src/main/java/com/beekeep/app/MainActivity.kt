@@ -771,6 +771,7 @@ fun BeeKeepApp(
         InspectionScreen(
             activity, locationController, hiveForInspection,
             priorInspections = inspections,
+            beeCountHistory = events.filter { it.type == "bee_count_change" && it.hiveId == hiveForInspection.id },
             defaultMiteSampleSize = autoVoicePrefs.getInt("default_mite_sample_size", 300).coerceIn(1, 10000),
             defaultStartingStrength = autoVoicePrefs.getInt("default_starting_strength", 3).coerceIn(1, 5),
             rememberLastInspectionValues = autoVoicePrefs.getBoolean("remember_last_inspection_values", true),
@@ -782,6 +783,9 @@ fun BeeKeepApp(
             },
             onSaveHiveLocation = { hiveId, latitude, longitude, onResult ->
                 vm.updateHiveLocation(hiveId, latitude, longitude, onResult)
+            },
+            onRecordBeeCountChange = { hiveId, previousFrames, newFrames ->
+                vm.recordBeeCountChange(hiveId, previousFrames, newFrames)
             },
             onBack = { pendingAutoStartVoiceHiveId = null; inspecting = false },
             onHome = {

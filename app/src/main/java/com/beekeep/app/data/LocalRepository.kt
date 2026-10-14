@@ -485,6 +485,30 @@ class LocalHiveRepository(context: Context) {
         }
     }
 
+    suspend fun recordBeeCountChange(
+        hiveId: Long,
+        previousFrames: Double,
+        newFrames: Double,
+        changedAt: Long
+    ) = withContext(Dispatchers.IO) {
+        require(previousFrames.isFinite() && newFrames.isFinite()) { "Bee frame values must be valid numbers." }
+        require(previousFrames in 0.5..10.0 && newFrames in 0.5..10.0) { "Bee frame values must be between 0.5 and 10." }
+        require(previousFrames != newFrames) { "Bee frame count did not change." }
+        db.withTransaction {
+            if (db.hives().get(hiveId) == null) return@withTransaction
+            val event = ActivityEventEntity(
+                id = IdGenerator.nextLong(),
+                hiveId = hiveId,
+                createdAt = changedAt,
+                type = "bee_count_change",
+                title = "Bee count changed",
+                detail = "Frames changed from ${formatBeeCountFrames(previousFrames)} to ${formatBeeCountFrames(newFrames)}"
+            )
+            db.events().upsert(event)
+            enqueue("event", event.id, "upsert", eventPayload(event))
+        }
+    }
+
     suspend fun saveInspection(i: Inspection) = withContext(Dispatchers.IO) {
         requireValidCoordinates(i.latitude, i.longitude, "Inspection")
         db.withTransaction {
@@ -1076,6 +1100,10 @@ class LocalHiveRepository(context: Context) {
 
     private fun normalizeBroodStoresGauge(value: Double): Double =
         (value.coerceIn(0.0, 10.0) * 2.0).roundToInt() / 2.0
+
+    private fun formatBeeCountFrames(value: Double): String =
+        if (value == value.toLong().toDouble()) value.toLong().toString()
+        else String.format(java.util.Locale.US, "%.1f", value)
 
     private fun toHive(e: HiveEntity) = Hive(e.id, e.number, e.apiaryName, e.queenStatus, e.queenMarkColor, e.queenOrigin, e.queenAgeMonths, e.queenTemperament, e.strength, e.mitePercent, e.tagUid, e.status, e.deadAt, e.latitude, e.longitude, e.beeCountFrames)
     private fun toInspection(e: InspectionEntity) = Inspection(e.id, e.hiveId, e.createdAt, e.strength, e.queenStatus, e.miteCount, e.sampleSize, e.notes, e.photoPath, e.latitude, e.longitude, e.emergencyCells, e.supercedureCells, e.swarmCells, e.eggs, e.openBrood, e.cappedBrood, e.honeyStores, e.pollen, e.emptyDrawnComb, e.diseaseFlags, e.beeCountFrames)
