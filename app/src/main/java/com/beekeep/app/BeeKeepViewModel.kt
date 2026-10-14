@@ -121,8 +121,8 @@ class BeeKeepViewModel(
     ) {
         val cleanPrefix = hivePrefix.trim()
         val cleanApiaryNames = apiaryNames.map(String::trim)
-        if (cleanApiaryNames.isEmpty() || cleanApiaryNames.size > 30) {
-            onResult(false, "Choose between 1 and 30 apiaries.")
+        if (cleanApiaryNames.isEmpty() || cleanApiaryNames.size > 50) {
+            onResult(false, "Choose between 1 and 50 apiaries.")
             return
         }
         if (cleanApiaryNames.size != startingHiveNumbers.size ||
@@ -143,8 +143,8 @@ class BeeKeepViewModel(
             onResult(false, "Starting numbers must be between 1 and 999,999.")
             return
         }
-        if (hiveCounts.any { it !in 0..1_000 } || hiveCounts.sum() > 1_000) {
-            onResult(false, "Choose between 0 and 1,000 hives per apiary, with no more than 1,000 total.")
+        if (hiveCounts.any { it !in 0..5_000 } || hiveCounts.sum() > 5_000) {
+            onResult(false, "Choose between 0 and 5,000 hives per apiary, with no more than 5,000 total.")
             return
         }
         if (startingHiveNumbers.indices.any { i ->
