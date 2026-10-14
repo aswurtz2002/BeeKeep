@@ -95,6 +95,7 @@ internal fun HiveDetailScreen(
     onTag: (String, (Boolean, String?) -> Unit) -> Unit,
     onClearTag: (Long, (Boolean, String?) -> Unit) -> Unit,
     confirmBeforeTagRemoval: Boolean = true,
+    tagAssignmentSuccessUid: String? = null,
     onVerifyTag: () -> Unit,
     onMarkDead: () -> Unit,
     onRestore: () -> Unit,
@@ -461,6 +462,30 @@ internal fun HiveDetailScreen(
                             modifier = Modifier.fillMaxWidth().height(36.dp)
                         ) {
                             Text(if (removingTag) "REMOVING…" else "REMOVE TAG", style = MaterialTheme.typography.labelSmall)
+                        }
+                    }
+                    if (!tagAssignmentSuccessUid.isNullOrBlank()) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth()
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(Color(0xFFDCFCE7))
+                                .padding(10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Icon(
+                                Icons.Rounded.TaskAlt,
+                                contentDescription = "NFC tag successfully assigned",
+                                tint = Color(0xFF166534),
+                                modifier = Modifier.size(22.dp)
+                            )
+                            Text(
+                                "NFC tag successfully assigned • $tagAssignmentSuccessUid",
+                                modifier = Modifier.weight(1f),
+                                color = Color(0xFF166534),
+                                style = MaterialTheme.typography.bodySmall,
+                                fontWeight = FontWeight.ExtraBold
+                            )
                         }
                     }
                     if (writeStatus.isNotBlank()) {
