@@ -230,7 +230,8 @@ class LocalHiveRepository(context: Context) {
             deadAt = existing?.deadAt ?: h.deadAt,
             statusChangedAt = existing?.statusChangedAt ?: now,
             latitude = if (h.latitude != null && h.longitude != null) h.latitude else existing?.latitude,
-            longitude = if (h.latitude != null && h.longitude != null) h.longitude else existing?.longitude
+            longitude = if (h.latitude != null && h.longitude != null) h.longitude else existing?.longitude,
+            beeCountFrames = h.beeCountFrames ?: existing?.beeCountFrames
         )
         db.hives().upsert(entity)
         enqueue("hive", h.id, "upsert", hivePayload(entity))
