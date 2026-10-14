@@ -164,7 +164,7 @@ class LocalHiveRepository(context: Context) {
             }
             clean
         }
-        require(cleanHiveNumbers.sumOf { it.size } <= 1_000) { "Create no more than 1,000 hives at a time." }
+        require(cleanHiveNumbers.sumOf { it.size } <= 5_000) { "Create no more than 5,000 hives at a time." }
 
         db.withTransaction {
             require(db.apiaries().allForBackup().isEmpty() && db.hives().allForBackup().isEmpty()) {
