@@ -22,6 +22,87 @@ class LocalHiveRepository(context: Context) {
         LegacyImporter.importIfNeeded(appContext, db)
     }
 
+    /**
+     * Wipe the local workspace while preserving cloud deletion tombstones. The tombstones
+     * prevent data from returning on a later sync, and this runs as one Room transaction.
+     */
+    suspend fun resetAllData() = withContext(Dispatchers.IO) {
+        var photosToDelete: List<PhotoEntity> = emptyList()
+        db.withTransaction {
+            val apiaries = db.apiaries().allForBackup()
+            val hives = db.hives().allForBackup()
+            val inspections = db.inspections().allForBackup()
+            val feedings = db.feedings().allForBackup()
+            val treatments = db.treatments().allForBackup()
+            val harvests = db.harvests().allForBackup()
+            val events = db.events().allForBackup()
+            val assignments = db.nfcTagAssignments().allForBackup()
+            val photos = db.photos().allForReset()
+            val pendingOutbox = db.outbox().allPendingForReset()
+            photosToDelete = photos
+
+            val resetAt = System.currentTimeMillis()
+            val recordsToDelete = linkedSetOf<Pair<String, Long>>()
+            apiaries.forEach { recordsToDelete.add("apiary" to it.id) }
+            hives.forEach { recordsToDelete.add("hive" to it.id) }
+            inspections.forEach { recordsToDelete.add("inspection" to it.id) }
+            feedings.forEach { recordsToDelete.add("feeding" to it.id) }
+            treatments.forEach { recordsToDelete.add("treatment" to it.id) }
+            harvests.forEach { recordsToDelete.add("harvest" to it.id) }
+            events.forEach { recordsToDelete.add("event" to it.id) }
+            assignments.forEach { recordsToDelete.add("nfc_assignment" to it.id) }
+            photos.forEach { recordsToDelete.add("photo" to it.id) }
+            // Convert queued writes to deletes too, including changes for records already
+            // removed locally, so a pending upload can never recreate a wiped record.
+            pendingOutbox.forEach { recordsToDelete.add(it.entityType to it.entityId) }
+
+            val photoCloudPaths = photos.mapNotNull { photo ->
+                photo.cloudPath?.takeIf(String::isNotBlank)?.let { photo.id to it }
+            }.toMap().toMutableMap()
+            pendingOutbox.filter { it.entityType == "photo" }.forEach { item ->
+                val path = runCatching { JSONObject(item.payload).optString("cloud_path") }
+                    .getOrNull()?.takeIf(String::isNotBlank)
+                if (path != null) photoCloudPaths[item.entityId] = path
+            }
+
+            // Delete children before parent records to respect all Room foreign keys.
+            db.photos().clearAll()
+            db.events().clearAll()
+            db.harvests().clearAll()
+            db.treatments().clearAll()
+            db.feedings().clearAll()
+            db.inspections().clearAll()
+            db.nfcTagAssignments().clearAll()
+            db.tasks().clearAll()
+            db.hives().clearAll()
+            db.apiaries().clearAll()
+            db.outbox().clearAll()
+
+            recordsToDelete.forEach { (type, id) ->
+                val payload = JSONObject()
+                    .put("id", id)
+                    .put("updated_at", resetAt)
+                    .put("deleted", true)
+                if (type == "photo") {
+                    photoCloudPaths[id]?.let { payload.put("cloud_path", it) }
+                }
+                db.outbox().enqueue(
+                    SyncOutboxEntity(
+                        id = IdGenerator.nextLong(),
+                        entityType = type,
+                        entityId = id,
+                        operation = "delete",
+                        payload = payload.toString(),
+                        createdAt = resetAt
+                    )
+                )
+            }
+        }
+
+        // Photo files live outside the Room database.
+        photosToDelete.forEach { photo -> runCatching { java.io.File(photo.localPath).delete() } }
+    }
+
     fun observeHives(): Flow<List<Hive>> = db.hives().observeAll().map { it.map(::toHive) }
     fun observeDeadHives(): Flow<List<Hive>> = db.hives().observeDead().map { it.map(::toHive) }
     fun observeApiaries(): Flow<List<Apiary>> = db.apiaries().observeAll().map { it.map(::toApiary) }
