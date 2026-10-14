@@ -106,6 +106,8 @@ internal fun SettingsScreen(
     onAutoVoiceEnabledChange: (Boolean) -> Unit,
     largeFieldText: Boolean,
     onLargeFieldTextChange: (Boolean) -> Unit,
+    compactHiveRows: Boolean,
+    onCompactHiveRowsChange: (Boolean) -> Unit,
     cloud: SupabaseGateway,
     onBack: () -> Unit,
     onOpenMore: () -> Unit,
@@ -252,7 +254,7 @@ internal fun SettingsScreen(
                 Text("Settings", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.ExtraBold)
 }
 
-            SettingsSection("Appearance & field mode", Icons.Rounded.Settings) {
+            SettingsSection("Layout & Appearance", Icons.Rounded.Settings) {
                 SettingsSwitchRow(
                     title = "Yellow + black field mode",
                     checked = darkMode,
@@ -262,6 +264,11 @@ internal fun SettingsScreen(
                     title = "Larger field text",
                     checked = largeFieldText,
                     onCheckedChange = onLargeFieldTextChange
+                )
+                SettingsSwitchRow(
+                    title = "Compact hive list cards",
+                    checked = compactHiveRows,
+                    onCheckedChange = onCompactHiveRowsChange
                 )
             }
 
