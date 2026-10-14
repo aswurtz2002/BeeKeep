@@ -37,6 +37,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -110,6 +111,12 @@ internal fun ApiaryMapScreen(
                 )
             )
         }
+    }
+
+    // When the map is opened from the general Map button, start near the beekeeper.
+    // Keep an explicitly selected apiary as the starting focus when opening its map pin.
+    LaunchedEffect(initialFocusApiaryId) {
+        if (initialFocusApiaryId == null) showMyLocation()
     }
 
     val locatedApiaries = apiaries.filter { it.latitude != null && it.longitude != null }
@@ -419,8 +426,9 @@ private fun createApiaryMapHtml(
     val initialZoom = when {
         focus != null -> 17
         located.size == 1 -> 16
-        located.size > 1 -> 5
-        else -> 2
+        // Avoid a world-scale flash while the automatic current-location lookup is running.
+        located.size > 1 -> 12
+        else -> 12
     }
     val focusIdJson = focusedApiaryId?.takeIf { id -> located.any { it.id == id } }
         ?.let { JSONObject.quote(it.toString()) } ?: "null"
