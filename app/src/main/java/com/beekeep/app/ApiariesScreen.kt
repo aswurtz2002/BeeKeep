@@ -51,7 +51,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
-import kotlin.math.abs
 import com.beekeep.app.data.Apiary
 import com.beekeep.app.data.Hive
 
@@ -85,6 +84,7 @@ internal fun ApiariesScreen(
         savedIdList.mapNotNull { byId[it] } + apiaries.filterNot { it.id in savedSet }
     }
     val filtered = orderedApiaries.filter { it.name.contains(query, ignoreCase = true) }
+    val currentOrderedIds = rememberUpdatedState(orderedApiaries.map { it.id })
     val moveApiaryByIds = rememberUpdatedState<(Long, Long) -> Unit> { fromId, targetId ->
         if (fromId != targetId && query.isBlank()) {
             val currentIds = orderedApiaries.map { it.id }
@@ -197,12 +197,26 @@ internal fun ApiariesScreen(
                                             if (draggingApiaryId == apiary.id && query.isBlank()) {
                                                 totalDrag += dragAmount.y
                                                 dragCenterY = initialOffset + draggedSize / 2f + totalDrag
-                                                val target = lazyListState.layoutInfo.visibleItemsInfo
-                                                    .asSequence()
-                                                    .filter { it.key != apiary.id }
-                                                    .minByOrNull { abs((it.offset + it.size / 2f) - dragCenterY) }
-                                                val targetId = target?.key as? Long
-                                                if (targetId != null) moveApiaryByIds.value(apiary.id, targetId)
+                                                val visibleItems = lazyListState.layoutInfo.visibleItemsInfo
+                                                val order = currentOrderedIds.value
+                                                val currentIndex = order.indexOf(apiary.id)
+                                                val draggedInfo = visibleItems.firstOrNull { it.key == apiary.id }
+                                                if (currentIndex >= 0 && draggedInfo != null) {
+                                                    val draggedSlotCenter = draggedInfo.offset + draggedInfo.size / 2f
+                                                    val targetIndex = when {
+                                                        dragCenterY > draggedSlotCenter -> currentIndex + 1
+                                                        dragCenterY < draggedSlotCenter -> currentIndex - 1
+                                                        else -> currentIndex
+                                                    }
+                                                    val targetId = order.getOrNull(targetIndex)
+                                                    val targetInfo = visibleItems.firstOrNull { it.key == targetId }
+                                                    if (targetId != null && targetInfo != null) {
+                                                        val targetCenter = targetInfo.offset + targetInfo.size / 2f
+                                                        val boundary = (draggedSlotCenter + targetCenter) / 2f
+                                                        val crossed = if (targetIndex > currentIndex) dragCenterY > boundary else dragCenterY < boundary
+                                                        if (crossed) moveApiaryByIds.value(apiary.id, targetId)
+                                                    }
+                                                }
                                             }
                                         }
                                     )
