@@ -209,6 +209,7 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
         setContent {
             var darkMode by rememberSaveable { mutableStateOf(prefs.getBoolean("dark_mode", false)) }
             var largeFieldText by rememberSaveable { mutableStateOf(prefs.getBoolean("large_field_text", false)) }
+            var compactHiveRows by rememberSaveable { mutableStateOf(prefs.getBoolean("compact_hive_rows", false)) }
             BeeKeepTheme(darkMode = darkMode) {
                 val baseDensity = androidx.compose.ui.platform.LocalDensity.current
                 androidx.compose.runtime.CompositionLocalProvider(
@@ -229,6 +230,11 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
                         onLargeFieldTextChange = { value ->
                             largeFieldText = value
                             prefs.edit { putBoolean("large_field_text", value) }
+                        },
+                        compactHiveRows = compactHiveRows,
+                        onCompactHiveRowsChange = { value ->
+                            compactHiveRows = value
+                            prefs.edit { putBoolean("compact_hive_rows", value) }
                         },
                         onDarkModeChange = { value ->
                             darkMode = value
@@ -352,6 +358,8 @@ fun BeeKeepApp(
     onSpeakHiveNumber: (String) -> Unit,
     largeFieldText: Boolean,
     onLargeFieldTextChange: (Boolean) -> Unit,
+    compactHiveRows: Boolean,
+    onCompactHiveRowsChange: (Boolean) -> Unit,
     onDarkModeChange: (Boolean) -> Unit
 ) {
     val context = LocalContext.current
@@ -981,6 +989,7 @@ fun BeeKeepApp(
         ApiaryHivesScreen(
             apiaryName = apiaryName,
             hives = hives.filter { it.apiary.equals(apiaryName, ignoreCase = true) },
+            compactHiveRows = compactHiveRows,
             padding = androidx.compose.foundation.layout.PaddingValues(),
             onBack = { selectedApiaryName = null; screen = Screen.APIARIES },
             onAddHive = { addHive = true },
@@ -1021,6 +1030,7 @@ fun BeeKeepApp(
             )
             Screen.HIVES -> AllHivesScreen(
                 hives = hives,
+                compactHiveRows = compactHiveRows,
                 padding = padding,
                 onBack = { screen = Screen.HOME },
                 onAddHive = { selectedApiaryName = null; addHive = true },
@@ -1066,6 +1076,8 @@ fun BeeKeepApp(
                 },
                 largeFieldText = largeFieldText,
                 onLargeFieldTextChange = onLargeFieldTextChange,
+                compactHiveRows = compactHiveRows,
+                onCompactHiveRowsChange = onCompactHiveRowsChange,
                 cloud = cloud,
                 onBack = { screen = Screen.HOME },
                 onOpenMore = { screen = Screen.MORE },
@@ -1181,6 +1193,7 @@ private fun androidx.compose.foundation.layout.RowScope.NavItem(label: String, i
 @Composable
 private fun AllHivesScreen(
     hives: List<Hive>,
+    compactHiveRows: Boolean,
     padding: PaddingValues,
     onBack: () -> Unit,
     onAddHive: () -> Unit,
@@ -1252,7 +1265,7 @@ private fun AllHivesScreen(
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     items(filtered, key = { it.id }) { hive ->
-                        HiveRow(hive) { onOpenHive(hive.id) }
+                        HiveRow(hive, compact = compactHiveRows) { onOpenHive(hive.id) }
                     }
                 }
             }
@@ -1264,6 +1277,7 @@ private fun AllHivesScreen(
 private fun ApiaryHivesScreen(
     apiaryName: String,
     hives: List<Hive>,
+    compactHiveRows: Boolean,
     padding: androidx.compose.foundation.layout.PaddingValues,
     onBack: () -> Unit,
     onAddHive: () -> Unit,
@@ -1315,7 +1329,7 @@ private fun ApiaryHivesScreen(
         } else {
             LazyColumn(contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 items(filtered, key = { it.id }) { hive ->
-                    HiveRow(hive) { onOpenHive(hive.id) }
+                    HiveRow(hive, compact = compactHiveRows) { onOpenHive(hive.id) }
                 }
             }
         }
