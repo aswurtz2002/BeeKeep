@@ -320,6 +320,7 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
 
 enum class Screen {
     HOME,
+    PREMADE_SETUP,
     APIARIES,
     APIARY_HIVES,
     MAP,
@@ -376,6 +377,8 @@ fun BeeKeepApp(
     var pendingInspectionHiveId by rememberSaveable { mutableStateOf<Long?>(null) }
     var pendingAutoStartVoiceHiveId by rememberSaveable { mutableStateOf<Long?>(null) }
     var scanning by remember { mutableStateOf(false) }
+    var firstRunPromptVisible by rememberSaveable { mutableStateOf(false) }
+    var firstRunPromptChecked by rememberSaveable { mutableStateOf(false) }
     var pendingLocationHive by remember { mutableStateOf<Hive?>(null) }
     var pendingApiaryMove by remember { mutableStateOf<Pair<Hive, Apiary>?>(null) }
     var locationCheckCallback by remember { mutableStateOf<(() -> Unit)?>(null) }
@@ -392,6 +395,19 @@ fun BeeKeepApp(
     val treatments by vm.treatments.collectAsStateWithLifecycle()
     val harvests by vm.harvests.collectAsStateWithLifecycle()
     val ready by vm.ready.collectAsStateWithLifecycle()
+
+    // Offer first-run setup only after every record stream has hydrated. Existing
+    // workspaces are marked as initialized silently so upgrades are never interrupted.
+    androidx.compose.runtime.LaunchedEffect(ready, hives, deadHives, apiaries) {
+        if (!ready || firstRunPromptChecked) return@LaunchedEffect
+        firstRunPromptChecked = true
+        val setupAlreadyCompleted = autoVoicePrefs.getBoolean("initial_setup_completed", false)
+        if (!setupAlreadyCompleted && hives.isEmpty() && deadHives.isEmpty() && apiaries.isEmpty()) {
+            firstRunPromptVisible = true
+        } else if (!setupAlreadyCompleted) {
+            autoVoicePrefs.edit { putBoolean("initial_setup_completed", true) }
+        }
+    }
 
     // Wait until the ViewModel has loaded the scanned hive before presenting Inspect.
     androidx.compose.runtime.LaunchedEffect(selected?.id, pendingInspectionHiveId) {
@@ -880,6 +896,24 @@ fun BeeKeepApp(
         )
         return
     }
+    if (screen == Screen.PREMADE_SETUP) {
+        PreMadeHiveSetupScreen(
+            vm = vm,
+            onBack = {
+                screen = Screen.HOME
+                firstRunPromptVisible = !autoVoicePrefs.getBoolean("initial_setup_completed", false)
+            },
+            onComplete = { createdApiaries, createdHives ->
+                autoVoicePrefs.edit { putBoolean("initial_setup_completed", true) }
+                firstRunPromptVisible = false
+                screen = Screen.HOME
+                scope.launch {
+                    snackbarHostState.showSnackbar("Created $createdApiaries apiaries and $createdHives hives.")
+                }
+            }
+        )
+        return
+    }
     if (screen == Screen.APIARY_HIVES) {
         val apiaryName = selectedApiaryName
         if (apiaryName == null) {
@@ -1041,8 +1075,41 @@ fun BeeKeepApp(
                 onBack = { screen = Screen.MORE },
                 onOpenHive = { vm.openHive(it); selectedHiveOpen = true }
             )
-            Screen.SCAN, Screen.APIARY_HIVES -> Unit
+            Screen.SCAN, Screen.APIARY_HIVES, Screen.PREMADE_SETUP -> Unit
         }
+    }
+
+    if (firstRunPromptVisible && screen == Screen.HOME) {
+        AlertDialog(
+            onDismissRequest = {},
+            properties = DialogProperties(
+                dismissOnBackPress = false,
+                dismissOnClickOutside = false
+            ),
+            title = { Text("Welcome to BeeKeep", fontWeight = FontWeight.ExtraBold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("How would you like to get started?")
+                    Button(
+                        onClick = {
+                            firstRunPromptVisible = false
+                            screen = Screen.PREMADE_SETUP
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(14.dp)
+                    ) { Text("Load Pre-made Hives") }
+                    OutlinedButton(
+                        onClick = {
+                            autoVoicePrefs.edit { putBoolean("initial_setup_completed", true) }
+                            firstRunPromptVisible = false
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(14.dp)
+                    ) { Text("Start from Scratch") }
+                }
+            },
+            confirmButton = {}
+        )
     }
 }
 

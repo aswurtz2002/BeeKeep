@@ -57,6 +57,66 @@ class LocalHiveRepository(context: Context) {
         db.hives().byNumberAndApiary(number.trim(), apiary.trim()).let { it?.let(::toHive) }
     }
 
+    /**
+     * Create first-run apiaries and their hives together so the setup is all-or-nothing.
+     * Every created record is queued through the same outbox used by ordinary edits.
+     */
+    suspend fun createStarterSetup(
+        apiaryNames: List<String>,
+        hiveNumbersByApiary: List<List<String>>
+    ) = withContext(Dispatchers.IO) {
+        require(apiaryNames.isNotEmpty()) { "Create at least one apiary." }
+        require(apiaryNames.size == hiveNumbersByApiary.size) { "Each apiary needs a hive-name list." }
+
+        val cleanApiaryNames = apiaryNames.map(String::trim)
+        require(cleanApiaryNames.all(String::isNotBlank)) { "Apiary names cannot be blank." }
+        require(cleanApiaryNames.map { it.lowercase(java.util.Locale.ROOT) }.distinct().size == cleanApiaryNames.size) {
+            "Apiary names must be unique."
+        }
+
+        val cleanHiveNumbers = hiveNumbersByApiary.map { numbers ->
+            val clean = numbers.map(String::trim)
+            require(clean.isNotEmpty() && clean.all(String::isNotBlank)) { "Each apiary needs at least one named hive." }
+            require(clean.map { it.lowercase(java.util.Locale.ROOT) }.distinct().size == clean.size) {
+                "Hive names must be unique within each apiary."
+            }
+            clean
+        }
+        require(cleanHiveNumbers.sumOf { it.size } <= 1_000) { "Create no more than 1,000 hives at a time." }
+
+        db.withTransaction {
+            require(db.apiaries().allForBackup().isEmpty() && db.hives().allForBackup().isEmpty()) {
+                "Starter setup is only available when the workspace is empty. Existing records were left unchanged."
+            }
+            val now = System.currentTimeMillis()
+            cleanApiaryNames.forEachIndexed { index, apiaryName ->
+                val apiary = ApiaryEntity(
+                    id = IdGenerator.nextLong(),
+                    name = apiaryName,
+                    updatedAt = now
+                )
+                db.apiaries().upsert(apiary)
+                enqueue("apiary", apiary.id, "upsert", apiaryPayload(apiary))
+
+                cleanHiveNumbers[index].forEach { hiveNumber ->
+                    val hive = HiveEntity(
+                        id = IdGenerator.nextLong(),
+                        number = hiveNumber,
+                        apiaryName = apiary.name,
+                        apiaryId = apiary.id,
+                        queenStatus = "Laying",
+                        strength = 5,
+                        mitePercent = 0.0,
+                        updatedAt = now,
+                        statusChangedAt = now
+                    )
+                    db.hives().upsert(hive)
+                    enqueue("hive", hive.id, "upsert", hivePayload(hive))
+                }
+            }
+        }
+    }
+
     suspend fun saveHive(h: Hive) = withContext(Dispatchers.IO) {
         require(h.number.trim().isNotBlank()) { "Hive number cannot be blank" }
         require(h.mitePercent.isFinite() && h.mitePercent >= 0.0) { "Mite percentage must be a valid non-negative number." }

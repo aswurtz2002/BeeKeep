@@ -48,6 +48,7 @@ class BeeKeepViewModel(
             // Hydrate active and inactive UID assignments before NFC auto-write is permitted.
             _hives.value = repo.observeHives().first()
             _deadHives.value = repo.observeDeadHives().first()
+            _apiaries.value = repo.observeApiaries().first()
             _ready.value = true
             launch { repo.observeHives().collect { _hives.value = it } }
             launch { repo.observeDeadHives().collect { _deadHives.value = it } }
@@ -109,6 +110,48 @@ class BeeKeepViewModel(
         val refreshed = runCatching { repo.getHive(hiveId) }.getOrNull() ?: return
         // Read from Room first, then re-check after suspension before publishing to StateFlow.
         if (_selected.value?.id == hiveId) _selected.value = refreshed
+    }
+
+    fun createPreMadeSetup(
+        apiaryPrefix: String,
+        hivePrefix: String,
+        apiaryCount: Int,
+        hivesPerApiary: Int,
+        onResult: (Boolean, String?) -> Unit = { _, _ -> }
+    ) {
+        val cleanApiaryPrefix = apiaryPrefix.trim()
+        val cleanHivePrefix = hivePrefix.trim()
+        if (cleanApiaryPrefix.isBlank()) {
+            onResult(false, "Enter a name prefix for your apiaries.")
+            return
+        }
+        if (cleanHivePrefix.isBlank()) {
+            onResult(false, "Enter a name prefix for your hives.")
+            return
+        }
+        if (apiaryCount !in 1..30 || hivesPerApiary < 1 ||
+            apiaryCount.toLong() * hivesPerApiary.toLong() > 1_000L
+        ) {
+            onResult(false, "Choose between 1 and 30 apiaries, with no more than 1,000 hives in total.")
+            return
+        }
+
+        val apiaryWidth = if (apiaryCount >= 10) apiaryCount.toString().length else 1
+        val hiveWidth = if (hivesPerApiary >= 10) hivesPerApiary.toString().length else 1
+        val apiaryNames = (1..apiaryCount).map { index ->
+            cleanApiaryPrefix + " " + index.toString().padStart(apiaryWidth, '0')
+        }
+        val hiveNamesByApiary = List(apiaryCount) {
+            (1..hivesPerApiary).map { index ->
+                cleanHivePrefix + " " + index.toString().padStart(hiveWidth, '0')
+            }
+        }
+
+        viewModelScope.launch {
+            runCatching { repo.createStarterSetup(apiaryNames, hiveNamesByApiary) }
+                .onSuccess { onResult(true, null) }
+                .onFailure { onResult(false, it.message ?: "Could not create the starter apiaries and hives.") }
+        }
     }
 
     fun createHive(number: String, apiary: String, queen: String, strength: Int, tagUid: String? = null, onResult: (Boolean, String?) -> Unit = { _, _ -> }) {
