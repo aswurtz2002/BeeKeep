@@ -53,7 +53,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 
 @Composable
-internal fun HiveRow(hive: Hive, supporting: String? = null, onClick: () -> Unit) {
+internal fun HiveRow(hive: Hive, supporting: String? = null, compact: Boolean = false, onClick: () -> Unit) {
     // The Apiaries hive list now highlights the colony's strength rather than mite percentage.
     val strengthGrade = ColonyStrength.gradeFromStored(hive.strength)
     val strengthColor = when (strengthGrade) {
@@ -67,7 +67,7 @@ internal fun HiveRow(hive: Hive, supporting: String? = null, onClick: () -> Unit
     Card(
         onClick = onClick,
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(24.dp),
+        shape = RoundedCornerShape(if (compact) 20.dp else 24.dp),
         border = BorderStroke(
             1.dp,
             if (attention) MaterialTheme.colorScheme.error.copy(alpha = 0.45f)
@@ -75,8 +75,8 @@ internal fun HiveRow(hive: Hive, supporting: String? = null, onClick: () -> Unit
         ),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
     ) {
-        Row(Modifier.fillMaxWidth().padding(15.dp), verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+        Row(Modifier.fillMaxWidth().padding(horizontal = 13.dp, vertical = if (compact) 10.dp else 15.dp), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(if (compact) 2.dp else 3.dp)) {
                 Text(hiveDisplayName(hive.number), fontWeight = FontWeight.ExtraBold, style = MaterialTheme.typography.titleMedium)
                 Text(hive.apiary, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Text(
@@ -89,7 +89,7 @@ internal fun HiveRow(hive: Hive, supporting: String? = null, onClick: () -> Unit
                 supporting?.let { Text(it, color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelMedium) }
             }
             Column(
-                Modifier.padding(horizontal = 4.dp, vertical = 4.dp),
+                Modifier.padding(horizontal = 4.dp, vertical = if (compact) 2.dp else 4.dp),
                 horizontalAlignment = Alignment.End,
                 verticalArrangement = Arrangement.spacedBy(2.dp)
             ) {
