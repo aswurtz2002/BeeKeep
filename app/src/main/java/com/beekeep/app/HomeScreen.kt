@@ -279,8 +279,7 @@ internal fun HomeScreen(
                             softWrap = false
                         )
                         Text(
-                            text = "MADE BY BEEKEEPERS
-FOR BEEKEEPERS",
+                            text = "MADE BY BEEKEEPERS\nFOR BEEKEEPERS",
                             style = MaterialTheme.typography.labelMedium,
                             color = Color(0xFF524B45),
                             fontWeight = FontWeight.SemiBold,
