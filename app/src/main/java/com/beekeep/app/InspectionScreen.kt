@@ -59,6 +59,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.mutableDoubleStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -96,6 +97,14 @@ import kotlin.math.roundToInt
 import org.json.JSONObject
 
 internal const val INSPECTION_NOTE_DRAFTS = "beekeep_inspection_note_drafts"
+
+private fun normalizeBroodStoresGauge(value: Double): Double =
+    (value.coerceIn(0.0, 10.0) * 2.0).roundToInt() / 2.0
+
+private fun formatBroodStoresGauge(value: Double): String {
+    val whole = value.roundToInt()
+    return if (value == whole.toDouble()) whole.toString() else String.format(Locale.US, "%.1f", value)
+}
 private const val INSPECTION_FORM_DRAFTS = "beekeep_inspection_form_drafts"
 
 private data class InspectionFormDraft(
@@ -103,12 +112,12 @@ private data class InspectionFormDraft(
     val queenStatus: String,
     val miteCount: Int,
     val sampleSize: Int,
-    val eggs: Int,
-    val openBrood: Int,
-    val cappedBrood: Int,
-    val honeyStores: Int,
-    val pollen: Int,
-    val emptyDrawnComb: Int,
+    val eggs: Double,
+    val openBrood: Double,
+    val cappedBrood: Double,
+    val honeyStores: Double,
+    val pollen: Double,
+    val emptyDrawnComb: Double,
     val emergencyCells: Int,
     val supercedureCells: Int,
     val swarmCells: Int,
@@ -131,12 +140,12 @@ private fun readInspectionFormDraft(
             queenStatus = json.optString("queenStatus", "Laying"),
             miteCount = json.optInt("miteCount", 0),
             sampleSize = json.optInt("sampleSize", 300).coerceAtLeast(1),
-            eggs = json.optInt("eggs", 0),
-            openBrood = json.optInt("openBrood", 0),
-            cappedBrood = json.optInt("cappedBrood", 0),
-            honeyStores = json.optInt("honeyStores", 0),
-            pollen = json.optInt("pollen", 0),
-            emptyDrawnComb = json.optInt("emptyDrawnComb", 0),
+            eggs = json.optDouble("eggs", 0.0).coerceIn(0.0, 10.0),
+            openBrood = json.optDouble("openBrood", 0.0).coerceIn(0.0, 10.0),
+            cappedBrood = json.optDouble("cappedBrood", 0.0).coerceIn(0.0, 10.0),
+            honeyStores = json.optDouble("honeyStores", 0.0).coerceIn(0.0, 10.0),
+            pollen = json.optDouble("pollen", 0.0).coerceIn(0.0, 10.0),
+            emptyDrawnComb = json.optDouble("emptyDrawnComb", 0.0).coerceIn(0.0, 10.0),
             emergencyCells = json.optInt("emergencyCells", 0),
             supercedureCells = json.optInt("supercedureCells", 0),
             swarmCells = json.optInt("swarmCells", 0),
@@ -161,12 +170,12 @@ private fun saveInspectionFormDraft(
         .put("queenStatus", draft.queenStatus)
         .put("miteCount", draft.miteCount.coerceAtLeast(0))
         .put("sampleSize", draft.sampleSize.coerceAtLeast(1))
-        .put("eggs", draft.eggs.coerceAtLeast(0))
-        .put("openBrood", draft.openBrood.coerceAtLeast(0))
-        .put("cappedBrood", draft.cappedBrood.coerceAtLeast(0))
-        .put("honeyStores", draft.honeyStores.coerceAtLeast(0))
-        .put("pollen", draft.pollen.coerceAtLeast(0))
-        .put("emptyDrawnComb", draft.emptyDrawnComb.coerceAtLeast(0))
+        .put("eggs", normalizeBroodStoresGauge(draft.eggs))
+        .put("openBrood", normalizeBroodStoresGauge(draft.openBrood))
+        .put("cappedBrood", normalizeBroodStoresGauge(draft.cappedBrood))
+        .put("honeyStores", normalizeBroodStoresGauge(draft.honeyStores))
+        .put("pollen", normalizeBroodStoresGauge(draft.pollen))
+        .put("emptyDrawnComb", normalizeBroodStoresGauge(draft.emptyDrawnComb))
         .put("emergencyCells", draft.emergencyCells.coerceAtLeast(0))
         .put("supercedureCells", draft.supercedureCells.coerceAtLeast(0))
         .put("swarmCells", draft.swarmCells.coerceAtLeast(0))
@@ -237,8 +246,8 @@ internal fun InspectionSnapshot(i: Inspection) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
             Text("${ColonyStrength.labelFromStored(i.strength)} • Queen ${i.queenStatus}")
             Text("Mites ${i.miteCount}/${i.sampleSize} = ${String.format(Locale.US, "%.2f", i.mitePercent)}%")
-            Text("Brood: eggs ${i.eggs}, open ${i.openBrood}, capped ${i.cappedBrood}")
-            Text("Stores: honey ${i.honeyStores}, pollen ${i.pollen}")
+            Text("Brood: eggs ${formatBroodStoresGauge(i.eggs)}, open ${formatBroodStoresGauge(i.openBrood)}, capped ${formatBroodStoresGauge(i.cappedBrood)}")
+            Text("Stores: honey ${formatBroodStoresGauge(i.honeyStores)}, pollen ${formatBroodStoresGauge(i.pollen)}")
             if (i.diseaseFlags.isNotBlank()) {
                 Text("Flags: ${i.diseaseFlags}", color = MaterialTheme.colorScheme.error)
             }
@@ -372,22 +381,22 @@ internal fun InspectionScreen(
         mutableStateOf(if (startingNotes.isBlank()) "" else if (hasSavedNoteDraft) "Auto-saved note restored" else "Saved notes loaded")
     }
     var eggs by rememberSaveable(hive.id, formStateKey, lastInspection?.id) {
-        mutableIntStateOf(formDraft?.eggs ?: (if (rememberLastInspectionValues) lastInspection?.eggs else null) ?: 0)
+        mutableDoubleStateOf(normalizeBroodStoresGauge(formDraft?.eggs ?: (if (rememberLastInspectionValues) lastInspection?.eggs else null) ?: 0.0))
     }
     var openBrood by rememberSaveable(hive.id, formStateKey, lastInspection?.id) {
-        mutableIntStateOf(formDraft?.openBrood ?: (if (rememberLastInspectionValues) lastInspection?.openBrood else null) ?: 0)
+        mutableDoubleStateOf(normalizeBroodStoresGauge(formDraft?.openBrood ?: (if (rememberLastInspectionValues) lastInspection?.openBrood else null) ?: 0.0))
     }
     var cappedBrood by rememberSaveable(hive.id, formStateKey, lastInspection?.id) {
-        mutableIntStateOf(formDraft?.cappedBrood ?: (if (rememberLastInspectionValues) lastInspection?.cappedBrood else null) ?: 0)
+        mutableDoubleStateOf(normalizeBroodStoresGauge(formDraft?.cappedBrood ?: (if (rememberLastInspectionValues) lastInspection?.cappedBrood else null) ?: 0.0))
     }
     var honey by rememberSaveable(hive.id, formStateKey, lastInspection?.id) {
-        mutableIntStateOf(formDraft?.honeyStores ?: (if (rememberLastInspectionValues) lastInspection?.honeyStores else null) ?: 0)
+        mutableDoubleStateOf(normalizeBroodStoresGauge(formDraft?.honeyStores ?: (if (rememberLastInspectionValues) lastInspection?.honeyStores else null) ?: 0.0))
     }
     var pollen by rememberSaveable(hive.id, formStateKey, lastInspection?.id) {
-        mutableIntStateOf(formDraft?.pollen ?: (if (rememberLastInspectionValues) lastInspection?.pollen else null) ?: 0)
+        mutableDoubleStateOf(normalizeBroodStoresGauge(formDraft?.pollen ?: (if (rememberLastInspectionValues) lastInspection?.pollen else null) ?: 0.0))
     }
     var emptyComb by rememberSaveable(hive.id, formStateKey, lastInspection?.id) {
-        mutableIntStateOf(formDraft?.emptyDrawnComb ?: (if (rememberLastInspectionValues) lastInspection?.emptyDrawnComb else null) ?: 0)
+        mutableDoubleStateOf(normalizeBroodStoresGauge(formDraft?.emptyDrawnComb ?: (if (rememberLastInspectionValues) lastInspection?.emptyDrawnComb else null) ?: 0.0))
     }
     var emergency by rememberSaveable(hive.id, formStateKey, lastInspection?.id) {
         mutableIntStateOf(formDraft?.emergencyCells ?: (if (rememberLastInspectionValues) lastInspection?.emergencyCells else null) ?: 0)
@@ -954,20 +963,20 @@ internal fun InspectionScreen(
             item {
                 SectionHeader("BROOD & STORES")
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                    CompactCounter("Eggs", eggs, 0..30, haptic, Modifier.weight(1f)) { eggs = it }
-                    CompactCounter("Open", openBrood, 0..30, haptic, Modifier.weight(1f)) { openBrood = it }
+                    CompactHalfStepCounter("Eggs", eggs, 0.0..10.0, haptic, Modifier.weight(1f)) { eggs = it }
+                    CompactHalfStepCounter("Open", openBrood, 0.0..10.0, haptic, Modifier.weight(1f)) { openBrood = it }
                 }
             }
             item {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                    CompactCounter("Capped", cappedBrood, 0..30, haptic, Modifier.weight(1f)) { cappedBrood = it }
-                    CompactCounter("Honey", honey, 0..30, haptic, Modifier.weight(1f)) { honey = it }
+                    CompactHalfStepCounter("Capped", cappedBrood, 0.0..10.0, haptic, Modifier.weight(1f)) { cappedBrood = it }
+                    CompactHalfStepCounter("Honey", honey, 0.0..10.0, haptic, Modifier.weight(1f)) { honey = it }
                 }
             }
             item {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                    CompactCounter("Pollen", pollen, 0..30, haptic, Modifier.weight(1f)) { pollen = it }
-                    CompactCounter("Empty comb", emptyComb, 0..30, haptic, Modifier.weight(1f)) { emptyComb = it }
+                    CompactHalfStepCounter("Pollen", pollen, 0.0..10.0, haptic, Modifier.weight(1f)) { pollen = it }
+                    CompactHalfStepCounter("Empty comb", emptyComb, 0.0..10.0, haptic, Modifier.weight(1f)) { emptyComb = it }
                 }
             }
 
@@ -1151,6 +1160,60 @@ private fun CompactCounter(
             Text(value.toString(), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.ExtraBold, color = MaterialTheme.colorScheme.onSurfaceVariant)
             IconButton(
                 onClick = { haptic.performHapticFeedback(HapticFeedbackType.SegmentTick); onChange((value + 1).coerceIn(range)) },
+                modifier = Modifier.size(32.dp)
+            ) { Text("+", style = MaterialTheme.typography.bodyMedium) }
+        }
+    }
+}
+
+@Composable
+private fun CompactHalfStepCounter(
+    label: String,
+    value: Double,
+    range: ClosedFloatingPointRange<Double>,
+    haptic: androidx.compose.ui.hapticfeedback.HapticFeedback,
+    modifier: Modifier = Modifier,
+    onChange: (Double) -> Unit
+) {
+    Card(
+        modifier = modifier,
+        shape = RoundedCornerShape(12.dp),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+    ) {
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 5.dp, vertical = 2.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(1.dp)
+        ) {
+            Text(
+                label,
+                modifier = Modifier.weight(1f),
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1
+            )
+            IconButton(
+                onClick = {
+                    haptic.performHapticFeedback(HapticFeedbackType.SegmentTick)
+                    onChange(normalizeBroodStoresGauge(value - 0.5).coerceIn(range))
+                },
+                enabled = value > range.start,
+                modifier = Modifier.size(32.dp)
+            ) { Text("−", style = MaterialTheme.typography.bodyMedium) }
+            Text(
+                formatBroodStoresGauge(value),
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.ExtraBold,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            IconButton(
+                onClick = {
+                    haptic.performHapticFeedback(HapticFeedbackType.SegmentTick)
+                    onChange(normalizeBroodStoresGauge(value + 0.5).coerceIn(range))
+                },
+                enabled = value < range.endInclusive,
                 modifier = Modifier.size(32.dp)
             ) { Text("+", style = MaterialTheme.typography.bodyMedium) }
         }

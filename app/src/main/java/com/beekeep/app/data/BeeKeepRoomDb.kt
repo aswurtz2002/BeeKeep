@@ -9,7 +9,7 @@ import androidx.room.RoomDatabase
 
 @Database(
     entities = [ApiaryEntity::class, HiveEntity::class, InspectionEntity::class, FeedingEntity::class, TreatmentEntity::class, HarvestEntity::class, ActivityEventEntity::class, SyncOutboxEntity::class, TaskEntity::class, PhotoEntity::class, NfcTagAssignmentEntity::class],
-    version = 10,
+    version = 11,
     exportSchema = false
 )
 abstract class BeeKeepRoomDb : RoomDatabase() {
@@ -175,10 +175,70 @@ abstract class BeeKeepRoomDb : RoomDatabase() {
             }
         }
 
+        val MIGRATION_10_11 = object : Migration(10, 11) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                // Brood/stores counts now support half-frame increments. Copy existing values
+                // unchanged while updating the six columns from INTEGER affinity to REAL.
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `inspections_new` (
+                        `id` INTEGER NOT NULL,
+                        `hive_id` INTEGER NOT NULL,
+                        `created_at` INTEGER NOT NULL,
+                        `strength` INTEGER NOT NULL,
+                        `queenStatus` TEXT NOT NULL,
+                        `mite_count` INTEGER NOT NULL,
+                        `sample_size` INTEGER NOT NULL,
+                        `notes` TEXT NOT NULL,
+                        `photo_path` TEXT,
+                        `latitude` REAL,
+                        `longitude` REAL,
+                        `emergency_cells` INTEGER NOT NULL,
+                        `supercedure_cells` INTEGER NOT NULL,
+                        `swarm_cells` INTEGER NOT NULL,
+                        `eggs` REAL NOT NULL,
+                        `open_brood` REAL NOT NULL,
+                        `capped_brood` REAL NOT NULL,
+                        `honey_stores` REAL NOT NULL,
+                        `pollen` REAL NOT NULL,
+                        `empty_drawn_comb` REAL NOT NULL,
+                        `disease_flags` TEXT NOT NULL,
+                        `updated_at` INTEGER NOT NULL,
+                        `bee_count_frames` REAL,
+                        PRIMARY KEY(`id`),
+                        FOREIGN KEY(`hive_id`) REFERENCES `hives`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL(
+                    """
+                    INSERT INTO `inspections_new` (
+                        `id`, `hive_id`, `created_at`, `strength`, `queenStatus`,
+                        `mite_count`, `sample_size`, `notes`, `photo_path`, `latitude`,
+                        `longitude`, `emergency_cells`, `supercedure_cells`, `swarm_cells`,
+                        `eggs`, `open_brood`, `capped_brood`, `honey_stores`, `pollen`,
+                        `empty_drawn_comb`, `disease_flags`, `updated_at`, `bee_count_frames`
+                    )
+                    SELECT
+                        `id`, `hive_id`, `created_at`, `strength`, `queenStatus`,
+                        `mite_count`, `sample_size`, `notes`, `photo_path`, `latitude`,
+                        `longitude`, `emergency_cells`, `supercedure_cells`, `swarm_cells`,
+                        `eggs`, `open_brood`, `capped_brood`, `honey_stores`, `pollen`,
+                        `empty_drawn_comb`, `disease_flags`, `updated_at`, `bee_count_frames`
+                    FROM `inspections`
+                    """.trimIndent()
+                )
+                db.execSQL("DROP TABLE `inspections`")
+                db.execSQL("ALTER TABLE `inspections_new` RENAME TO `inspections`")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_inspections_hive_id_created_at` ON `inspections` (`hive_id`, `created_at`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_inspections_created_at` ON `inspections` (`created_at`)")
+            }
+        }
+
         @Volatile private var INSTANCE: BeeKeepRoomDb? = null
         fun get(context: Context): BeeKeepRoomDb = INSTANCE ?: synchronized(this) {
             INSTANCE ?: Room.databaseBuilder(context.applicationContext, BeeKeepRoomDb::class.java, "beekeep_room.db")
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11)
                 .setJournalMode(RoomDatabase.JournalMode.WRITE_AHEAD_LOGGING)
                 .build()
                 .also { INSTANCE = it }
