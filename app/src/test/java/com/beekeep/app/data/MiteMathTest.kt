@@ -12,7 +12,7 @@ class MiteMathTest {
 
     @Test
     fun zeroSampleIsSafe() {
-        val inspection = Inspection(1, 1, 1, 7, "Laying", 9, 0, "", null, null, null, 0, 0, 0, 0, 0, 0, 0, 0, 0, "")
+        val inspection = Inspection(1, 1, 1, 7, "Laying", 9, 0, "", null, null, null, 0, 0, 0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, "")
         assertEquals(0.0, inspection.mitePercent, 0.0001)
     }
 }
