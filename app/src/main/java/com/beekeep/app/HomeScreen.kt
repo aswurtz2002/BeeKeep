@@ -284,8 +284,8 @@ internal fun HomeScreen(
                             color = Color(0xFF524B45),
                             fontWeight = FontWeight.SemiBold,
                             letterSpacing = 1.25.sp,
-                            maxLines = 1,
-                            softWrap = false
+                            maxLines = 2,
+                            softWrap = true
                         )
                     }
                     Spacer(Modifier.width(12.dp))
