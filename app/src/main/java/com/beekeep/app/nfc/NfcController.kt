@@ -33,7 +33,8 @@ sealed interface NfcResult {
     data class Read(
         val info: NfcTagInfo,
         val text: String?,
-        val launchPreparationError: String? = null
+        val launchPreparationError: String? = null,
+        val launchPreparationRetryable: Boolean = false
     ) : NfcResult {
         val uid: String get() = info.uid
     }
@@ -572,7 +573,10 @@ class NfcController {
 
         return when (val written = write(tag, BeeKeepNfcPayload.TAG_PAYLOAD)) {
             is NfcResult.Written -> NfcResult.Read(written.info, BeeKeepNfcPayload.TAG_PAYLOAD)
-            is NfcResult.Error -> result.copy(launchPreparationError = written.message)
+            is NfcResult.Error -> result.copy(
+                launchPreparationError = written.message,
+                launchPreparationRetryable = true
+            )
             is NfcResult.Read -> result
         }
     }
