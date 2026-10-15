@@ -391,6 +391,7 @@ fun BeeKeepApp(
     var addingApiariesWithHives by rememberSaveable { mutableStateOf(false) }
     var editingApiary by remember { mutableStateOf<Apiary?>(null) }
     var unassignedTagUid by rememberSaveable { mutableStateOf<String?>(null) }
+    var nfcWriteRetryMessage by rememberSaveable { mutableStateOf<String?>(null) }
     var lastHiveTagSuccessHiveId by rememberSaveable { mutableStateOf<Long?>(null) }
     var lastHiveTagSuccessUid by rememberSaveable { mutableStateOf<String?>(null) }
     var unassignedTagOrigin by rememberSaveable { mutableStateOf(Screen.HOME) }
@@ -601,9 +602,72 @@ fun BeeKeepApp(
         }
     }
 
+    fun handleManualNfcScanResult(result: NfcResult) {
+        scanning = false
+        when (result) {
+            is NfcResult.Read -> {
+                if (result.launchPreparationRetryable) {
+                    unassignedTagUid = null
+                    nfcWriteRetryMessage = result.launchPreparationError
+                        ?: "BeeKeep could not write the tag. Try scanning it again."
+                    return
+                }
+                result.launchPreparationError?.let { message ->
+                    scope.launch { snackbarHostState.showSnackbar(message) }
+                }
+                scope.launch {
+                    val normalizedUid = NfcUid.normalize(result.uid)
+                    if (normalizedUid == null) {
+                        snackbarHostState.showSnackbar("This tag has an invalid NFC UID. No hive was opened or assigned.")
+                        return@launch
+                    }
+                    if (vm.isNfcTagAmbiguous(normalizedUid)) {
+                        snackbarHostState.showSnackbar("NFC tag identity conflict: this UID is linked to multiple hives. No hive was opened. Repair it in NFC tag management.")
+                        return@launch
+                    }
+                    val assignedHive = vm.findHiveByTag(normalizedUid)
+                    val resolvedHiveId = NfcTagResolution.resolveHiveId(assignedHive?.id)
+                    val resolvedHive = assignedHive?.takeIf { it.id == resolvedHiveId }
+                    if (resolvedHive != null) {
+                        checkHiveLocation(resolvedHive)
+                        if (autoVoicePrefs.getBoolean("speak_hive_number_on_scan", true)) onSpeakHiveNumber(resolvedHive.number)
+                        vm.openHive(resolvedHive.id)
+                        selectedHiveOpen = true
+                        screen = Screen.HOME
+                        pendingAutoStartVoiceHiveId = resolvedHive.id
+                        pendingInspectionHiveId = resolvedHive.id
+                        snackbarHostState.showSnackbar("${hiveReferenceName(resolvedHive.number)} recognized • inspection ready")
+                    } else {
+                        unassignedTagOrigin = Screen.HOME
+                        unassignedTagUid = normalizedUid
+                    }
+                }
+            }
+            is NfcResult.Error -> scope.launch { snackbarHostState.showSnackbar(result.message) }
+            is NfcResult.Written -> Unit
+        }
+    }
+
+    fun startManualNfcScan() {
+        nfc.startReadAndPrepareForBeeKeep(activity) { result ->
+            handleManualNfcScanResult(result)
+        }
+        scanning = nfc.isScanning()
+    }
+
     androidx.compose.runtime.LaunchedEffect(ready, incomingNfc?.uid, screen) {
         val result = incomingNfc ?: return@LaunchedEffect
         if (!ready) return@LaunchedEffect
+        if (result.launchPreparationRetryable) {
+            // A readable tag whose automatic launch-record write failed is not an
+            // assignment decision. Offer a retry instead of sending it to the
+            // Unassigned NFC tag flow.
+            nfcWriteRetryMessage = result.launchPreparationError
+                ?: "BeeKeep could not write the tag. Try scanning it again."
+            unassignedTagUid = null
+            (activity as? MainActivity)?.pendingNfcResult?.value = null
+            return@LaunchedEffect
+        }
         result.launchPreparationError?.let { message ->
             scope.launch { snackbarHostState.showSnackbar(message) }
         }
@@ -660,6 +724,47 @@ fun BeeKeepApp(
             unassignedTagUid = normalizedUid
         }
         (activity as? MainActivity)?.pendingNfcResult?.value = null
+    }
+
+    nfcWriteRetryMessage?.let { message ->
+        AlertDialog(
+            onDismissRequest = {
+                nfcWriteRetryMessage = null
+                scanning = nfc.isScanning()
+            },
+            properties = DialogProperties(dismissOnClickOutside = false),
+            title = { Text("Could not write NFC tag", fontWeight = FontWeight.ExtraBold) },
+            text = {
+                Text(
+                    "$message\\n\\nTap Try Again, then present the same tag to your phone when scanning starts."
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        nfcWriteRetryMessage = null
+                        unassignedTagUid = null
+                        screen = Screen.SCAN
+                        startManualNfcScan()
+                    },
+                    modifier = Modifier.heightIn(min = 48.dp)
+                ) {
+                    Text("TRY AGAIN", fontWeight = FontWeight.ExtraBold)
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        nfcWriteRetryMessage = null
+                        nfc.stop(activity)
+                        scanning = false
+                    },
+                    modifier = Modifier.heightIn(min = 48.dp)
+                ) {
+                    Text("CANCEL", fontWeight = FontWeight.Bold)
+                }
+            }
+        )
     }
 
     unassignedTagUid?.let { uid ->
@@ -1011,48 +1116,7 @@ fun BeeKeepApp(
             scanning = scanning,
             onBack = { nfc.stop(activity); scanning = false; screen = Screen.HOME },
             onCancelScan = { nfc.stop(activity); scanning = false },
-            onScan = {
-                nfc.startReadAndPrepareForBeeKeep(activity) { result ->
-                    scanning = false
-                    when (result) {
-                        is NfcResult.Read -> {
-                            result.launchPreparationError?.let { message ->
-                                scope.launch { snackbarHostState.showSnackbar(message) }
-                            }
-                            scope.launch {
-                                val normalizedUid = NfcUid.normalize(result.uid)
-                                if (normalizedUid == null) {
-                                    snackbarHostState.showSnackbar("This tag has an invalid NFC UID. No hive was opened or assigned.")
-                                    return@launch
-                                }
-                                if (vm.isNfcTagAmbiguous(normalizedUid)) {
-                                    snackbarHostState.showSnackbar("NFC tag identity conflict: this UID is linked to multiple hives. No hive was opened. Repair it in NFC tag management.")
-                                    return@launch
-                                }
-                                val assignedHive = vm.findHiveByTag(normalizedUid)
-                                val resolvedHiveId = NfcTagResolution.resolveHiveId(assignedHive?.id)
-                                val resolvedHive = assignedHive?.takeIf { it.id == resolvedHiveId }
-                                if (resolvedHive != null) {
-                                    checkHiveLocation(resolvedHive)
-                                    if (autoVoicePrefs.getBoolean("speak_hive_number_on_scan", true)) onSpeakHiveNumber(resolvedHive.number)
-                                    vm.openHive(resolvedHive.id)
-                                    selectedHiveOpen = true
-                                    screen = Screen.HOME
-                                    pendingAutoStartVoiceHiveId = resolvedHive.id
-                                    pendingInspectionHiveId = resolvedHive.id
-                                    snackbarHostState.showSnackbar("${hiveReferenceName(resolvedHive.number)} recognized • inspection ready")
-                                } else {
-                                    unassignedTagOrigin = Screen.HOME
-                                    unassignedTagUid = normalizedUid
-                                }
-                            }
-                        }
-                        is NfcResult.Error -> scope.launch { snackbarHostState.showSnackbar(result.message) }
-                        is NfcResult.Written -> Unit
-                    }
-                }
-                scanning = nfc.isScanning()
-            }
+            onScan = { startManualNfcScan() }
         )
         return
     }
