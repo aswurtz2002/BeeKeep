@@ -1637,12 +1637,24 @@ private fun TagManagementScreen(
                             }
                         }
                     }
-                    is NfcResult.Read -> {
-                        val owner = (hives + deadHives).firstOrNull { NfcUid.matches(it.tagUid, result.uid) }
+                    is NfcResult.Read -> scope.launch {
+                        val normalizedUid = NfcUid.normalize(result.uid)
+                        if (normalizedUid == null) {
+                            updateStatus("This tag has an invalid NFC UID. Nothing was assigned.")
+                            return@launch
+                        }
+                        val ambiguous = vm.isNfcTagAmbiguous(normalizedUid)
+                        val owner = (hives + deadHives).firstOrNull { NfcUid.matches(it.tagUid, normalizedUid) }
                         when {
+                            ambiguous -> {
+                                // Never pick one owner from a conflict. The user explicitly
+                                // chooses this hive, then confirms a full ledger repair.
+                                reassignPrompt = hiveId to normalizedUid
+                                updateStatus("Identity conflict: tag $normalizedUid is linked to multiple hive records. Confirm REASSIGN to make this hive the sole owner.")
+                            }
                             owner != null && owner.id != hiveId -> {
-                                reassignPrompt = hiveId to result.uid
-                                updateStatus("Tag ${result.uid} is assigned to ${hiveReferenceName(owner.number)}. Confirm REASSIGN before changing it.")
+                                reassignPrompt = hiveId to normalizedUid
+                                updateStatus("Tag $normalizedUid is assigned to ${hiveReferenceName(owner.number)}. Confirm REASSIGN before changing it.")
                             }
                             else -> updateStatus("Could not write this tag automatically. Use WRITE TAG from the hive details to retry.")
                         }
@@ -1696,6 +1708,9 @@ private fun TagManagementScreen(
                             isAssignedElsewhere = { candidateUid ->
                                 (hives + deadHives).any { it.id != hiveId && NfcUid.matches(it.tagUid, candidateUid) }
                             },
+                            // The DB assignment was just explicitly confirmed. This only writes
+                            // generic launch metadata, never a hive ID; expectedUid locks the tag.
+                            allowConfirmedAssignment = true,
                             onResult = { result ->
                                 when (result) {
                                     is NfcResult.Written -> {
@@ -1747,8 +1762,8 @@ private fun TagManagementScreen(
     reassignPrompt?.let { (targetHiveId, tagUid) ->
         AlertDialog(
             onDismissRequest = { reassignPrompt = null },
-            title = { Text("Tag already assigned", fontWeight = FontWeight.ExtraBold) },
-            text = { Text("This NFC tag is assigned to another hive. Reassigning will remove it from that hive and attach it to the selected one.") },
+            title = { Text("Confirm tag reassignment", fontWeight = FontWeight.ExtraBold) },
+            text = { Text("This tag is already assigned or has conflicting ownership records. Reassigning will close all existing assignments and make the selected hive the sole owner.") },
             confirmButton = {
                 TextButton(onClick = {
                     onAssignTag(targetHiveId, tagUid, true) { success, error ->

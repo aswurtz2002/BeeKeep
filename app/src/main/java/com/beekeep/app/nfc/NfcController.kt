@@ -155,7 +155,9 @@ class NfcController {
                 expectedUid != null && !NfcUid.matches(scannedUid, expectedUid) ->
                     NfcResult.Error("This is tag $scannedUid, not the selected tag $expectedUid. No data was written.")
                 scannedUid in knownAmbiguousTagUids || isAmbiguousAssignment(scannedUid) ->
-                    NfcResult.Error("This NFC UID is linked to multiple hive records. Nothing was written. Repair the duplicate assignment in NFC tag management first.")
+                    // Never write while ownership is ambiguous, but allow NFC Tag Management
+                    // to display an explicit REASSIGN confirmation that can repair the ledger.
+                    read(tag)
                 (knownHiveIdByTagUid[scannedUid] != null && knownHiveIdByTagUid[scannedUid] != targetHiveId) ||
                     isAssignedElsewhere(scannedUid) ->
                     // Let the UI ask for explicit reassignment before writing anything.
@@ -172,7 +174,8 @@ class NfcController {
         onResult: (NfcResult) -> Unit,
         expectedUid: String? = null,
         ignoredUid: String? = null,
-        isAssignedElsewhere: (String) -> Boolean = { false }
+        isAssignedElsewhere: (String) -> Boolean = { false },
+        allowConfirmedAssignment: Boolean = false
     ) {
         start(activity, { tag ->
             val scannedUid = NfcUid.normalize(uid(tag))
@@ -181,11 +184,11 @@ class NfcController {
                     NfcResult.Error("This tag does not expose a valid NFC UID. Nothing was written.")
                 expectedUid != null && !NfcUid.matches(scannedUid, expectedUid) ->
                     NfcResult.Error("This is tag $scannedUid, not the assigned tag $expectedUid. Hold the same tag to write BeeKeep launch data.")
-                scannedUid in knownAmbiguousTagUids ->
-                    NfcResult.Error("This NFC UID is linked to multiple hive records. Nothing was written. Repair the duplicate assignment first.")
-                knownHiveIdByTagUid[scannedUid] != null && knownHiveIdByTagUid[scannedUid] != targetHiveId ->
+                !allowConfirmedAssignment && scannedUid in knownAmbiguousTagUids ->
+                    NfcResult.Error("This NFC UID is linked to multiple hive records. Nothing was written. Repair or confirm the assignment first.")
+                !allowConfirmedAssignment && knownHiveIdByTagUid[scannedUid] != null && knownHiveIdByTagUid[scannedUid] != targetHiveId ->
                     NfcResult.Error("This NFC tag is assigned to another hive. Nothing was written. Use NFC Tag Management to confirm reassignment.")
-                isAssignedElsewhere(scannedUid) ->
+                !allowConfirmedAssignment && isAssignedElsewhere(scannedUid) ->
                     NfcResult.Error("This NFC tag is assigned to another hive. Nothing was written. Use NFC Tag Management to confirm any reassignment.")
                 else -> write(tag, text)
             }
