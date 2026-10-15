@@ -532,7 +532,7 @@ fun BeeKeepApp(
 
     // Scan and tag-management screens control when another NFC read happens.
     // In particular, do not retry a failed write passively while the Retry dialog is open.
-    androidx.compose.runtime.LaunchedEffect(screen, nfcWriteRetryMessage, hiveNfcWriteFlowActive, nfc) {
+    androidx.compose.runtime.LaunchedEffect(screen, unassignedTagUid, nfcWriteRetryMessage, hiveNfcWriteFlowActive, nfc) {
         val passiveAllowed = screen != Screen.SCAN &&
             screen != Screen.TAG_MANAGER &&
             unassignedTagUid == null &&
