@@ -451,6 +451,14 @@ fun BeeKeepApp(
 
     fun advanceToNextUntaggedHiveForFastAssignment(currentHive: Hive, justAssignedUid: String) {
         if (!fastTagAssignmentMode) return
+
+        // A scan event can be queued just before the write transaction takes ownership.
+        // It must never carry an Inspect destination across the fast-assignment handoff.
+        (activity as? MainActivity)?.pendingNfcResult?.value = null
+        pendingInspectionHiveId = null
+        pendingAutoStartVoiceHiveId = null
+        inspecting = false
+
         val apiaryHives = hives.filter {
             it.apiary.equals(currentHive.apiary, ignoreCase = true) && !it.isDead
         }
@@ -483,7 +491,7 @@ fun BeeKeepApp(
         vm.openHive(nextUntaggedHive.id)
         scope.launch {
             snackbarHostState.showSnackbar(
-                "Fast tag assignment: ready for ${hiveReferenceName(nextUntaggedHive.number)}. Present the next tag to write it."
+                "Moving to ${hiveReferenceName(nextUntaggedHive.number)}. Remove the previous tag; present the next one when the scanner is ready."
             )
         }
     }
@@ -1082,6 +1090,13 @@ fun BeeKeepApp(
                     pendingAutoTagWriteHiveId = null
                     pendingAutoTagWriteIgnoredUid = null
                 }
+            },
+            onFastTagAssignmentStarted = {
+                // Clear any pre-existing normal-read navigation before the writer starts.
+                (activity as? MainActivity)?.pendingNfcResult?.value = null
+                pendingInspectionHiveId = null
+                pendingAutoStartVoiceHiveId = null
+                inspecting = false
             },
             onFastTagAssignmentSuccess = { assignedUid ->
                 advanceToNextUntaggedHiveForFastAssignment(hiveForDetail, assignedUid)

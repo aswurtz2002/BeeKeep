@@ -107,6 +107,7 @@ internal fun HiveDetailScreen(
     autoStartTagWriting: Boolean = false,
     autoStartTagWritingIgnoreUid: String? = null,
     onAutoTagWritingStarted: () -> Unit = {},
+    onFastTagAssignmentStarted: () -> Unit = {},
     onFastTagAssignmentSuccess: (String) -> Unit = {},
     onVerifyTag: () -> Unit,
     onMarkDead: () -> Unit,
@@ -139,6 +140,7 @@ internal fun HiveDetailScreen(
         // ReaderMode session is being armed. Own both paths for the whole transaction.
         if (fastTagAssignmentMode) {
             nfc.beginFastAssignmentFlow(activity)
+            onFastTagAssignmentStarted()
         } else {
             nfc.setPassiveReadingEnabled(activity, false)
         }
