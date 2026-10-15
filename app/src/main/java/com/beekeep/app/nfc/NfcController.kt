@@ -258,7 +258,10 @@ class NfcController {
                 ) return@enableReaderMode
                 if (delivered.compareAndSet(false, true)) {
                     val result = runCatching { operation(tag) }
-                        .getOrElse { e -> NfcResult.Error(friendlyError(e)) }
+                        .getOrElse { e ->
+                            val message = friendlyError(e)
+                            NfcResult.Error(message, retryable = isRetryableTagWriteError(message))
+                        }
                     // Remember the physical UID even when a write/read operation
                     // failed. Otherwise passive reading immediately sees the same
                     // still-held tag as unassigned and can reopen that dialog in a loop.
