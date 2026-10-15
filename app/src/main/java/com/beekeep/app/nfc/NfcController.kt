@@ -41,7 +41,7 @@ sealed interface NfcResult {
     data class Written(val info: NfcTagInfo) : NfcResult {
         val uid: String get() = info.uid
     }
-    data class Error(val message: String) : NfcResult
+    data class Error(val message: String, val retryable: Boolean = false) : NfcResult
 }
 
 class NfcController {
@@ -215,7 +215,10 @@ class NfcController {
                     NfcResult.Error("This NFC tag is assigned to another hive. Nothing was written. Use NFC Tag Management to confirm reassignment.")
                 !allowConfirmedAssignment && isAssignedElsewhere(scannedUid) ->
                     NfcResult.Error("This NFC tag is assigned to another hive. Nothing was written. Use NFC Tag Management to confirm any reassignment.")
-                else -> write(tag, text)
+                else -> when (val result = write(tag, text)) {
+                    is NfcResult.Error -> result.copy(retryable = isRetryableTagWriteError(result.message))
+                    else -> result
+                }
             }
         }, onResult, ignoredUid)
     }
@@ -255,10 +258,13 @@ class NfcController {
                 if (delivered.compareAndSet(false, true)) {
                     val result = runCatching { operation(tag) }
                         .getOrElse { e -> NfcResult.Error(friendlyError(e)) }
+                    // Remember the physical UID even when a write/read operation
+                    // failed. Otherwise passive reading immediately sees the same
+                    // still-held tag as unassigned and can reopen that dialog in a loop.
                     when (result) {
                         is NfcResult.Read -> rememberHandledUid(result.uid)
                         is NfcResult.Written -> rememberHandledUid(result.uid)
-                        is NfcResult.Error -> Unit
+                        is NfcResult.Error -> NfcUid.normalize(uid(tag))?.let(::rememberHandledUid)
                     }
                     activity.runOnUiThread {
                         if (sessionGeneration != scanGeneration.get()) return@runOnUiThread
@@ -271,7 +277,12 @@ class NfcController {
                             try {
                                 onResult(result)
                             } finally {
-                                enablePassiveIfNeeded(activity)
+                                // A retryable write failure belongs to its Retry/Cancel
+                                // UI. Don't immediately hand the same tag to the passive
+                                // reader before Compose has updated that UI state.
+                                if (result !is NfcResult.Error || !result.retryable) {
+                                    enablePassiveIfNeeded(activity)
+                                }
                             }
                         }
                     }
@@ -638,6 +649,37 @@ class NfcController {
         } catch (_: Exception) {
             null
         }
+    }
+
+    private fun isRetryableTagWriteError(message: String): Boolean {
+        val normalized = message.lowercase(Locale.ROOT)
+        // Permanent capability/identity errors cannot be fixed by another tap.
+        val permanent = listOf(
+            "read-only",
+            "too small",
+            "cannot store ndef",
+            "invalid readable uid",
+            "does not expose a valid",
+            "assigned to another hive",
+            "linked to multiple hive records",
+            "not the assigned tag",
+            "only writes its generic tag marker"
+        )
+        if (permanent.any(normalized::contains)) return false
+
+        // NFC contact loss, connection errors, and post-write verification failures
+        // are transient or may succeed after the user holds the tag more steadily.
+        return listOf(
+            "moved away",
+            "communication failed",
+            "could not verify",
+            "tag was written, but",
+            "tag was formatted, but",
+            "try again",
+            "transceive",
+            "connection lost",
+            "could not complete the nfc operation"
+        ).any(normalized::contains)
     }
 
     private fun friendlyError(e: Throwable): String = when (e) {
