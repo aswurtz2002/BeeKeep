@@ -35,6 +35,9 @@ Run JVM unit tests/build first, then complete the physical tests with the actual
 10. [ ] Test a tag whose UID exists in the assignment ledger but not the hive cache, and a legacy hive with only a cached UID. Both cases must resolve safely or fail closed, never pick an arbitrary hive.
 11. [ ] In cloud sync, deliver an old hive document with a stale `tag_uid` after that UID has already been released/reassigned. The legacy cache field must not recreate or reclaim the assignment; the active assignment ledger must remain authoritative.
 12. [ ] Create multiple active ledger rows for one UID and/or one hive, then sync another assignment. The resolver must close every conflicting row when the incoming assignment wins, or close the incoming row without partially changing incumbents when it loses.
+13. [ ] Mark a hive dead with multiple active NFC ledger rows. Every active row must be closed, the hive cache must lose its tag UID, and each tag must be available for explicit reuse.
+14. [ ] Deliver a cloud NFC assignment after its target hive has been marked dead or deleted. It must be stored closed and must not reclaim a UID or evict a different active hive's assignment.
+15. [ ] Repeat the lifecycle checks with legacy UID formatting (for example `AA:BB:CC:DD` in stored history and `AABBCCDD` from the physical scan). Releasing, resolving, and reassigning the tag must behave identically.
 
 ## Fast Tag Mode
 

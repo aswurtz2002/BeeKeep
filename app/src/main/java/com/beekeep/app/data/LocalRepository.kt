@@ -346,8 +346,10 @@ class LocalHiveRepository(context: Context) {
             val dead = hive.copy(status = HiveStatus.DEAD, deadAt = now, statusChangedAt = now, tagUid = null, updatedAt = now)
             db.hives().upsert(dead)
             enqueue("hive", hiveId, "upsert", hivePayload(dead))
-            db.nfcTagAssignments().activeForHive(hiveId)?.let { assignment ->
-                val closed = assignment.copy(unassignedAt = now)
+            // A legacy/corrupt ledger can contain more than one active tag for the
+            // same colony. Marking the colony dead must release every one of them.
+            db.nfcTagAssignments().activeAssignmentsForHive(hiveId).forEach { assignment ->
+                val closed = assignment.copy(unassignedAt = maxOf(now, assignment.assignedAt))
                 db.nfcTagAssignments().upsert(closed)
                 enqueue("nfc_assignment", closed.id, "upsert", nfcAssignmentPayload(closed))
             }
@@ -862,6 +864,17 @@ class LocalHiveRepository(context: Context) {
                         )
                     }
                 }
+                if (status != HiveStatus.ACTIVE || json.optBoolean("deleted", false)) {
+                    // Older app versions can sync a lifecycle change without closing NFC
+                    // rows. Close every active assignment here too; otherwise a dead hive
+                    // can retain a tag and prevent it from being safely reused.
+                    val lifecycleTime = maxOf(incomingStatusChangedAt, incomingUpdatedAt)
+                    db.nfcTagAssignments().activeAssignmentsForHive(doc.entity_id).forEach { assignment ->
+                        val closed = assignment.copy(unassignedAt = maxOf(lifecycleTime, assignment.assignedAt))
+                        db.nfcTagAssignments().upsert(closed)
+                        enqueue("nfc_assignment", closed.id, "upsert", nfcAssignmentPayload(closed))
+                    }
+                }
                 db.hives().refreshTagCache(doc.entity_id)
             }
             "nfc_assignment" -> {
@@ -1221,14 +1234,28 @@ class LocalHiveRepository(context: Context) {
             } else {
                 incoming.copy(tagUid = normalizedUid)
             }
-            val merge = if (normalizedUid == null) {
-                NfcAssignmentResolver.MergeResult(safeIncoming, emptyList())
+            val targetHive = db.hives().get(safeIncoming.hiveId)
+            val targetIsUnavailable = safeIncoming.isActive &&
+                (targetHive == null || targetHive.status != HiveStatus.ACTIVE || targetHive.deleted)
+            // Assignment documents can arrive after lifecycle documents or out of order.
+            // A stale active assignment must never resurrect a tag on a dead/deleted hive.
+            val lifecycleSafeIncoming = if (targetIsUnavailable) {
+                safeIncoming.copy(
+                    unassignedAt = maxOf(
+                        safeIncoming.assignedAt,
+                        targetHive?.statusChangedAt ?: 0L,
+                        targetHive?.updatedAt ?: 0L
+                    )
+                )
+            } else safeIncoming
+            val merge = if (normalizedUid == null || !lifecycleSafeIncoming.isActive) {
+                NfcAssignmentResolver.MergeResult(lifecycleSafeIncoming, emptyList())
             } else {
                 NfcAssignmentResolver.merge(
                     tagConflicts = db.nfcTagAssignments().allActiveAssignments()
                         .filter { NfcUid.matches(it.tagUid, normalizedUid) },
-                    hiveConflicts = db.nfcTagAssignments().activeAssignmentsForHive(safeIncoming.hiveId),
-                    incoming = safeIncoming
+                    hiveConflicts = db.nfcTagAssignments().activeAssignmentsForHive(lifecycleSafeIncoming.hiveId),
+                    incoming = lifecycleSafeIncoming
                 )
             }
 
