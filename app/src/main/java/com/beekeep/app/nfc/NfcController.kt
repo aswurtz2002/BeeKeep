@@ -64,6 +64,10 @@ class NfcController {
     @Volatile private var knownHiveTagsReady: Boolean = false
     private var lastHandledUid: String? = null
     private var lastHandledAt = 0L
+    // An unassigned-tag prompt dismissed by the user must not immediately reappear
+    // just because the same tag is still resting against the phone. This latch is
+    // cleared by detecting a different tag or starting an explicit Scan/Write action.
+    @Volatile private var passiveSuppressedUid: String? = null
 
     private companion object {
         const val PASSIVE_REPEAT_DELAY_MS = 1_800L
@@ -84,6 +88,20 @@ class NfcController {
     fun rememberHandledUid(uid: String) {
         synchronized(passiveLock) {
             lastHandledUid = uid
+            lastHandledAt = System.currentTimeMillis()
+        }
+    }
+
+    /**
+     * Suppress passive rediscovery after the user cancels an unassigned-tag prompt.
+     * Reader mode can rediscover a tag as it is re-enabled while the tag is still
+     * physically present, so a short debounce alone is not enough for this flow.
+     */
+    fun suppressPassiveUid(uid: String) {
+        val normalizedUid = NfcUid.normalize(uid) ?: return
+        synchronized(passiveLock) {
+            passiveSuppressedUid = normalizedUid
+            lastHandledUid = normalizedUid
             lastHandledAt = System.currentTimeMillis()
         }
     }
@@ -244,6 +262,9 @@ class NfcController {
         synchronized(passiveLock) {
             passiveReadGeneration.incrementAndGet()
             passiveReadInFlight.set(false)
+            // Explicit user-initiated scans are allowed to inspect even the last
+            // dismissed tag again.
+            passiveSuppressedUid = null
         }
         runCatching { nfc.disableReaderMode(activity) }
         passiveReaderActive = false
@@ -349,16 +370,29 @@ class NfcController {
                             if (readGeneration != passiveReadGeneration.get()) {
                                 false
                             } else {
-                                val now = System.currentTimeMillis()
-                                if (lastHandledUid == result.uid && now - lastHandledAt < PASSIVE_REPEAT_DELAY_MS) {
-                                    // Refresh while the same tag is still present. This prevents a
-                                    // held tag from repeatedly reopening the same hive.
-                                    lastHandledAt = now
+                                val uidKey = NfcUid.normalize(result.uid)
+                                val suppressedUid = passiveSuppressedUid
+                                if (uidKey != null && suppressedUid == uidKey) {
+                                    // Keep this UID suppressed until another physical tag is
+                                    // seen or the user explicitly starts a scan/write flow.
+                                    lastHandledUid = uidKey
+                                    lastHandledAt = System.currentTimeMillis()
                                     false
                                 } else {
-                                    lastHandledUid = result.uid
-                                    lastHandledAt = now
-                                    true
+                                    if (suppressedUid != null && uidKey != suppressedUid) {
+                                        passiveSuppressedUid = null
+                                    }
+                                    val now = System.currentTimeMillis()
+                                    if (lastHandledUid == result.uid && now - lastHandledAt < PASSIVE_REPEAT_DELAY_MS) {
+                                        // Refresh while the same tag is still present. This prevents a
+                                        // held tag from repeatedly reopening the same hive.
+                                        lastHandledAt = now
+                                        false
+                                    } else {
+                                        lastHandledUid = result.uid
+                                        lastHandledAt = now
+                                        true
+                                    }
                                 }
                             }
                         }
