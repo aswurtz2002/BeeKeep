@@ -126,8 +126,9 @@ internal fun HiveDetailScreen(
         if (showWriteRetryDialog) {
             showWriteRetryDialog = false
             onNfcWriteFlowChanged(false)
+        } else {
+            onBack()
         }
-        onBack()
     }
 
     fun removeHiveTag() {
