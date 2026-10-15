@@ -287,7 +287,7 @@ internal fun SettingsScreen(
                 )
                 if (fastTagAssignmentMode) {
                     Text(
-                        "Hands-free after the first write: BeeKeep automatically moves to the next untagged hive in this apiary and starts the next tag write. No NEXT button is needed. Remove the previous tag before presenting the next one.",
+                        "Tap an untagged hive in Apiaries to start. BeeKeep opens Fast Tag Assignment directly, writes the first tag, then automatically advances through the remaining untagged hives. No hive-detail page or NEXT button is needed. Remove each previous tag before presenting the next one.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )

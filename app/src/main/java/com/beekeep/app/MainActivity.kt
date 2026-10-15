@@ -527,6 +527,47 @@ fun BeeKeepApp(
         fastAssignmentScreenActive = true
     }
 
+    fun startFastTagAssignmentFromHive(requestedHive: Hive) {
+        val apiaryHives = hives.filter {
+            it.apiary.equals(requestedHive.apiary, ignoreCase = true) && !it.isDead
+        }
+        val currentIndex = apiaryHives.indexOfFirst { it.id == requestedHive.id }
+        val candidateOrder = if (currentIndex >= 0) {
+            apiaryHives.drop(currentIndex) + apiaryHives.take(currentIndex)
+        } else {
+            apiaryHives
+        }
+        val firstUntaggedHive = candidateOrder.firstOrNull { it.tagUid.isNullOrBlank() }
+        if (firstUntaggedHive == null) {
+            scope.launch {
+                snackbarHostState.showSnackbar(
+                    "Fast Tag Assignment: no untagged hives remain in ${requestedHive.apiary}."
+                )
+            }
+            return
+        }
+
+        // With Fast Tag Assignment enabled, selecting a hive starts the dedicated
+        // tagging flow directly. Never open the standard Hive Detail page first.
+        (activity as? MainActivity)?.pendingNfcResult?.value = null
+        nfc.beginFastAssignmentFlow(activity)
+        fastAssignmentSessionActive = true
+        fastAssignmentApiaryName = requestedHive.apiary
+        fastAssignmentAssignedHiveIds = emptySet()
+        fastAssignmentCurrentHiveId = firstUntaggedHive.id
+        fastAssignmentIgnoredUid = null
+        fastAssignmentScreenActive = true
+        pendingAutoTagWriteHiveId = null
+        pendingAutoTagWriteIgnoredUid = null
+        pendingInspectionHiveId = null
+        pendingAutoStartVoiceHiveId = null
+        inspecting = false
+        selectedHiveOpen = false
+        logType = null
+        screen = Screen.HOME
+        vm.clearHive()
+    }
+
     val lifecycleOwner = LocalLifecycleOwner.current
     var nfcEnabledForIndicator by remember(nfc) {
         mutableStateOf(nfc.isAvailable() && nfc.isEnabled())
@@ -1379,7 +1420,15 @@ fun BeeKeepApp(
             padding = androidx.compose.foundation.layout.PaddingValues(),
             onBack = { selectedApiaryName = null; screen = Screen.APIARIES },
             onAddHive = { addHive = true },
-            onOpenHive = { vm.openHive(it); selectedHiveOpen = true }
+            onOpenHive = { hiveId ->
+                val targetHive = hives.firstOrNull { it.id == hiveId }
+                if (fastTagAssignmentMode && targetHive != null) {
+                    startFastTagAssignmentFromHive(targetHive)
+                } else {
+                    vm.openHive(hiveId)
+                    selectedHiveOpen = true
+                }
+            }
         )
         return
     }
@@ -1420,7 +1469,15 @@ fun BeeKeepApp(
                 padding = padding,
                 onBack = { screen = Screen.HOME },
                 onAddHive = { selectedApiaryName = null; addHive = true },
-                onOpenHive = { hiveId -> vm.openHive(hiveId); selectedHiveOpen = true }
+                onOpenHive = { hiveId ->
+                    val targetHive = hives.firstOrNull { it.id == hiveId }
+                    if (fastTagAssignmentMode && targetHive != null) {
+                        startFastTagAssignmentFromHive(targetHive)
+                    } else {
+                        vm.openHive(hiveId)
+                        selectedHiveOpen = true
+                    }
+                }
             )
             Screen.APIARIES -> ApiariesScreen(
                 apiaries, hives, padding,
