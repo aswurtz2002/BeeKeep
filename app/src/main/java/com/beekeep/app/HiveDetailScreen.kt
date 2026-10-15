@@ -104,8 +104,9 @@ internal fun HiveDetailScreen(
     onNextHive: () -> Unit = {},
     fastTagAssignmentMode: Boolean = false,
     autoStartTagWriting: Boolean = false,
+    autoStartTagWritingIgnoreUid: String? = null,
     onAutoTagWritingStarted: () -> Unit = {},
-    onFastTagAssignmentSuccess: () -> Unit = {},
+    onFastTagAssignmentSuccess: (String) -> Unit = {},
     onVerifyTag: () -> Unit,
     onMarkDead: () -> Unit,
     onRestore: () -> Unit,
@@ -131,7 +132,7 @@ internal fun HiveDetailScreen(
         }
     }
 
-    fun startTagWriting() {
+    fun startTagWriting(ignoredUid: String? = null) {
         if (hive.isDead || writeStatusType == "saving" || writeStatusType == "removing") return
         writeStatusType = "waiting"
         writeStatus = "Ready to scan. Hold your NFC tag against the back of your phone and keep it still."
@@ -139,6 +140,7 @@ internal fun HiveDetailScreen(
             activity = activity,
             text = BeeKeepNfcPayload.TAG_PAYLOAD,
             allowOverwriteOtherHive = hive.tagUid != null,
+            ignoredUid = ignoredUid,
             onResult = { result ->
                 when (result) {
                     is NfcResult.Written -> {
@@ -152,7 +154,7 @@ internal fun HiveDetailScreen(
                             } else {
                                 error ?: "The tag was written, but its hive assignment could not be saved."
                             }
-                            if (success && fastTagAssignmentMode) onFastTagAssignmentSuccess()
+                            if (success && fastTagAssignmentMode) onFastTagAssignmentSuccess(result.uid)
                         }
                     }
                     is NfcResult.Error -> {
@@ -183,7 +185,7 @@ internal fun HiveDetailScreen(
             writeStatus = "Fast tag assignment stopped because this hive already has an NFC tag. No tag was overwritten."
             onAutoTagWritingStarted()
         } else {
-            startTagWriting()
+            startTagWriting(autoStartTagWritingIgnoreUid)
             onAutoTagWritingStarted()
         }
     }

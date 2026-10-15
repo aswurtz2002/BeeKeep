@@ -397,6 +397,7 @@ fun BeeKeepApp(
     var pendingInspectionHiveId by rememberSaveable { mutableStateOf<Long?>(null) }
     var pendingAutoStartVoiceHiveId by rememberSaveable { mutableStateOf<Long?>(null) }
     var pendingAutoTagWriteHiveId by rememberSaveable { mutableStateOf<Long?>(null) }
+    var pendingAutoTagWriteIgnoredUid by rememberSaveable { mutableStateOf<String?>(null) }
     var scanning by remember { mutableStateOf(false) }
     var firstRunPromptVisible by rememberSaveable { mutableStateOf(false) }
     var firstRunPromptChecked by rememberSaveable { mutableStateOf(false) }
@@ -418,7 +419,7 @@ fun BeeKeepApp(
     val harvests by vm.harvests.collectAsStateWithLifecycle()
     val ready by vm.ready.collectAsStateWithLifecycle()
 
-    fun advanceToNextUntaggedHiveForFastAssignment(currentHive: Hive) {
+    fun advanceToNextUntaggedHiveForFastAssignment(currentHive: Hive, justAssignedUid: String) {
         if (!fastTagAssignmentMode) return
         val apiaryHives = hives.filter {
             it.apiary.equals(currentHive.apiary, ignoreCase = true) && !it.isDead
@@ -429,6 +430,8 @@ fun BeeKeepApp(
             ?.let { apiaryHives.drop(it + 1).firstOrNull { hive -> hive.tagUid.isNullOrBlank() } }
 
         if (nextUntaggedHive == null) {
+            pendingAutoTagWriteHiveId = null
+            pendingAutoTagWriteIgnoredUid = null
             scope.launch {
                 snackbarHostState.showSnackbar(
                     "Fast tag assignment complete for ${currentHive.apiary}: no untagged hives remain after ${hiveReferenceName(currentHive.number)}."
@@ -440,6 +443,7 @@ fun BeeKeepApp(
         lastHiveTagSuccessHiveId = null
         lastHiveTagSuccessUid = null
         pendingAutoTagWriteHiveId = nextUntaggedHive.id
+        pendingAutoTagWriteIgnoredUid = justAssignedUid
         selectedHiveOpen = true
         vm.openHive(nextUntaggedHive.id)
         scope.launch {
@@ -664,7 +668,7 @@ fun BeeKeepApp(
                             lastHiveTagSuccessHiveId = targetHive.id
                             lastHiveTagSuccessUid = result.uid
                             playNfcAssignmentSuccessFeedback(context)
-                            if (fastTagAssignmentMode) advanceToNextUntaggedHiveForFastAssignment(targetHive)
+                            if (fastTagAssignmentMode) advanceToNextUntaggedHiveForFastAssignment(targetHive, result.uid)
                         }
                         scope.launch {
                             snackbarHostState.showSnackbar(
@@ -937,11 +941,15 @@ fun BeeKeepApp(
             hive = hiveForDetail,
             fastTagAssignmentMode = fastTagAssignmentMode,
             autoStartTagWriting = pendingAutoTagWriteHiveId == hiveForDetail.id,
+            autoStartTagWritingIgnoreUid = if (pendingAutoTagWriteHiveId == hiveForDetail.id) pendingAutoTagWriteIgnoredUid else null,
             onAutoTagWritingStarted = {
-                if (pendingAutoTagWriteHiveId == hiveForDetail.id) pendingAutoTagWriteHiveId = null
+                if (pendingAutoTagWriteHiveId == hiveForDetail.id) {
+                    pendingAutoTagWriteHiveId = null
+                    pendingAutoTagWriteIgnoredUid = null
+                }
             },
-            onFastTagAssignmentSuccess = {
-                advanceToNextUntaggedHiveForFastAssignment(hiveForDetail)
+            onFastTagAssignmentSuccess = { assignedUid ->
+                advanceToNextUntaggedHiveForFastAssignment(hiveForDetail, assignedUid)
             },
             nextHiveNumber = nextHiveInApiary?.number,
             onNextHive = {
@@ -1190,7 +1198,10 @@ fun BeeKeepApp(
                 onFastTagAssignmentModeChange = { enabled ->
                     fastTagAssignmentMode = enabled
                     autoVoicePrefs.edit { putBoolean("fast_tag_assignment_mode", enabled) }
-                    if (!enabled) pendingAutoTagWriteHiveId = null
+                    if (!enabled) {
+                        pendingAutoTagWriteHiveId = null
+                        pendingAutoTagWriteIgnoredUid = null
+                    }
                 },
                 largeFieldText = largeFieldText,
                 onLargeFieldTextChange = onLargeFieldTextChange,

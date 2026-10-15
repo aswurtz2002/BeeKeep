@@ -285,11 +285,6 @@ internal fun SettingsScreen(
                     checked = fastTagAssignmentMode,
                     onCheckedChange = onFastTagAssignmentModeChange
                 )
-                Text(
-                    "After a successful tag assignment, BeeKeep opens the next untagged hive in this apiary and starts waiting for its tag. The manual Next Hive button is hidden while this is enabled.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
                 SettingsSwitchRow(
                     title = "Beep when voice is ready",
                     checked = readyBeep,

@@ -161,7 +161,8 @@ class NfcController {
         text: String,
         onResult: (NfcResult) -> Unit,
         allowOverwriteOtherHive: Boolean = false,
-        expectedUid: String? = null
+        expectedUid: String? = null,
+        ignoredUid: String? = null
     ) {
         start(activity, { tag ->
             val scannedUid = uid(tag)
@@ -170,13 +171,14 @@ class NfcController {
             } else {
                 write(tag, text, allowOverwriteOtherHive)
             }
-        }, onResult)
+        }, onResult, ignoredUid)
     }
 
     private fun start(
         activity: Activity,
         operation: (Tag) -> NfcResult,
-        onResult: (NfcResult) -> Unit
+        onResult: (NfcResult) -> Unit,
+        ignoredUid: String? = null
     ) {
         val nfc = adapter ?: activity.getSystemService(NfcManager::class.java)?.defaultAdapter
         if (nfc == null) { onResult(NfcResult.Error("This phone does not have NFC.")); return }
@@ -199,6 +201,11 @@ class NfcController {
         try {
             nfc.enableReaderMode(activity, { tag ->
                 if (!active.get()) return@enableReaderMode
+                // During fast assignment, the previous tag may still be touching the phone.
+                // Ignore that UID without consuming the one-shot scan; keep waiting for the next tag.
+                if (!ignoredUid.isNullOrBlank() &&
+                    runCatching { uid(tag).equals(ignoredUid, ignoreCase = true) }.getOrDefault(false)
+                ) return@enableReaderMode
                 if (delivered.compareAndSet(false, true)) {
                     val result = runCatching { operation(tag) }
                         .getOrElse { e -> NfcResult.Error(friendlyError(e)) }
