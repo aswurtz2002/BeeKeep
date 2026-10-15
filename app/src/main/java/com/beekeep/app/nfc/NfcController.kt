@@ -321,7 +321,7 @@ class NfcController {
         if (ready) {
             synchronized(passiveLock) {
                 // Once Create New Hive or Assign Existing succeeds, allow assigned-tag reads.
-                if (suppressedUnassignedUid in knownHiveIdByTagUid.keys) {
+                if (suppressedUnassignedUid?.let { knownHiveIdByTagUid.containsKey(it) } == true) {
                     suppressedUnassignedUid = null
                 }
             }
