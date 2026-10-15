@@ -604,27 +604,38 @@ fun BeeKeepApp(
             // belonging to that hive. Keep the beekeeper on this page instead of
             // showing the generic "assign or create" dialog.
             val targetHive = openHiveForTagAssignment
-            lastHiveTagSuccessHiveId = null
-            lastHiveTagSuccessUid = null
-            if (result.launchPreparationError != null) {
+            if (!targetHive.tagUid.isNullOrBlank()) {
+                // Passive scanning must never silently replace an existing assignment.
+                // Replacements remain available through the explicit REPLACE/WRITE TAG action.
                 scope.launch {
                     snackbarHostState.showSnackbar(
-                        "Tag was not assigned because BeeKeep could not prepare it for app launch. " +
-                            result.launchPreparationError + " Use WRITE TAG on this hive to retry."
+                        "${hiveReferenceName(targetHive.number)} already has an NFC tag assigned " +
+                            "(${targetHive.tagUid}). This tag was not assigned. Use REPLACE on the hive page to change it."
                     )
                 }
             } else {
-                vm.assignTagToHive(targetHive.id, result.uid) { success, error ->
-                    if (success) {
-                        lastHiveTagSuccessHiveId = targetHive.id
-                        lastHiveTagSuccessUid = result.uid
-                        playNfcAssignmentSuccessFeedback(context)
-                    }
+                lastHiveTagSuccessHiveId = null
+                lastHiveTagSuccessUid = null
+                if (result.launchPreparationError != null) {
                     scope.launch {
                         snackbarHostState.showSnackbar(
-                            if (success) "NFC tag assigned to ${hiveReferenceName(targetHive.number)}"
-                            else error ?: "Could not assign the NFC tag to ${hiveReferenceName(targetHive.number)}."
+                            "Tag was not assigned because BeeKeep could not prepare it for app launch. " +
+                                result.launchPreparationError + " Use WRITE TAG on this hive to retry."
                         )
+                    }
+                } else {
+                    vm.assignTagToHive(targetHive.id, result.uid) { success, error ->
+                        if (success) {
+                            lastHiveTagSuccessHiveId = targetHive.id
+                            lastHiveTagSuccessUid = result.uid
+                            playNfcAssignmentSuccessFeedback(context)
+                        }
+                        scope.launch {
+                            snackbarHostState.showSnackbar(
+                                if (success) "NFC tag assigned to ${hiveReferenceName(targetHive.number)}"
+                                else error ?: "Could not assign the NFC tag to ${hiveReferenceName(targetHive.number)}."
+                            )
+                        }
                     }
                 }
             }
