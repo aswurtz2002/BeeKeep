@@ -535,6 +535,7 @@ fun BeeKeepApp(
     androidx.compose.runtime.LaunchedEffect(screen, nfcWriteRetryMessage, hiveNfcWriteFlowActive, nfc) {
         val passiveAllowed = screen != Screen.SCAN &&
             screen != Screen.TAG_MANAGER &&
+            unassignedTagUid == null &&
             nfcWriteRetryMessage == null &&
             !hiveNfcWriteFlowActive
         nfc.setPassiveReadingEnabled(activity, passiveAllowed)
@@ -790,6 +791,10 @@ fun BeeKeepApp(
             // Keep outside taps from dismissing this dialog and revealing the
             // scan screen underneath. Back and the explicit Cancel action exit safely.
             onDismissRequest = {
+                // Remember the dismissed UID before passive reading resumes. Otherwise
+                // the same tag can immediately reopen this dialog when it is still held
+                // against the phone.
+                nfc.suppressPassiveUid(uid)
                 unassignedTagUid = null
                 nfc.stop(activity)
                 scanning = false
@@ -831,6 +836,9 @@ fun BeeKeepApp(
                     }
                     TextButton(
                         onClick = {
+                            // Cancel means dismiss this tag for now. Passive NFC should
+                            // not rediscover it and reopen the same prompt in a loop.
+                            nfc.suppressPassiveUid(uid)
                             unassignedTagUid = null
                             nfc.stop(activity)
                             scanning = false
