@@ -33,6 +33,8 @@ Run JVM unit tests/build first, then complete the physical tests with the actual
 8. [ ] Remove a tag assignment, then scan the physical tag again. It must not reopen the released hive; it can be explicitly assigned to a different hive.
 9. [ ] Permanently delete a hive or mark a colony dead. Confirm its active tag assignment is released without affecting unrelated assignments.
 10. [ ] Test a tag whose UID exists in the assignment ledger but not the hive cache, and a legacy hive with only a cached UID. Both cases must resolve safely or fail closed, never pick an arbitrary hive.
+11. [ ] In cloud sync, deliver an old hive document with a stale `tag_uid` after that UID has already been released/reassigned. The legacy cache field must not recreate or reclaim the assignment; the active assignment ledger must remain authoritative.
+12. [ ] Create multiple active ledger rows for one UID and/or one hive, then sync another assignment. The resolver must close every conflicting row when the incoming assignment wins, or close the incoming row without partially changing incumbents when it loses.
 
 ## Fast Tag Mode
 

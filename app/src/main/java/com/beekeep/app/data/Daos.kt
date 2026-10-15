@@ -64,6 +64,10 @@ interface NfcTagAssignmentDao {
     suspend fun activeAssignmentsForTag(uid: String): List<NfcTagAssignmentEntity>
     @Query("SELECT * FROM nfc_tag_assignments WHERE unassigned_at IS NULL ORDER BY assigned_at DESC, id DESC")
     suspend fun allActiveAssignments(): List<NfcTagAssignmentEntity>
+    @Query("SELECT * FROM nfc_tag_assignments WHERE hive_id = :hiveId ORDER BY assigned_at DESC, id DESC")
+    suspend fun allAssignmentsForHive(hiveId: Long): List<NfcTagAssignmentEntity>
+    @Query("SELECT * FROM nfc_tag_assignments WHERE tag_uid = :uid COLLATE NOCASE ORDER BY assigned_at DESC, id DESC")
+    suspend fun allAssignmentsForTag(uid: String): List<NfcTagAssignmentEntity>
 
     @Query("""
         SELECT EXISTS(

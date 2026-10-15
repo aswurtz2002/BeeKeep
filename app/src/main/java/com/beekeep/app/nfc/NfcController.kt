@@ -58,7 +58,6 @@ class NfcController {
     @Volatile private var passiveReadListener: ((NfcResult.Read) -> Unit)? = null
     @Volatile private var knownHiveIdByTagUid: Map<String, Long> = emptyMap()
     @Volatile private var knownAmbiguousTagUids: Set<String> = emptySet()
-    @Volatile private var knownUnassignedHiveTagUids: Set<String> = emptySet()
     @Volatile private var knownHiveTagsReady: Boolean = false
     private var lastHandledUid: String? = null
     private var lastHandledAt = 0L
@@ -109,7 +108,6 @@ class NfcController {
     fun updateKnownHiveTags(
         hiveIdByTagUid: Map<String, Long>,
         ready: Boolean,
-        unassignedTagUids: Set<String> = emptySet(),
         ambiguousTagUids: Set<String> = emptySet()
     ) {
         knownAmbiguousTagUids = ambiguousTagUids.mapNotNull(NfcUid::normalize).toSet()
@@ -118,10 +116,6 @@ class NfcController {
                 NfcUid.normalize(uid)?.takeIf { it !in knownAmbiguousTagUids }?.let { it to hiveId }
             }
             .toMap()
-        knownUnassignedHiveTagUids = unassignedTagUids
-            .mapNotNull(NfcUid::normalize)
-            .filter { it !in knownHiveIdByTagUid && it !in knownAmbiguousTagUids }
-            .toSet()
         knownHiveTagsReady = ready
         if (ready) attachedActivity?.takeIf { activityResumed }?.let(::enablePassiveIfNeeded)
     }
@@ -388,7 +382,11 @@ class NfcController {
                 storedPayload = stored,
                 hasBeeKeepLaunchRecord = rawMessages.any(::isGenericBeeKeepLaunchMessage)
             )
-            return NfcResult.Read(info, stored)
+            val result = NfcResult.Read(info, stored)
+            // Cold-start intents should seed passive-repeat suppression, so a tag that
+            // remains at the antenna does not trigger a second navigation once resumed.
+            rememberHandledUid(result.uid)
+            return result
         }
 
         // NDEF_DISCOVERED intents normally include their NDEF messages. If Android
@@ -405,7 +403,9 @@ class NfcController {
             ndefType = null,
             storedPayload = null
         )
-        return NfcResult.Read(info, null)
+        val result = NfcResult.Read(info, null)
+        rememberHandledUid(result.uid)
+        return result
     }
 
     private fun uid(tag: Tag): String = tag.id.joinToString("") { "%02X".format(it.toInt() and 0xFF) }

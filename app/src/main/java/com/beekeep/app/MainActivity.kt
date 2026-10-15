@@ -525,8 +525,7 @@ fun BeeKeepApp(
         // or duplicate UID stays ambiguous; do not choose a hive by query order.
         val assignments = vm.getAllKnownNfcTagAssignments()
         val index = NfcUidIndex.fromAssignments(assignments)
-        val releasedTagUids = vm.getUnassignedNfcTagUids()
-        nfc.updateKnownHiveTags(index.uniqueHiveIdByUid, ready, releasedTagUids, index.ambiguousUids)
+        nfc.updateKnownHiveTags(index.uniqueHiveIdByUid, ready, index.ambiguousUids)
     }
 
     val locationPermissionLauncher = rememberLauncherForActivityResult(

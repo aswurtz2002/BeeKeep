@@ -826,11 +826,24 @@ class LocalHiveRepository(context: Context) {
                 ))
                 // Older BeeKeep builds stored the tag on the hive document. Adopt it
                 // into the assignment ledger so mixed-version fleets still resolve scans.
-                val remoteTag = json.stringOrNull("tag_uid")
+                val remoteTag = json.stringOrNull("tag_uid")?.let(NfcUid::normalize)
                 if (remoteTag != null && status == HiveStatus.ACTIVE) {
-                    val localActive = db.nfcTagAssignments().activeForHive(doc.entity_id)
-                    if (localActive == null || !localActive.tagUid.equals(remoteTag, ignoreCase = true)) {
-                        applyAssignment(NfcTagAssignmentEntity(IdGenerator.nextLong(), remoteTag, doc.entity_id, incomingUpdatedAt))
+                    // Hive.tag_uid is a legacy cache, not the assignment authority. Import
+                    // it only when neither this hive nor this physical UID has any ledger
+                    // history. Otherwise a stale hive document (updated later for an
+                    // unrelated edit) could reclaim a released tag during cloud sync.
+                    val hiveHasLedgerHistory = db.nfcTagAssignments().allAssignmentsForHive(doc.entity_id).isNotEmpty()
+                    val uidHasLedgerHistory = db.nfcTagAssignments().allAssignmentsForTag(remoteTag).isNotEmpty()
+                    if (!hiveHasLedgerHistory && !uidHasLedgerHistory) {
+                        applyAssignment(
+                            NfcTagAssignmentEntity(
+                                IdGenerator.nextLong(),
+                                remoteTag,
+                                doc.entity_id,
+                                incomingUpdatedAt
+                            ),
+                            publishIncomingIfNew = true
+                        )
                     }
                 }
                 db.hives().refreshTagCache(doc.entity_id)
@@ -1178,16 +1191,51 @@ class LocalHiveRepository(context: Context) {
         }
     }
 
-    private suspend fun applyAssignment(incoming: NfcTagAssignmentEntity) {
+    private suspend fun applyAssignment(
+        incoming: NfcTagAssignmentEntity,
+        publishIncomingIfNew: Boolean = false
+    ) {
+        val normalizedUid = NfcUid.normalize(incoming.tagUid)
         db.withTransaction {
-            val merge = NfcAssignmentResolver.merge(
-                tagConflict = db.nfcTagAssignments().activeByTag(incoming.tagUid),
-                hiveConflict = db.nfcTagAssignments().activeForHive(incoming.hiveId),
-                incoming = incoming
-            )
-            merge.toClose.forEach { db.nfcTagAssignments().upsert(it) }
+            val incomingAlreadyStored = db.nfcTagAssignments().get(incoming.id) != null
+            // Imported/cloud data is not trusted to be normalized. Keep malformed rows
+            // as closed history, never as an active route to a hive.
+            val safeIncoming = if (normalizedUid == null) {
+                incoming.copy(unassignedAt = incoming.unassignedAt ?: incoming.assignedAt)
+            } else {
+                incoming.copy(tagUid = normalizedUid)
+            }
+            val merge = if (normalizedUid == null) {
+                NfcAssignmentResolver.MergeResult(safeIncoming, emptyList())
+            } else {
+                NfcAssignmentResolver.merge(
+                    tagConflicts = db.nfcTagAssignments().activeAssignmentsForTag(normalizedUid),
+                    hiveConflicts = db.nfcTagAssignments().activeAssignmentsForHive(safeIncoming.hiveId),
+                    incoming = safeIncoming
+                )
+            }
+
+            merge.toClose.forEach { closed ->
+                db.nfcTagAssignments().upsert(closed)
+                enqueue("nfc_assignment", closed.id, "upsert", nfcAssignmentPayload(closed))
+            }
             db.nfcTagAssignments().upsert(merge.incoming)
-            (merge.toClose.map { it.hiveId } + merge.incoming.hiveId).distinct().forEach { db.hives().refreshTagCache(it) }
+            if (merge.incoming != incoming || (publishIncomingIfNew && !incomingAlreadyStored)) {
+                enqueue("nfc_assignment", merge.incoming.id, "upsert", nfcAssignmentPayload(merge.incoming))
+            }
+
+            val affectedHiveIds = (merge.toClose.map { it.hiveId } + merge.incoming.hiveId).distinct()
+            affectedHiveIds.forEach { affectedHiveId ->
+                val beforeTagUid = db.hives().get(affectedHiveId)?.tagUid
+                db.hives().refreshTagCache(affectedHiveId)
+                db.hives().get(affectedHiveId)?.let { updatedHive ->
+                    if (beforeTagUid != updatedHive.tagUid) {
+                        // Keep legacy hive documents aligned with the assignment ledger or an
+                        // older device could re-import a stale cached UID as a new assignment.
+                        enqueue("hive", affectedHiveId, "upsert", hivePayload(updatedHive))
+                    }
+                }
+            }
         }
     }
 
