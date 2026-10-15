@@ -1643,7 +1643,7 @@ private fun TagManagementScreen(
                             updateStatus("This tag has an invalid NFC UID. Nothing was assigned.")
                             return@launch
                         }
-                        val ambiguous = vm.isNfcTagAmbiguous(normalizedUid)
+                        val ambiguous = onIsTagAmbiguous(normalizedUid)
                         val owner = (hives + deadHives).firstOrNull { NfcUid.matches(it.tagUid, normalizedUid) }
                         when {
                             ambiguous -> {
