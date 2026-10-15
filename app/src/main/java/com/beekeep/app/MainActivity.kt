@@ -529,6 +529,15 @@ fun BeeKeepApp(
         nfc.updateKnownHiveTags(index.uniqueHiveIdByUid, ready, index.ambiguousUids)
     }
 
+    // Scan and tag-management screens control when another NFC read happens.
+    // In particular, do not retry a failed write passively while the Retry dialog is open.
+    androidx.compose.runtime.LaunchedEffect(screen, nfcWriteRetryMessage, nfc) {
+        val passiveAllowed = screen != Screen.SCAN &&
+            screen != Screen.TAG_MANAGER &&
+            nfcWriteRetryMessage == null
+        nfc.setPassiveReadingEnabled(activity, passiveAllowed)
+    }
+
     val locationPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { result ->
