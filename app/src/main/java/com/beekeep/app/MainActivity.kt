@@ -454,7 +454,10 @@ fun BeeKeepApp(
     val ready by vm.ready.collectAsStateWithLifecycle()
 
     fun advanceToNextUntaggedHiveForFastAssignment(currentHive: Hive, justAssignedUid: String) {
-        if (!fastTagAssignmentMode) {
+        // Once a fast-assignment run has started, keep it automatic through every
+        // hive handoff. A setting change or stale recomposition must not expose the
+        // manual NEXT path half-way through a run.
+        if (!fastTagAssignmentMode && !fastAssignmentSessionActive) {
             fastAssignmentSessionActive = false
             return
         }
@@ -471,9 +474,17 @@ fun BeeKeepApp(
             it.apiary.equals(currentHive.apiary, ignoreCase = true) && !it.isDead
         }
         val currentIndex = apiaryHives.indexOfFirst { it.id == currentHive.id }
-        val nextUntaggedHive = currentIndex
-            .takeIf { it >= 0 }
-            ?.let { apiaryHives.drop(it + 1).firstOrNull { hive -> hive.tagUid.isNullOrBlank() } }
+        // Search forward in the visible apiary order, then wrap to the beginning.
+        // The current hive is excluded explicitly because its StateFlow value can
+        // briefly still look unassigned while the successful write propagates.
+        val nextCandidates = if (currentIndex >= 0) {
+            apiaryHives.drop(currentIndex + 1) + apiaryHives.take(currentIndex)
+        } else {
+            apiaryHives
+        }
+        val nextUntaggedHive = nextCandidates.firstOrNull { hive ->
+            hive.id != currentHive.id && hive.tagUid.isNullOrBlank()
+        }
 
         if (nextUntaggedHive == null) {
             pendingAutoTagWriteHiveId = null
@@ -1080,6 +1091,10 @@ fun BeeKeepApp(
         }
         return
     }
+    // Keep fast assignment semantics for the entire run, even if the preference
+    // changes or recomposes while a tag write is already in flight.
+    val fastTagAssignmentActive = fastTagAssignmentMode || fastAssignmentSessionActive
+
     if (selectedHiveOpen) {
         val hiveForDetail = selected
         if (hiveForDetail == null) {
@@ -1105,7 +1120,7 @@ fun BeeKeepApp(
             ?.let { hivesInThisApiary.getOrNull(it + 1) }
         HiveDetailScreen(
             hive = hiveForDetail,
-            fastTagAssignmentMode = fastTagAssignmentMode,
+            fastTagAssignmentMode = fastTagAssignmentActive,
             autoStartTagWriting = pendingAutoTagWriteHiveId == hiveForDetail.id,
             autoStartTagWritingIgnoreUid = if (pendingAutoTagWriteHiveId == hiveForDetail.id) pendingAutoTagWriteIgnoredUid else null,
             onAutoTagWritingStarted = {

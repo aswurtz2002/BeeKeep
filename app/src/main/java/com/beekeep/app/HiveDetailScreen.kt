@@ -191,7 +191,7 @@ internal fun HiveDetailScreen(
         )
     }
 
-    LaunchedEffect(hive.id, autoStartTagWriting, autoStartTagWritingIgnoreUid) {
+    LaunchedEffect(hive.id, autoStartTagWriting, autoStartTagWritingIgnoreUid, fastTagAssignmentMode) {
         if (!autoStartTagWriting) return@LaunchedEffect
         if (!fastTagAssignmentMode) {
             onAutoTagWritingStarted()
