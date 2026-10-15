@@ -104,6 +104,8 @@ internal fun SettingsScreen(
     onDarkModeChange: (Boolean) -> Unit,
     autoVoiceEnabled: Boolean,
     onAutoVoiceEnabledChange: (Boolean) -> Unit,
+    fastTagAssignmentMode: Boolean,
+    onFastTagAssignmentModeChange: (Boolean) -> Unit,
     largeFieldText: Boolean,
     onLargeFieldTextChange: (Boolean) -> Unit,
     compactHiveRows: Boolean,
@@ -277,6 +279,16 @@ internal fun SettingsScreen(
                     title = "Auto-start voice after an NFC hive scan",
                     checked = autoVoiceEnabled,
                     onCheckedChange = onAutoVoiceEnabledChange
+                )
+                SettingsSwitchRow(
+                    title = "Fast tag assignment mode",
+                    checked = fastTagAssignmentMode,
+                    onCheckedChange = onFastTagAssignmentModeChange
+                )
+                Text(
+                    "After a successful tag assignment, BeeKeep opens the next untagged hive in this apiary and starts waiting for its tag. The manual Next Hive button is hidden while this is enabled.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 SettingsSwitchRow(
                     title = "Beep when voice is ready",

@@ -373,6 +373,9 @@ fun BeeKeepApp(
     var autoVoiceEnabled by rememberSaveable {
         mutableStateOf(autoVoicePrefs.getBoolean("auto_voice_on_nfc", true))
     }
+    var fastTagAssignmentMode by rememberSaveable {
+        mutableStateOf(autoVoicePrefs.getBoolean("fast_tag_assignment_mode", false))
+    }
     var screen by rememberSaveable { mutableStateOf(Screen.HOME) }
     var selectedHiveOpen by rememberSaveable { mutableStateOf(false) }
     var selectedApiaryName by rememberSaveable { mutableStateOf<String?>(null) }
@@ -393,6 +396,7 @@ fun BeeKeepApp(
     var pendingTagUid by rememberSaveable { mutableStateOf<String?>(null) }
     var pendingInspectionHiveId by rememberSaveable { mutableStateOf<Long?>(null) }
     var pendingAutoStartVoiceHiveId by rememberSaveable { mutableStateOf<Long?>(null) }
+    var pendingAutoTagWriteHiveId by rememberSaveable { mutableStateOf<Long?>(null) }
     var scanning by remember { mutableStateOf(false) }
     var firstRunPromptVisible by rememberSaveable { mutableStateOf(false) }
     var firstRunPromptChecked by rememberSaveable { mutableStateOf(false) }
@@ -413,6 +417,37 @@ fun BeeKeepApp(
     val treatments by vm.treatments.collectAsStateWithLifecycle()
     val harvests by vm.harvests.collectAsStateWithLifecycle()
     val ready by vm.ready.collectAsStateWithLifecycle()
+
+    fun advanceToNextUntaggedHiveForFastAssignment(currentHive: Hive) {
+        if (!fastTagAssignmentMode) return
+        val apiaryHives = hives.filter {
+            it.apiary.equals(currentHive.apiary, ignoreCase = true) && !it.isDead
+        }
+        val currentIndex = apiaryHives.indexOfFirst { it.id == currentHive.id }
+        val nextUntaggedHive = currentIndex
+            .takeIf { it >= 0 }
+            ?.let { apiaryHives.drop(it + 1).firstOrNull { hive -> hive.tagUid.isNullOrBlank() } }
+
+        if (nextUntaggedHive == null) {
+            scope.launch {
+                snackbarHostState.showSnackbar(
+                    "Fast tag assignment complete for ${currentHive.apiary}: no untagged hives remain after ${hiveReferenceName(currentHive.number)}."
+                )
+            }
+            return
+        }
+
+        lastHiveTagSuccessHiveId = null
+        lastHiveTagSuccessUid = null
+        pendingAutoTagWriteHiveId = nextUntaggedHive.id
+        selectedHiveOpen = true
+        vm.openHive(nextUntaggedHive.id)
+        scope.launch {
+            snackbarHostState.showSnackbar(
+                "Fast tag assignment: ready for ${hiveReferenceName(nextUntaggedHive.number)}. Present the next tag to write it."
+            )
+        }
+    }
 
     val lifecycleOwner = LocalLifecycleOwner.current
     var nfcEnabledForIndicator by remember(nfc) {
@@ -629,6 +664,7 @@ fun BeeKeepApp(
                             lastHiveTagSuccessHiveId = targetHive.id
                             lastHiveTagSuccessUid = result.uid
                             playNfcAssignmentSuccessFeedback(context)
+                            if (fastTagAssignmentMode) advanceToNextUntaggedHiveForFastAssignment(targetHive)
                         }
                         scope.launch {
                             snackbarHostState.showSnackbar(
@@ -899,6 +935,14 @@ fun BeeKeepApp(
             ?.let { hivesInThisApiary.getOrNull(it + 1) }
         HiveDetailScreen(
             hive = hiveForDetail,
+            fastTagAssignmentMode = fastTagAssignmentMode,
+            autoStartTagWriting = pendingAutoTagWriteHiveId == hiveForDetail.id,
+            onAutoTagWritingStarted = {
+                if (pendingAutoTagWriteHiveId == hiveForDetail.id) pendingAutoTagWriteHiveId = null
+            },
+            onFastTagAssignmentSuccess = {
+                advanceToNextUntaggedHiveForFastAssignment(hiveForDetail)
+            },
             nextHiveNumber = nextHiveInApiary?.number,
             onNextHive = {
                 nextHiveInApiary?.let { nextHive ->
@@ -1141,6 +1185,12 @@ fun BeeKeepApp(
                 onAutoVoiceEnabledChange = { enabled ->
                     autoVoiceEnabled = enabled
                     autoVoicePrefs.edit { putBoolean("auto_voice_on_nfc", enabled) }
+                },
+                fastTagAssignmentMode = fastTagAssignmentMode,
+                onFastTagAssignmentModeChange = { enabled ->
+                    fastTagAssignmentMode = enabled
+                    autoVoicePrefs.edit { putBoolean("fast_tag_assignment_mode", enabled) }
+                    if (!enabled) pendingAutoTagWriteHiveId = null
                 },
                 largeFieldText = largeFieldText,
                 onLargeFieldTextChange = onLargeFieldTextChange,
