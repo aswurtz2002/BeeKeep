@@ -92,6 +92,25 @@ class NfcController {
         }
     }
 
+    /**
+     * Normal Android NFC intents can fire repeatedly while an unassigned tag remains
+     * against the phone. Share the passive reader's debounce so either delivery path
+     * wins once and duplicate reads refresh the suppression window.
+     *
+     * Returns true when this UID was handled within the repeat window.
+     */
+    fun shouldSuppressDuplicateIncomingRead(uid: String?): Boolean {
+        val normalized = NfcUid.normalize(uid) ?: return false
+        return synchronized(passiveLock) {
+            val now = System.currentTimeMillis()
+            val duplicate = lastHandledUid == normalized &&
+                now - lastHandledAt < PASSIVE_REPEAT_DELAY_MS
+            lastHandledUid = normalized
+            lastHandledAt = now
+            duplicate
+        }
+    }
+
     fun suppressFastAssignmentUid(uid: String) {
         val normalized = NfcUid.normalize(uid) ?: return
         synchronized(passiveLock) {
@@ -482,11 +501,9 @@ class NfcController {
                 storedPayload = stored,
                 hasBeeKeepLaunchRecord = rawMessages.any(::isGenericBeeKeepLaunchMessage)
             )
-            val result = NfcResult.Read(info, stored)
-            // Cold-start intents should seed passive-repeat suppression, so a tag that
-            // remains at the antenna does not trigger a second navigation once resumed.
-            rememberHandledUid(result.uid)
-            return result
+            // MainActivity atomically accepts/deduplicates this result before queuing it.
+            // Do not update the debounce here, or every repeated intent would look new.
+            return NfcResult.Read(info, stored)
         }
 
         // NDEF_DISCOVERED intents normally include their NDEF messages. If Android
@@ -503,9 +520,8 @@ class NfcController {
             ndefType = null,
             storedPayload = null
         )
-        val result = NfcResult.Read(info, null)
-        rememberHandledUid(result.uid)
-        return result
+        // MainActivity records accepted intents through the shared debounce gate.
+        return NfcResult.Read(info, null)
     }
 
     private fun uid(tag: Tag): String = tag.id.joinToString("") { "%02X".format(it.toInt() and 0xFF) }

@@ -307,7 +307,9 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
             // During fast assignment the previous tag may be dispatched by Android
             // between writer sessions. Never queue that intent for the inspection flow.
             if (nfc.shouldSuppressIncomingNfcIntent(result.uid)) return
-            nfc.rememberHandledUid(result.uid)
+            // Debounce Android's normal tag intents against both duplicate intents and
+            // passive ReaderMode events. A tag held at the phone must produce one prompt.
+            if (nfc.shouldSuppressDuplicateIncomingRead(result.uid)) return
             pendingNfcResult.value = result
         }
     }
@@ -655,6 +657,8 @@ fun BeeKeepApp(
                         pendingInspectionHiveId = resolvedHive.id
                         snackbarHostState.showSnackbar("${hiveReferenceName(resolvedHive.number)} recognized • inspection ready")
                     } else {
+                        // Take NFC away from the passive reader before showing a choice.
+                        nfc.setPassiveReadingEnabled(activity, false)
                         unassignedTagOrigin = Screen.HOME
                         unassignedTagUid = normalizedUid
                     }
@@ -672,9 +676,15 @@ fun BeeKeepApp(
         scanning = nfc.isScanning()
     }
 
-    androidx.compose.runtime.LaunchedEffect(ready, incomingNfc?.uid, screen) {
+    androidx.compose.runtime.LaunchedEffect(ready, incomingNfc?.uid, screen, unassignedTagUid) {
         val result = incomingNfc ?: return@LaunchedEffect
         if (!ready) return@LaunchedEffect
+        // Once the unassigned-tag choice is visible, discard any queued reads until
+        // the beekeeper chooses an action or cancels. This prevents popup re-entry.
+        if (unassignedTagUid != null) {
+            (activity as? MainActivity)?.pendingNfcResult?.value = null
+            return@LaunchedEffect
+        }
         // Discard an intent that was already queued when fast assignment took
         // exclusive ownership, or that refers to the tag just written.
         if (nfc.shouldSuppressIncomingNfcIntent(result.uid)) {
@@ -742,6 +752,8 @@ fun BeeKeepApp(
         } else {
             // Even when a hive is open, an unassigned physical tag must go through
             // an explicit assignment choice. Never infer ownership from current screen.
+            // Stop passive scanning immediately; don't wait for the screen effect to run.
+            nfc.setPassiveReadingEnabled(activity, false)
             screen = Screen.SCAN
             unassignedTagOrigin = Screen.HOME
             unassignedTagUid = normalizedUid
