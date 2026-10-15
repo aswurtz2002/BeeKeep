@@ -658,6 +658,14 @@ fun BeeKeepApp(
     androidx.compose.runtime.LaunchedEffect(ready, incomingNfc?.uid, screen) {
         val result = incomingNfc ?: return@LaunchedEffect
         if (!ready) return@LaunchedEffect
+        // Manual NFC management and scan screens own their tag reads. Ignore
+        // passive-reader notifications there, otherwise a just-assigned tag can
+        // navigate away to its hive before the write prompt becomes visible.
+        if (screen == Screen.TAG_MANAGER || screen == Screen.SCAN) {
+            (activity as? MainActivity)?.pendingNfcResult?.value = null
+            return@LaunchedEffect
+        }
+
         if (result.launchPreparationRetryable) {
             // A readable tag whose automatic launch-record write failed is not an
             // assignment decision. Offer a retry instead of sending it to the
@@ -670,14 +678,6 @@ fun BeeKeepApp(
         }
         result.launchPreparationError?.let { message ->
             scope.launch { snackbarHostState.showSnackbar(message) }
-        }
-
-        // Manual NFC management and scan screens own their tag reads. Ignore
-        // passive-reader notifications there, otherwise a just-assigned tag can
-        // navigate away to its hive before the write prompt becomes visible.
-        if (screen == Screen.TAG_MANAGER || screen == Screen.SCAN) {
-            (activity as? MainActivity)?.pendingNfcResult?.value = null
-            return@LaunchedEffect
         }
 
         val normalizedUid = NfcUid.normalize(result.uid)
@@ -736,7 +736,7 @@ fun BeeKeepApp(
             title = { Text("Could not write NFC tag", fontWeight = FontWeight.ExtraBold) },
             text = {
                 Text(
-                    "$message\\n\\nTap Try Again, then present the same tag to your phone when scanning starts."
+                    "$message\n\nTap Try Again, then present the same tag to your phone when scanning starts."
                 )
             },
             confirmButton = {
