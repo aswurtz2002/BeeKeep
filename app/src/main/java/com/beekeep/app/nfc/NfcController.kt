@@ -614,7 +614,7 @@ class NfcController {
             is NfcResult.Written -> NfcResult.Read(written.info, BeeKeepNfcPayload.TAG_PAYLOAD)
             is NfcResult.Error -> result.copy(
                 launchPreparationError = written.message,
-                launchPreparationRetryable = true
+                launchPreparationRetryable = isRetryableTagWriteError(written.message)
             )
             is NfcResult.Read -> result
         }
