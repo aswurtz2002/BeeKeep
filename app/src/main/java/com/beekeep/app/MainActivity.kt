@@ -654,7 +654,14 @@ fun BeeKeepApp(
                     }
                 }
             }
-            is NfcResult.Error -> scope.launch { snackbarHostState.showSnackbar(result.message) }
+            is NfcResult.Error -> {
+                if (result.retryable) {
+                    nfcWriteRetryMessage = result.message
+                    unassignedTagUid = null
+                } else {
+                    scope.launch { snackbarHostState.showSnackbar(result.message) }
+                }
+            }
             is NfcResult.Written -> Unit
         }
     }
