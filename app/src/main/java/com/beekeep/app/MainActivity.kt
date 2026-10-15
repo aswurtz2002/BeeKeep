@@ -395,7 +395,14 @@ fun BeeKeepApp(
     // This state represents the entire multi-hive assignment run, not just the
     // currently active NFC reader. It gates UI navigation even if a late NFC event
     // arrives after the controller has handed off between readers.
-    var fastAssignmentSessionActive by rememberSaveable { mutableStateOf(false) }
+    var fastAssignmentSessionActive by remember { mutableStateOf(false) }
+    // After the first hive is tagged, the continuous run uses its own screen and
+    // writes directly to each hive record rather than opening HiveDetailScreen again.
+    var fastAssignmentScreenActive by remember { mutableStateOf(false) }
+    var fastAssignmentCurrentHiveId by remember { mutableStateOf<Long?>(null) }
+    var fastAssignmentApiaryName by remember { mutableStateOf<String?>(null) }
+    var fastAssignmentIgnoredUid by remember { mutableStateOf<String?>(null) }
+    var fastAssignmentAssignedHiveIds by remember { mutableStateOf<Set<Long>>(emptySet()) }
     var screen by rememberSaveable { mutableStateOf(Screen.HOME) }
     var selectedHiveOpen by rememberSaveable { mutableStateOf(false) }
     var selectedApiaryName by rememberSaveable { mutableStateOf<String?>(null) }
@@ -454,48 +461,59 @@ fun BeeKeepApp(
     val ready by vm.ready.collectAsStateWithLifecycle()
 
     fun advanceToNextUntaggedHiveForFastAssignment(currentHive: Hive, justAssignedUid: String) {
-        // Once a fast-assignment run has started, keep it automatic through every
-        // hive handoff. A setting change or stale recomposition must not expose the
-        // manual NEXT path half-way through a run.
+        // Fast assignment is a session, not a series of Hive Detail page visits.
         if (!fastTagAssignmentMode && !fastAssignmentSessionActive) {
             fastAssignmentSessionActive = false
             return
         }
         fastAssignmentSessionActive = true
 
-        // A scan event can be queued just before the write transaction takes ownership.
-        // It must never carry an Inspect destination across the fast-assignment handoff.
         (activity as? MainActivity)?.pendingNfcResult?.value = null
         pendingInspectionHiveId = null
         pendingAutoStartVoiceHiveId = null
         inspecting = false
 
+        val apiaryName = fastAssignmentApiaryName ?: currentHive.apiary
+        fastAssignmentApiaryName = apiaryName
+        // Room's hive list can update a moment after the assignment callback.
+        // Remember IDs completed in this run so stale state can never select them again.
+        val assignedInThisRun = fastAssignmentAssignedHiveIds + currentHive.id
+        fastAssignmentAssignedHiveIds = assignedInThisRun
+
         val apiaryHives = hives.filter {
-            it.apiary.equals(currentHive.apiary, ignoreCase = true) && !it.isDead
+            it.apiary.equals(apiaryName, ignoreCase = true) && !it.isDead
         }
         val currentIndex = apiaryHives.indexOfFirst { it.id == currentHive.id }
-        // Search forward in the visible apiary order, then wrap to the beginning.
-        // The current hive is excluded explicitly because its StateFlow value can
-        // briefly still look unassigned while the successful write propagates.
         val nextCandidates = if (currentIndex >= 0) {
             apiaryHives.drop(currentIndex + 1) + apiaryHives.take(currentIndex)
         } else {
             apiaryHives
         }
         val nextUntaggedHive = nextCandidates.firstOrNull { hive ->
-            hive.id != currentHive.id && hive.tagUid.isNullOrBlank()
+            hive.id != currentHive.id &&
+                hive.id !in assignedInThisRun &&
+                hive.tagUid.isNullOrBlank()
         }
 
+        // The detail page is no longer the host for a fast-assignment run.
+        selectedHiveOpen = false
+        pendingAutoTagWriteHiveId = null
+        pendingAutoTagWriteIgnoredUid = null
+        vm.clearHive()
+        nfc.rememberHandledUid(justAssignedUid)
+        nfc.suppressFastAssignmentUid(justAssignedUid)
+
         if (nextUntaggedHive == null) {
-            pendingAutoTagWriteHiveId = null
-            pendingAutoTagWriteIgnoredUid = null
-            nfc.rememberHandledUid(justAssignedUid)
-            // Finish the flow, but retain the last UID latch until that tag leaves.
             nfc.finishFastAssignmentFlow(activity, preserveLastUid = true)
             fastAssignmentSessionActive = false
+            fastAssignmentScreenActive = false
+            fastAssignmentCurrentHiveId = null
+            fastAssignmentApiaryName = null
+            fastAssignmentIgnoredUid = null
+            fastAssignmentAssignedHiveIds = emptySet()
             scope.launch {
                 snackbarHostState.showSnackbar(
-                    "Fast tag assignment complete for ${currentHive.apiary}: no untagged hives remain after ${hiveReferenceName(currentHive.number)}."
+                    "Fast tag assignment complete for $apiaryName. No untagged hives remain."
                 )
             }
             return
@@ -503,17 +521,10 @@ fun BeeKeepApp(
 
         lastHiveTagSuccessHiveId = null
         lastHiveTagSuccessUid = null
-        nfc.suppressFastAssignmentUid(justAssignedUid)
         nfc.beginFastAssignmentFlow(activity)
-        pendingAutoTagWriteHiveId = nextUntaggedHive.id
-        pendingAutoTagWriteIgnoredUid = justAssignedUid
-        selectedHiveOpen = true
-        vm.openHive(nextUntaggedHive.id)
-        scope.launch {
-            snackbarHostState.showSnackbar(
-                "Moving to ${hiveReferenceName(nextUntaggedHive.number)}. Remove the previous tag; present the next one when the scanner is ready."
-            )
-        }
+        fastAssignmentCurrentHiveId = nextUntaggedHive.id
+        fastAssignmentIgnoredUid = justAssignedUid
+        fastAssignmentScreenActive = true
     }
 
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -1015,6 +1026,51 @@ fun BeeKeepApp(
         }
         return
     }
+    if (fastAssignmentScreenActive) {
+        val targetHive = hives.firstOrNull { it.id == fastAssignmentCurrentHiveId }
+        if (targetHive == null) {
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Text("Preparing the next hive…", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        } else {
+            FastTagAssignmentScreen(
+                activity = activity,
+                hive = targetHive,
+                nfc = nfc,
+                ignoredUid = fastAssignmentIgnoredUid,
+                isTagAssignedElsewhere = { targetHiveId, uid ->
+                    (hives + deadHives).any { it.id != targetHiveId && NfcUid.matches(it.tagUid, uid) }
+                },
+                onAssignTag = { hiveId, uid, onResult ->
+                    vm.assignTagToHive(hiveId, uid, onResult = onResult)
+                },
+                onAssignmentSaved = { assignedUid ->
+                    advanceToNextUntaggedHiveForFastAssignment(targetHive, assignedUid)
+                },
+                onCancel = {
+                    nfc.stop(activity)
+                    nfc.finishFastAssignmentFlow(activity, preserveLastUid = false)
+                    (activity as? MainActivity)?.pendingNfcResult?.value = null
+                    fastAssignmentSessionActive = false
+                    fastAssignmentScreenActive = false
+                    fastAssignmentCurrentHiveId = null
+                    fastAssignmentApiaryName = null
+                    fastAssignmentIgnoredUid = null
+                    fastAssignmentAssignedHiveIds = emptySet()
+                    pendingAutoTagWriteHiveId = null
+                    pendingAutoTagWriteIgnoredUid = null
+                    pendingInspectionHiveId = null
+                    pendingAutoStartVoiceHiveId = null
+                    selectedHiveOpen = false
+                    inspecting = false
+                    vm.clearHive()
+                    scope.launch { snackbarHostState.showSnackbar("Fast tag assignment stopped.") }
+                }
+            )
+        }
+        return
+    }
+
     if (inspecting) {
         val hiveForInspection = selected ?: run { inspecting = false; return }
         InspectionScreen(
@@ -1130,10 +1186,15 @@ fun BeeKeepApp(
                 }
             },
             onFastTagAssignmentStarted = {
-                // Mark the whole run active before the writer arms its ReaderMode.
-                // This remains true across next-hive transitions and cannot be inferred
-                // solely from the NFC controller's per-reader state.
+                // The initial write starts on the selected hive. Once it succeeds,
+                // subsequent hives are handled by FastTagAssignmentScreen without
+                // reopening their detail pages.
                 fastAssignmentSessionActive = true
+                fastAssignmentApiaryName = hiveForDetail.apiary
+                fastAssignmentAssignedHiveIds = emptySet()
+                fastAssignmentCurrentHiveId = null
+                fastAssignmentIgnoredUid = null
+                fastAssignmentScreenActive = false
                 (activity as? MainActivity)?.pendingNfcResult?.value = null
                 pendingInspectionHiveId = null
                 pendingAutoStartVoiceHiveId = null
@@ -1161,6 +1222,11 @@ fun BeeKeepApp(
                 nfc.stop(activity)
                 nfc.finishFastAssignmentFlow(activity, preserveLastUid = false)
                 fastAssignmentSessionActive = false
+                fastAssignmentScreenActive = false
+                fastAssignmentCurrentHiveId = null
+                fastAssignmentApiaryName = null
+                fastAssignmentIgnoredUid = null
+                fastAssignmentAssignedHiveIds = emptySet()
                 pendingAutoTagWriteHiveId = null
                 pendingAutoTagWriteIgnoredUid = null
                 pendingInspectionHiveId = null
@@ -1172,6 +1238,11 @@ fun BeeKeepApp(
                 nfc.stop(activity)
                 nfc.finishFastAssignmentFlow(activity, preserveLastUid = false)
                 fastAssignmentSessionActive = false
+                fastAssignmentScreenActive = false
+                fastAssignmentCurrentHiveId = null
+                fastAssignmentApiaryName = null
+                fastAssignmentIgnoredUid = null
+                fastAssignmentAssignedHiveIds = emptySet()
                 pendingAutoTagWriteHiveId = null
                 pendingAutoTagWriteIgnoredUid = null
                 pendingAutoStartVoiceHiveId = null
@@ -1187,6 +1258,11 @@ fun BeeKeepApp(
                 nfc.stop(activity)
                 nfc.finishFastAssignmentFlow(activity, preserveLastUid = false)
                 fastAssignmentSessionActive = false
+                fastAssignmentScreenActive = false
+                fastAssignmentCurrentHiveId = null
+                fastAssignmentApiaryName = null
+                fastAssignmentIgnoredUid = null
+                fastAssignmentAssignedHiveIds = emptySet()
                 pendingAutoTagWriteHiveId = null
                 pendingAutoTagWriteIgnoredUid = null
                 pendingAutoStartVoiceHiveId = null
@@ -1390,6 +1466,11 @@ fun BeeKeepApp(
                     autoVoicePrefs.edit { putBoolean("fast_tag_assignment_mode", enabled) }
                     if (!enabled) {
                         fastAssignmentSessionActive = false
+                        fastAssignmentScreenActive = false
+                        fastAssignmentCurrentHiveId = null
+                        fastAssignmentApiaryName = null
+                        fastAssignmentIgnoredUid = null
+                        fastAssignmentAssignedHiveIds = emptySet()
                         pendingAutoTagWriteHiveId = null
                         pendingAutoTagWriteIgnoredUid = null
                         pendingInspectionHiveId = null
