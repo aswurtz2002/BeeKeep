@@ -285,6 +285,13 @@ internal fun SettingsScreen(
                     checked = fastTagAssignmentMode,
                     onCheckedChange = onFastTagAssignmentModeChange
                 )
+                if (fastTagAssignmentMode) {
+                    Text(
+                        "Moves through untagged hives in this apiary. The previous tag is ignored; confirm the hive number before each new tag.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
                 SettingsSwitchRow(
                     title = "Beep when voice is ready",
                     checked = readyBeep,

@@ -1,5 +1,7 @@
 package com.beekeep.app.data
 
+import com.beekeep.app.nfc.NfcUid
+
 import com.beekeep.app.ColonyStrength
 
 import android.content.Context
@@ -119,20 +121,41 @@ class LocalHiveRepository(context: Context) {
     fun observePhotos(hiveId: Long): Flow<List<PhotoEntity>> = db.photos().observeForHive(hiveId)
 
     suspend fun getHive(id: Long): Hive? = withContext(Dispatchers.IO) { db.hives().get(id)?.let(::toHive) }
+    suspend fun getAllKnownNfcTagAssignments(): List<Pair<String?, Long>> = withContext(Dispatchers.IO) {
+        val ledgerAssignments = db.nfcTagAssignments().allActiveAssignments()
+            .map { it.tagUid to it.hiveId }
+        val legacyHiveCache = db.hives().allForBackup()
+            .filter { !it.deleted && !it.tagUid.isNullOrBlank() }
+            .map { it.tagUid to it.id }
+        ledgerAssignments + legacyHiveCache
+    }
+
     suspend fun findHiveByNfc(tag: String): Hive? = withContext(Dispatchers.IO) {
-        val uid = tag.trim()
-        db.nfcTagAssignments().activeByTag(uid)?.let { db.hives().get(it.hiveId) }?.let(::toHive)
-            ?: db.hives().byTag(uid)?.let(::toHive)
+        val uid = NfcUid.normalize(tag) ?: return@withContext null
+        val ledgerOwners = db.nfcTagAssignments().activeAssignmentsForTag(uid).map { it.hiveId }
+        val cachedOwners = db.hives().byTagAll(uid).map { it.id }
+        val owners = (ledgerOwners + cachedOwners).distinct()
+        // Refuse ambiguous identifiers rather than letting a LIMIT 1 query choose a hive.
+        if (owners.size != 1) return@withContext null
+        db.hives().get(owners.single())
+            ?.takeIf { it.status == HiveStatus.ACTIVE && !it.deleted }
+            ?.let(::toHive)
+    }
+
+    suspend fun isNfcTagAmbiguous(uid: String): Boolean = withContext(Dispatchers.IO) {
+        val normalized = NfcUid.normalize(uid) ?: return@withContext false
+        val ledgerOwners = db.nfcTagAssignments().activeAssignmentsForTag(normalized).map { it.hiveId }
+        val cachedOwners = db.hives().byTagAll(normalized).map { it.id }
+        (ledgerOwners + cachedOwners).distinct().size > 1
     }
 
     suspend fun isNfcTagUnassigned(uid: String): Boolean = withContext(Dispatchers.IO) {
-        uid.trim().takeIf { it.isNotBlank() }?.let { db.nfcTagAssignments().isUnassigned(it) } ?: false
+        NfcUid.normalize(uid)?.let { db.nfcTagAssignments().isUnassigned(it) } ?: false
     }
 
     suspend fun getUnassignedNfcTagUids(): Set<String> = withContext(Dispatchers.IO) {
         db.nfcTagAssignments().allUnassignedTagUids()
-            .map { it.trim().uppercase(java.util.Locale.ROOT) }
-            .filter { it.isNotBlank() }
+            .mapNotNull(NfcUid::normalize)
             .toSet()
     }
     suspend fun findHiveByNumberAndApiary(number: String, apiary: String): Hive? = withContext(Dispatchers.IO) {
@@ -428,34 +451,84 @@ class LocalHiveRepository(context: Context) {
     }
 
     suspend fun assignNfcTag(hiveId: Long, uid: String, reassign: Boolean = false) = withContext(Dispatchers.IO) {
-        val normalized = uid.trim().uppercase()
-        require(normalized.isNotBlank()) { "The NFC tag has no readable UID." }
+        val normalized = NfcUid.normalize(uid)
+            ?: throw IllegalArgumentException("The NFC tag has no valid readable UID.")
         db.withTransaction {
             val hive = db.hives().get(hiveId) ?: throw IllegalArgumentException("Hive not found.")
             require(hive.status == HiveStatus.ACTIVE) { "Cannot assign an NFC tag to a ${hive.status.lowercase()} colony." }
+
+            val tagConflicts = db.nfcTagAssignments().activeAssignmentsForTag(normalized)
+            val cachedOwners = db.hives().byTagAll(normalized).filter { it.id != hiveId }
+            val ledgerOwners = tagConflicts.map { it.hiveId }.toSet()
+            val legacyOnlyOwners = cachedOwners.filter { it.id !in ledgerOwners }
+            val foreignOwnerIds = (tagConflicts.map { it.hiveId } + cachedOwners.map { it.id })
+                .distinct()
+                .filter { it != hiveId }
+            if (foreignOwnerIds.isNotEmpty() && !reassign) {
+                val ownerHiveId = foreignOwnerIds.first()
+                val ownerHive = db.hives().get(ownerHiveId)
+                throw IllegalArgumentException(
+                    "This NFC tag is already linked to ${ownerHive?.number ?: ownerHiveId}. No assignment was changed."
+                )
+            }
+
+            val targetAssignments = db.nfcTagAssignments().activeAssignmentsForHive(hiveId)
+            val alreadyCorrect = tagConflicts.size == 1 &&
+                tagConflicts.single().hiveId == hiveId &&
+                targetAssignments.size == 1 &&
+                NfcUid.matches(targetAssignments.single().tagUid, normalized) &&
+                cachedOwners.isEmpty()
+            if (alreadyCorrect) return@withTransaction
+
             val now = System.currentTimeMillis()
-            db.nfcTagAssignments().activeByTag(normalized)?.let { owner ->
-                if (owner.hiveId == hiveId) return@withTransaction
-                if (!reassign) {
-                    val ownerHive = db.hives().get(owner.hiveId)
-                    throw IllegalArgumentException("This NFC tag is already assigned to Hive ${ownerHive?.number ?: owner.hiveId}.")
+            // Close every active ledger conflict, rather than trusting LIMIT 1 lookups.
+            val rowsToClose = (tagConflicts + targetAssignments).distinctBy { it.id }
+            rowsToClose.forEach { assignment ->
+                if (!assignment.isActive) return@forEach
+                val closed = assignment.copy(unassignedAt = now)
+                db.nfcTagAssignments().upsert(closed)
+                enqueue("nfc_assignment", closed.id, "upsert", nfcAssignmentPayload(closed))
+            }
+
+            // Some older builds wrote only hives.tag_uid. Preserve those released
+            // identities in the ledger instead of leaving a stale cache owner behind.
+            legacyOnlyOwners.forEach { legacyOwner ->
+                val tombstone = NfcTagAssignmentEntity(
+                    id = IdGenerator.nextLong(),
+                    tagUid = normalized,
+                    hiveId = legacyOwner.id,
+                    assignedAt = legacyOwner.updatedAt.takeIf { it > 0L } ?: now,
+                    unassignedAt = now
+                )
+                db.nfcTagAssignments().upsert(tombstone)
+                enqueue("nfc_assignment", tombstone.id, "upsert", nfcAssignmentPayload(tombstone))
+            }
+
+            val previousOwners = (rowsToClose.map { it.hiveId } + legacyOnlyOwners.map { it.id })
+                .distinct()
+                .filter { it != hiveId }
+            previousOwners.forEach { ownerHiveId ->
+                db.hives().refreshTagCache(ownerHiveId)
+                val ownerHive = db.hives().get(ownerHiveId)
+                if (ownerHive != null) {
+                    enqueue("hive", ownerHiveId, "upsert", hivePayload(ownerHive))
                 }
-                val closed = owner.copy(unassignedAt = now)
-                db.nfcTagAssignments().upsert(closed)
-                enqueue("nfc_assignment", closed.id, "upsert", nfcAssignmentPayload(closed))
-                db.hives().refreshTagCache(owner.hiveId)
-                val stealEvent = ActivityEventEntity(IdGenerator.nextLong(), owner.hiveId, now, "tag", "NFC tag removed", "Tag $normalized reassigned to Hive ${hive.number}")
-                db.events().upsert(stealEvent)
-                enqueue("event", stealEvent.id, "upsert", eventPayload(stealEvent))
+                val ownerNumber = ownerHive?.number ?: ownerHiveId.toString()
+                val event = ActivityEventEntity(
+                    IdGenerator.nextLong(), ownerHiveId, now, "tag", "NFC tag removed",
+                    "Tag $normalized reassigned from Hive $ownerNumber to Hive ${hive.number}"
+                )
+                db.events().upsert(event)
+                enqueue("event", event.id, "upsert", eventPayload(event))
             }
-            db.nfcTagAssignments().activeForHive(hiveId)?.takeIf { !it.tagUid.equals(normalized, ignoreCase = true) }?.let { existing ->
-                val closed = existing.copy(unassignedAt = now)
-                db.nfcTagAssignments().upsert(closed)
-                enqueue("nfc_assignment", closed.id, "upsert", nfcAssignmentPayload(closed))
-            }
+
             val assignment = NfcTagAssignmentEntity(IdGenerator.nextLong(), normalized, hiveId, now)
             db.nfcTagAssignments().upsert(assignment)
             db.hives().refreshTagCache(hiveId)
+            val updatedHive = db.hives().get(hiveId)
+            if (updatedHive != null) {
+                enqueue("hive", hiveId, "upsert", hivePayload(updatedHive))
+            }
             enqueue("nfc_assignment", assignment.id, "upsert", nfcAssignmentPayload(assignment))
             val event = ActivityEventEntity(IdGenerator.nextLong(), hiveId, now, "tag", "NFC tag assigned", "Tag $normalized")
             db.events().upsert(event)
@@ -469,8 +542,9 @@ class LocalHiveRepository(context: Context) {
                 ?: throw IllegalArgumentException("Hive not found.")
             val activeAssignments = db.nfcTagAssignments().activeAssignmentsForHive(hiveId)
             val cachedTag = hive.tagUid?.trim()?.takeIf { it.isNotBlank() }
-            val cachedTagHadActiveLedgerAssignment = cachedTag?.let {
-                db.nfcTagAssignments().activeByTag(it) != null
+            val cachedTagHadActiveLedgerAssignment = cachedTag?.let { rawUid ->
+                val normalizedUid = NfcUid.normalize(rawUid) ?: return@let false
+                db.nfcTagAssignments().activeAssignmentsForTag(normalizedUid).any { it.hiveId == hiveId }
             } == true
 
             // Older app builds could save the tag only in hives.tag_uid without
@@ -493,7 +567,7 @@ class LocalHiveRepository(context: Context) {
             if (cachedTag != null && !cachedTagHadActiveLedgerAssignment) {
                 val legacyTombstone = NfcTagAssignmentEntity(
                     id = IdGenerator.nextLong(),
-                    tagUid = cachedTag.uppercase(java.util.Locale.ROOT),
+                    tagUid = NfcUid.normalize(cachedTag) ?: cachedTag.uppercase(java.util.Locale.ROOT),
                     hiveId = hiveId,
                     assignedAt = hive.updatedAt.takeIf { it > 0L } ?: now,
                     unassignedAt = now
@@ -512,7 +586,7 @@ class LocalHiveRepository(context: Context) {
             enqueue("hive", hiveId, "upsert", hivePayload(clearedHive))
 
             val releasedTags = (activeAssignments.map { it.tagUid } + listOfNotNull(cachedTag))
-                .distinctBy { it.trim().uppercase() }
+                .distinctBy { NfcUid.normalize(it) ?: it.trim().uppercase(java.util.Locale.ROOT) }
             val detail = when (releasedTags.size) {
                 0 -> "NFC tag assignment cleared and available for reuse"
                 1 -> "Tag ${releasedTags.first()} unassigned and available for reuse"
