@@ -877,8 +877,23 @@ fun BeeKeepApp(
             }
             return
         }
+        val hivesInThisApiary = hives.filter {
+            it.apiary.equals(hiveForDetail.apiary, ignoreCase = true) && !it.isDead
+        }
+        // Use the same list order as the Apiary Hives screen, so NEXT follows the
+        // order the beekeeper sees in that apiary instead of jumping to another yard.
+        val currentApiaryHiveIndex = hivesInThisApiary.indexOfFirst { it.id == hiveForDetail.id }
+        val nextHiveInApiary = hivesInThisApiary.getOrNull(currentApiaryHiveIndex + 1)
         HiveDetailScreen(
             hive = hiveForDetail,
+            nextHiveNumber = nextHiveInApiary?.number,
+            onNextHive = {
+                nextHiveInApiary?.let { nextHive ->
+                    lastHiveTagSuccessHiveId = null
+                    lastHiveTagSuccessUid = null
+                    vm.openHive(nextHive.id)
+                }
+            },
             inspections = inspections,
             events = events,
             feedings = feedings,

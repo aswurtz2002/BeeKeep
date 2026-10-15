@@ -97,6 +97,8 @@ internal fun HiveDetailScreen(
     onClearTag: (Long, (Boolean, String?) -> Unit) -> Unit,
     confirmBeforeTagRemoval: Boolean = true,
     tagAssignmentSuccessUid: String? = null,
+    nextHiveNumber: String? = null,
+    onNextHive: () -> Unit = {},
     onVerifyTag: () -> Unit,
     onMarkDead: () -> Unit,
     onRestore: () -> Unit,
@@ -523,6 +525,28 @@ internal fun HiveDetailScreen(
                                 fontWeight = if (writeStatusType == "success") FontWeight.ExtraBold else FontWeight.Medium
                             )
                         }
+                    }
+                    if ((writeStatusType == "success" || !tagAssignmentSuccessUid.isNullOrBlank()) &&
+                        nextHiveNumber != null
+                    ) {
+                        Button(
+                            onClick = onNextHive,
+                            modifier = Modifier.fillMaxWidth().height(48.dp),
+                            shape = RoundedCornerShape(14.dp)
+                        ) {
+                            Text("NEXT HIVE • ${hiveDisplayName(nextHiveNumber)}", fontWeight = FontWeight.ExtraBold)
+                            Spacer(Modifier.width(6.dp))
+                            Icon(Icons.Rounded.ChevronRight, contentDescription = "Open next hive in this apiary")
+                        }
+                    } else if ((writeStatusType == "success" || !tagAssignmentSuccessUid.isNullOrBlank()) &&
+                        nextHiveNumber == null
+                    ) {
+                        Text(
+                            "You’ve reached the last hive in this apiary.",
+                            modifier = Modifier.fillMaxWidth(),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            style = MaterialTheme.typography.bodySmall
+                        )
                     }
                 }
             }
