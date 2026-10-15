@@ -108,6 +108,7 @@ internal fun HiveDetailScreen(
     autoStartTagWritingIgnoreUid: String? = null,
     onAutoTagWritingStarted: () -> Unit = {},
     onFastTagAssignmentSuccess: (String) -> Unit = {},
+    onNfcWriteFlowChanged: (Boolean) -> Unit = {},
     onVerifyTag: () -> Unit,
     onMarkDead: () -> Unit,
     onRestore: () -> Unit,
@@ -120,7 +121,14 @@ internal fun HiveDetailScreen(
     var confirmDead by rememberSaveable(hive.id) { mutableStateOf(false) }
     var confirmDelete by rememberSaveable(hive.id) { mutableStateOf(false) }
     var confirmRemoveTag by rememberSaveable(hive.id) { mutableStateOf(false) }
-    BackHandler { onBack() }
+    var showWriteRetryDialog by rememberSaveable(hive.id) { mutableStateOf(false) }
+    BackHandler {
+        if (showWriteRetryDialog) {
+            showWriteRetryDialog = false
+            onNfcWriteFlowChanged(false)
+        }
+        onBack()
+    }
 
     fun removeHiveTag() {
         removingTag = true
@@ -135,6 +143,8 @@ internal fun HiveDetailScreen(
 
     fun startTagWriting(ignoredUid: String? = null) {
         if (hive.isDead || writeStatusType == "saving" || writeStatusType == "removing") return
+        showWriteRetryDialog = false
+        onNfcWriteFlowChanged(true)
         writeStatusType = "waiting"
         writeStatus = "Ready to scan. Hold your NFC tag against the back of your phone and keep it still."
         nfc.startWrite(
@@ -156,16 +166,34 @@ internal fun HiveDetailScreen(
                             } else {
                                 error ?: "The tag was written, but its hive assignment could not be saved."
                             }
-                            if (success && fastTagAssignmentMode) onFastTagAssignmentSuccess(result.uid)
+                            if (success) {
+                                showWriteRetryDialog = false
+                                onNfcWriteFlowChanged(false)
+                                if (fastTagAssignmentMode) onFastTagAssignmentSuccess(result.uid)
+                            } else {
+                                // The tag may be physically written but assignment persistence
+                                // failed. Keep passive routing disabled until the user retries
+                                // or cancels, or it will be misidentified as unassigned.
+                                showWriteRetryDialog = true
+                                onNfcWriteFlowChanged(true)
+                            }
                         }
                     }
                     is NfcResult.Error -> {
                         writeStatusType = "error"
                         writeStatus = result.message
+                        if (result.retryable) {
+                            showWriteRetryDialog = true
+                            onNfcWriteFlowChanged(true)
+                        } else {
+                            onNfcWriteFlowChanged(false)
+                        }
                     }
                     is NfcResult.Read -> {
                         writeStatusType = "error"
-                        writeStatus = "A tag was detected, but BeeKeep did not confirm a successful write. Please try again."
+                        writeStatus = "A tag was detected, but BeeKeep did not confirm a successful write."
+                        showWriteRetryDialog = true
+                        onNfcWriteFlowChanged(true)
                     }
                 }
             }
@@ -190,6 +218,41 @@ internal fun HiveDetailScreen(
             startTagWriting(autoStartTagWritingIgnoreUid)
             onAutoTagWritingStarted()
         }
+    }
+
+    if (showWriteRetryDialog) {
+        AlertDialog(
+            onDismissRequest = {
+                showWriteRetryDialog = false
+                onNfcWriteFlowChanged(false)
+            },
+            title = { Text("NFC write failed", fontWeight = FontWeight.ExtraBold) },
+            text = {
+                Text(
+                    "${writeStatus.ifBlank { "BeeKeep could not complete the tag write." }}\n\nTap TRY AGAIN and hold the tag against the back of your phone until scanning finishes."
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showWriteRetryDialog = false
+                        startTagWriting()
+                    }
+                ) {
+                    Text("TRY AGAIN", fontWeight = FontWeight.ExtraBold)
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        showWriteRetryDialog = false
+                        onNfcWriteFlowChanged(false)
+                    }
+                ) {
+                    Text("CANCEL", fontWeight = FontWeight.Bold)
+                }
+            }
+        )
     }
 
     if (confirmRemoveTag) {
@@ -512,6 +575,8 @@ internal fun HiveDetailScreen(
                             onClick = {
                                 if (writeStatusType == "waiting") {
                                     nfc.stop(activity)
+                                    showWriteRetryDialog = false
+                                    onNfcWriteFlowChanged(false)
                                     writeStatus = ""
                                     writeStatusType = "idle"
                                 } else {
