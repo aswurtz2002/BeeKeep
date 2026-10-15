@@ -160,7 +160,10 @@ class LocalHiveRepository(context: Context) {
     }
 
     suspend fun isNfcTagUnassigned(uid: String): Boolean = withContext(Dispatchers.IO) {
-        NfcUid.normalize(uid)?.let { db.nfcTagAssignments().isUnassigned(it) } ?: false
+        val normalized = NfcUid.normalize(uid) ?: return@withContext false
+        val history = db.nfcTagAssignments().allForBackup()
+            .filter { NfcUid.matches(it.tagUid, normalized) }
+        history.isNotEmpty() && history.none { it.isActive }
     }
 
     suspend fun getUnassignedNfcTagUids(): Set<String> = withContext(Dispatchers.IO) {
