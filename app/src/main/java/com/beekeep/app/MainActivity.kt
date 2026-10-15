@@ -304,6 +304,9 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
         // NFC dispatch extras are already present in the Intent; parse them immediately
         // so the foreground reader cannot deliver the same physical tap first.
         nfc.readIntent(intent)?.let { result ->
+            // During fast assignment the previous tag may be dispatched by Android
+            // between writer sessions. Never queue that intent for the inspection flow.
+            if (nfc.shouldSuppressIncomingNfcIntent(result.uid)) return
             nfc.rememberHandledUid(result.uid)
             pendingNfcResult.value = result
         }
@@ -436,8 +439,8 @@ fun BeeKeepApp(
             pendingAutoTagWriteHiveId = null
             pendingAutoTagWriteIgnoredUid = null
             nfc.rememberHandledUid(justAssignedUid)
-            nfc.clearFastAssignmentIgnoredUid()
-            nfc.setPassiveReadingEnabled(activity, true)
+            // Finish the flow, but retain the last UID latch until that tag leaves.
+            nfc.finishFastAssignmentFlow(activity, preserveLastUid = true)
             scope.launch {
                 snackbarHostState.showSnackbar(
                     "Fast tag assignment complete for ${currentHive.apiary}: no untagged hives remain after ${hiveReferenceName(currentHive.number)}."
@@ -449,7 +452,7 @@ fun BeeKeepApp(
         lastHiveTagSuccessHiveId = null
         lastHiveTagSuccessUid = null
         nfc.suppressFastAssignmentUid(justAssignedUid)
-        nfc.setPassiveReadingEnabled(activity, false)
+        nfc.beginFastAssignmentFlow(activity)
         pendingAutoTagWriteHiveId = nextUntaggedHive.id
         pendingAutoTagWriteIgnoredUid = justAssignedUid
         selectedHiveOpen = true
@@ -672,6 +675,12 @@ fun BeeKeepApp(
     androidx.compose.runtime.LaunchedEffect(ready, incomingNfc?.uid, screen) {
         val result = incomingNfc ?: return@LaunchedEffect
         if (!ready) return@LaunchedEffect
+        // Discard an intent that was already queued when fast assignment took
+        // exclusive ownership, or that refers to the tag just written.
+        if (nfc.shouldSuppressIncomingNfcIntent(result.uid)) {
+            (activity as? MainActivity)?.pendingNfcResult?.value = null
+            return@LaunchedEffect
+        }
         // Manual NFC management and scan screens own their tag reads. Ignore
         // passive-reader notifications there, otherwise a just-assigned tag can
         // navigate away to its hive before the write prompt becomes visible.
@@ -1062,15 +1071,13 @@ fun BeeKeepApp(
             activity = activity,
             onBack = {
                 nfc.stop(activity)
-                nfc.clearFastAssignmentIgnoredUid()
-                nfc.setPassiveReadingEnabled(activity, true)
+                nfc.finishFastAssignmentFlow(activity, preserveLastUid = false)
                 selectedHiveOpen = false
                 vm.clearHive()
             },
             onHome = {
                 nfc.stop(activity)
-                nfc.clearFastAssignmentIgnoredUid()
-                nfc.setPassiveReadingEnabled(activity, true)
+                nfc.finishFastAssignmentFlow(activity, preserveLastUid = false)
                 pendingAutoStartVoiceHiveId = null
                 pendingInspectionHiveId = null
                 inspecting = false
@@ -1277,8 +1284,7 @@ fun BeeKeepApp(
                     if (!enabled) {
                         pendingAutoTagWriteHiveId = null
                         pendingAutoTagWriteIgnoredUid = null
-                        nfc.clearFastAssignmentIgnoredUid()
-                        nfc.setPassiveReadingEnabled(activity, true)
+                        nfc.finishFastAssignmentFlow(activity, preserveLastUid = false)
                     }
                 },
                 largeFieldText = largeFieldText,

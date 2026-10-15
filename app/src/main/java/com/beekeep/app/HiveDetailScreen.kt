@@ -135,9 +135,13 @@ internal fun HiveDetailScreen(
 
     fun startTagWriting(ignoredUid: String? = null) {
         if (hive.isDead || writeStatusType == "saving" || writeStatusType == "removing") return
-        // A write owns NFC until its database assignment finishes. Do not let the
-        // passive reader rediscover the newly written tag during that async gap.
-        nfc.setPassiveReadingEnabled(activity, false)
+        // Android can dispatch the just-written tag as an Intent while the next
+        // ReaderMode session is being armed. Own both paths for the whole transaction.
+        if (fastTagAssignmentMode) {
+            nfc.beginFastAssignmentFlow(activity)
+        } else {
+            nfc.setPassiveReadingEnabled(activity, false)
+        }
         writeStatusType = "waiting"
         writeStatus = "Ready to scan. Hold your NFC tag against the back of your phone and keep it still."
         nfc.startWrite(
@@ -160,9 +164,10 @@ internal fun HiveDetailScreen(
                                 error ?: "The tag was written, but its hive assignment could not be saved."
                             }
                             if (success) {
-                                // Refresh the one-shot debounce from assignment completion,
-                                // not only from the physical write callback.
+                                // Suppress the completed tag on both passive and Intent
+                                // dispatch paths while the next hive's scanner is armed.
                                 nfc.rememberHandledUid(result.uid)
+                                nfc.suppressFastAssignmentUid(result.uid)
                                 if (fastTagAssignmentMode) {
                                     onFastTagAssignmentSuccess(result.uid)
                                 } else {
@@ -199,9 +204,11 @@ internal fun HiveDetailScreen(
             writeStatus = "Fast tag assignment stopped because this hive already has an NFC tag. No tag was overwritten."
             onAutoTagWritingStarted()
         } else {
-            // Allow the previous tag to leave the reader field before arming the
-            // next hive. The controller also blocks that prior UID across sessions.
-            kotlinx.coroutines.delay(350L)
+            // Start the exclusive-flow guard before the delay as well. The old tag
+            // can generate an Android Intent during this gap on some Samsung devices.
+            if (fastTagAssignmentMode) nfc.beginFastAssignmentFlow(activity)
+            // Let the previous tag leave the antenna field before arming the next hive.
+            kotlinx.coroutines.delay(900L)
             startTagWriting(autoStartTagWritingIgnoreUid)
             onAutoTagWritingStarted()
         }

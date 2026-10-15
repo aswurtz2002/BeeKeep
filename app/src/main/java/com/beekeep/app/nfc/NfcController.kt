@@ -67,6 +67,7 @@ class NfcController {
     // Fast assignment owns the reader handoff between adjacent hives. Keep the UID
     // just assigned blocked until a different physical tag is discovered.
     @Volatile private var fastAssignmentIgnoredUid: String? = null
+    @Volatile private var fastAssignmentFlowActive: Boolean = false
 
     private companion object {
         const val PASSIVE_REPEAT_DELAY_MS = 1_800L
@@ -102,6 +103,27 @@ class NfcController {
         synchronized(passiveLock) {
             fastAssignmentIgnoredUid = null
         }
+    }
+
+    /**
+     * Prevent system NFC intents and passive reads from interrupting the continuous
+     * write -> save -> next-hive transaction. This is separate from ReaderMode,
+     * because Android may dispatch an intent while ReaderMode is being re-armed.
+     */
+    fun beginFastAssignmentFlow(activity: Activity) {
+        fastAssignmentFlowActive = true
+        setPassiveReadingEnabled(activity, false)
+    }
+
+    fun finishFastAssignmentFlow(activity: Activity, preserveLastUid: Boolean) {
+        fastAssignmentFlowActive = false
+        if (!preserveLastUid) clearFastAssignmentIgnoredUid()
+        setPassiveReadingEnabled(activity, true)
+    }
+
+    fun shouldSuppressIncomingNfcIntent(uid: String?): Boolean {
+        if (fastAssignmentFlowActive) return true
+        return shouldIgnoreFastAssignmentUid(uid)
     }
 
     private fun shouldIgnoreFastAssignmentUid(uid: String?): Boolean {
@@ -145,11 +167,15 @@ class NfcController {
      * the retry/assignment UI.
      */
     fun setPassiveReadingEnabled(activity: Activity, enabled: Boolean) {
-        if (passiveReadsEnabled == enabled) {
-            if (enabled) enablePassiveIfNeeded(activity)
+        // Compose screen effects may request passive reading while a fast-write
+        // transaction is in progress. The transaction must retain exclusive NFC
+        // ownership until it explicitly finishes or is cancelled.
+        val effectiveEnabled = enabled && !fastAssignmentFlowActive
+        if (passiveReadsEnabled == effectiveEnabled) {
+            if (effectiveEnabled) enablePassiveIfNeeded(activity)
             return
         }
-        passiveReadsEnabled = enabled
+        passiveReadsEnabled = effectiveEnabled
         if (!enabled) {
             synchronized(passiveLock) {
                 passiveReadGeneration.incrementAndGet()
@@ -354,14 +380,15 @@ class NfcController {
         try {
             nfc.enableReaderMode(activity, { tag ->
                 val readGeneration = passiveReadGeneration.get()
-                if (!activityResumed || active.get() || !passiveReadsEnabled ||
+                if (!activityResumed || active.get() || !passiveReadsEnabled || fastAssignmentFlowActive ||
                     !passiveReadInFlight.compareAndSet(false, true)) {
                     return@enableReaderMode
                 }
                 try {
                     // A callback already in flight when passive reading was disabled
                     // must not clear the fast-assignment UID latch.
-                    if (!passiveReadsEnabled || readGeneration != passiveReadGeneration.get()) {
+                    if (!passiveReadsEnabled || fastAssignmentFlowActive ||
+                        readGeneration != passiveReadGeneration.get()) {
                         return@enableReaderMode
                     }
                     val discoveredUid = runCatching { NfcUid.normalize(uid(tag)) }.getOrNull()
@@ -375,7 +402,7 @@ class NfcController {
                             // A manual scan may have started while this passive read was
                             // connecting to the tag. Discard it rather than dispatching a
                             // stale second navigation after the manual result is handled.
-                            if (readGeneration != passiveReadGeneration.get()) {
+                            if (fastAssignmentFlowActive || readGeneration != passiveReadGeneration.get()) {
                                 false
                             } else {
                                 val now = System.currentTimeMillis()
@@ -394,6 +421,7 @@ class NfcController {
                         if (shouldDeliver) {
                             activity.runOnUiThread {
                                 if (readGeneration == passiveReadGeneration.get() &&
+                                    !fastAssignmentFlowActive && passiveReadsEnabled &&
                                     activityResumed && !active.get() &&
                                     !activity.isFinishing && !activity.isDestroyed) {
                                     passiveReadListener?.invoke(result)
