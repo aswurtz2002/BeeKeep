@@ -113,5 +113,48 @@ class NfcAssignmentResolverTest {
             result.toClose
         )
     }
+    @Test
+    fun `all duplicate active owners are closed when incoming wins every conflict`() {
+        val tagOwnerA = assignment(1, "A123", 47, at = 30)
+        val tagOwnerB = assignment(2, "A123", 48, at = 40)
+        val hiveOldTagA = assignment(3, "OLD1", 83, at = 20)
+        val hiveOldTagB = assignment(4, "OLD2", 83, at = 25)
+        val incoming = assignment(10, "A123", 83, at = 100)
+
+        val result = NfcAssignmentResolver.merge(
+            tagConflicts = listOf(tagOwnerA, tagOwnerB),
+            hiveConflicts = listOf(hiveOldTagA, hiveOldTagB),
+            incoming = incoming
+        )
+
+        assertTrue(result.incoming.isActive)
+        assertEquals(
+            listOf(
+                tagOwnerA.copy(unassignedAt = 100),
+                tagOwnerB.copy(unassignedAt = 100),
+                hiveOldTagA.copy(unassignedAt = 100),
+                hiveOldTagB.copy(unassignedAt = 100)
+            ),
+            result.toClose
+        )
+    }
+
+    @Test
+    fun `one newer incumbent prevents partial closure of every conflict`() {
+        val tagOwnerA = assignment(1, "A123", 47, at = 30)
+        val tagOwnerB = assignment(2, "A123", 48, at = 80)
+        val hiveOldTag = assignment(3, "OLD1", 83, at = 20)
+        val incoming = assignment(10, "A123", 83, at = 50)
+
+        val result = NfcAssignmentResolver.merge(
+            tagConflicts = listOf(tagOwnerA, tagOwnerB),
+            hiveConflicts = listOf(hiveOldTag),
+            incoming = incoming
+        )
+
+        assertEquals(80L, result.incoming.unassignedAt)
+        assertTrue(result.toClose.isEmpty())
+    }
+
 }
 

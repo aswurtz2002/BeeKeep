@@ -36,8 +36,10 @@ interface HiveDao {
     suspend fun get(id: Long): HiveEntity?
     @Query("SELECT * FROM hives WHERE apiary_id = :apiaryId OR (apiary_id IS NULL AND apiary = :oldName COLLATE NOCASE)")
     suspend fun forApiaryRename(apiaryId: Long, oldName: String): List<HiveEntity>
-    @Query("SELECT * FROM hives WHERE tag_uid = :tag COLLATE NOCASE AND deleted = 0 LIMIT 1")
+    @Query("SELECT * FROM hives WHERE tag_uid = :tag COLLATE NOCASE AND deleted = 0 AND status = 'ACTIVE' LIMIT 1")
     suspend fun byTag(tag: String): HiveEntity?
+    @Query("SELECT * FROM hives WHERE tag_uid = :tag COLLATE NOCASE AND deleted = 0")
+    suspend fun byTagAll(tag: String): List<HiveEntity>
     @Query("SELECT * FROM hives WHERE number = :number COLLATE NOCASE AND apiary = :apiary AND deleted = 0 AND status = 'ACTIVE' LIMIT 1")
     suspend fun byNumberAndApiary(number: String, apiary: String): HiveEntity?
     @Query("SELECT EXISTS(SELECT 1 FROM hives WHERE id = :id)")
@@ -58,6 +60,14 @@ interface NfcTagAssignmentDao {
     suspend fun allForBackup(): List<NfcTagAssignmentEntity>
     @Query("SELECT * FROM nfc_tag_assignments WHERE tag_uid = :uid COLLATE NOCASE AND unassigned_at IS NULL ORDER BY assigned_at DESC, id DESC LIMIT 1")
     suspend fun activeByTag(uid: String?): NfcTagAssignmentEntity?
+    @Query("SELECT * FROM nfc_tag_assignments WHERE tag_uid = :uid COLLATE NOCASE AND unassigned_at IS NULL ORDER BY assigned_at DESC, id DESC")
+    suspend fun activeAssignmentsForTag(uid: String): List<NfcTagAssignmentEntity>
+    @Query("SELECT * FROM nfc_tag_assignments WHERE unassigned_at IS NULL ORDER BY assigned_at DESC, id DESC")
+    suspend fun allActiveAssignments(): List<NfcTagAssignmentEntity>
+    @Query("SELECT * FROM nfc_tag_assignments WHERE hive_id = :hiveId ORDER BY assigned_at DESC, id DESC")
+    suspend fun allAssignmentsForHive(hiveId: Long): List<NfcTagAssignmentEntity>
+    @Query("SELECT * FROM nfc_tag_assignments WHERE tag_uid = :uid COLLATE NOCASE ORDER BY assigned_at DESC, id DESC")
+    suspend fun allAssignmentsForTag(uid: String): List<NfcTagAssignmentEntity>
 
     @Query("""
         SELECT EXISTS(

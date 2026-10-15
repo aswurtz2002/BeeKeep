@@ -10,6 +10,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+import com.beekeep.app.nfc.NfcUid
 import java.time.ZoneId
 import kotlin.math.roundToInt
 
@@ -88,6 +89,11 @@ class BeeKeepViewModel(
     }
 
     suspend fun findHiveByTag(tag: String): Hive? = repo.findHiveByNfc(tag)
+
+    suspend fun isNfcTagAmbiguous(uid: String): Boolean = repo.isNfcTagAmbiguous(uid)
+
+    suspend fun getAllKnownNfcTagAssignments(): List<Pair<String?, Long>> =
+        repo.getAllKnownNfcTagAssignments()
 
     suspend fun isNfcTagUnassigned(uid: String): Boolean = repo.isNfcTagUnassigned(uid)
 
@@ -267,8 +273,8 @@ class BeeKeepViewModel(
     }
 
     fun assignTagToHive(hiveId: Long, uid: String, reassign: Boolean = false, onResult: (Boolean, String?) -> Unit = { _, _ -> }) {
-        val normalized = uid.trim().uppercase()
-        if (normalized.isBlank()) { onResult(false, "The NFC tag has no readable UID."); return }
+        val normalized = NfcUid.normalize(uid)
+        if (normalized == null) { onResult(false, "The NFC tag has no valid readable UID."); return }
         viewModelScope.launch {
             runCatching {
                 repo.assignNfcTag(hiveId, normalized, reassign)

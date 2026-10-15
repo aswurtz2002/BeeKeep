@@ -1,26 +1,34 @@
-# BeeKeep NFC Tag Management — v1.5.0
+# BeeKeep NFC Tag Management
 
-## Production flow
+## Identity model
 
-BeeKeep uses the Android NFC reader/writer APIs directly. The app reads the physical tag UID and stores that UID on the hive record. The tag also receives a compact BeeKeep NDEF record using the custom MIME type `application/vnd.beekeep.hive` and payload `BEEKEEP:HIVE:<hiveId>`.
+BeeKeep identifies the physical tag by its NFC UID and resolves that UID against the local Room database's active assignment ledger. The NDEF payload is only a generic app-launch marker; it never decides which hive is opened.
 
-The tag does **not** contain the hive history, inspection notes, photos, or health information. Those remain in Room/cloud storage.
+Current tags contain two NDEF records:
 
-### Supported field actions
+- MIME record: `application/vnd.beekeep.tag` with payload `BEEKEEP:TAG`
+- Android Application Record for `com.beekeep.app`
 
-- Scan & Open Hive
-- Assign an unassigned tag
-- Replace an existing tag
-- Verify that the physical UID and BeeKeep payload match the hive
-- Remove a tag assignment from BeeKeep
-- Write/format compatible NDEF tags
+Older `application/vnd.beekeep.hive` / `BEEKEEP:HIVE:<hiveId>` records are recognized for migration only. The embedded legacy hive ID must never override the current UID-to-hive assignment. Hive history and inspection data stay in Room/cloud storage, not on the tag.
 
-### Recommended tag type
+## Safety rules
 
-Use durable, outdoor-rated NFC tags intended for the mounting surface. For the first production version, NDEF-compatible tags are preferred because Android provides strong framework support for NDEF.
+- A valid UID is normalized before comparison. Formatting differences must not create a second identity.
+- A UID with conflicting active or cached owners is considered ambiguous. BeeKeep must not open, verify, or assign it automatically; resolve the duplicate in NFC Tag Management first.
+- Unknown or unassigned tags never inherit the identity of whichever hive happens to be open. The user must explicitly choose the intended hive.
+- A tag already assigned to another hive cannot be overwritten during a normal assignment. Reassignment requires an explicit confirmation and is written to assignment history.
+- Fast Tag Mode ignores the UID just assigned while it advances to the next untagged hive. A tag that is already assigned cannot silently replace a different hive's tag.
+- The controller verifies the generic marker and the Android Application Record after writing. A successful NDEF write alone is not enough to claim a valid app-launch setup.
+- Passive scans do not automatically erase a tag that contains unrelated NDEF data. Use an explicit WRITE TAG action if you intend to replace it.
+- Cancelled scans must not deliver late callbacks into a later scan session.
+- Removing a tag releases its assignment in BeeKeep; it does not remotely erase the physical tag. Reassignment should be confirmed before another hive takes ownership.
 
-### Android behavior
+## Recommended tags and mounting
 
-When BeeKeep is already open, the Scan screen uses `NfcAdapter.enableReaderMode()` with NFC-A/B/F/V polling. When a BeeKeep NDEF tag is scanned while the app is not in the foreground, Android's NDEF tag-dispatch system can launch/reuse BeeKeep because the activity filters for the BeeKeep MIME type.
+Use durable outdoor-rated NFC tags intended for the mounting surface. Ordinary NFC tags can behave poorly close to metal; use a suitable on-metal tag or a non-metal mounting location. Keep the tag in a consistent location on each hive, and label the hive number visibly as a human cross-check.
 
-Do not write an `http://` or `https://` URL as the BeeKeep tag payload. The app uses a custom MIME record so tag identification remains app-specific.
+## Android behaviour
+
+When BeeKeep is foregrounded, it uses Android's NFC reader mode. When a compatible marker is present and BeeKeep is not foregrounded, Android can route the NDEF discovery back to BeeKeep through its MIME-type intent filter and application record. Device-specific behaviour varies, so verify this on the target phones.
+
+An NFC UID is an identifier, not cryptographic proof: some tag technologies can be cloned or emulated. Do not treat the UID as an authentication secret. BeeKeep protects against assignment conflicts and stale payloads, but it cannot prove that every physical UID is impossible to clone.

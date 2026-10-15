@@ -97,6 +97,7 @@ internal fun HiveDetailScreen(
     onTreat: () -> Unit,
     onHarvest: () -> Unit,
     onTag: (String, (Boolean, String?) -> Unit) -> Unit,
+    isTagAssignedElsewhere: (Long, String) -> Boolean = { _, _ -> false },
     onClearTag: (Long, (Boolean, String?) -> Unit) -> Unit,
     confirmBeforeTagRemoval: Boolean = true,
     tagAssignmentSuccessUid: String? = null,
@@ -139,8 +140,9 @@ internal fun HiveDetailScreen(
         nfc.startWrite(
             activity = activity,
             text = BeeKeepNfcPayload.TAG_PAYLOAD,
-            allowOverwriteOtherHive = hive.tagUid != null,
+            targetHiveId = hive.id,
             ignoredUid = ignoredUid,
+            isAssignedElsewhere = { candidateUid -> isTagAssignedElsewhere(hive.id, candidateUid) },
             onResult = { result ->
                 when (result) {
                     is NfcResult.Written -> {

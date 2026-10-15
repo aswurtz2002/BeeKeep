@@ -30,16 +30,28 @@ object NfcAssignmentResolver {
         tagConflict: NfcTagAssignmentEntity?,
         hiveConflict: NfcTagAssignmentEntity?,
         incoming: NfcTagAssignmentEntity
+    ): MergeResult = merge(
+        tagConflicts = listOfNotNull(tagConflict),
+        hiveConflicts = listOfNotNull(hiveConflict),
+        incoming = incoming
+    )
+
+    /**
+     * Collection overload used by sync, because legacy/imported data can contain
+     * multiple active rows for a single tag or hive. Resolve every conflict as one
+     * set; never leave an extra active owner behind because a query selected LIMIT 1.
+     */
+    fun merge(
+        tagConflicts: List<NfcTagAssignmentEntity>,
+        hiveConflicts: List<NfcTagAssignmentEntity>,
+        incoming: NfcTagAssignmentEntity
     ): MergeResult {
         if (!incoming.isActive) return MergeResult(incoming, emptyList())
 
-        val conflicts = listOfNotNull(tagConflict, hiveConflict)
+        val conflicts = (tagConflicts + hiveConflicts)
             .distinctBy { it.id }
             .filter { it.id != incoming.id && it.isActive }
 
-        // Resolve the entire conflict set before changing any incumbent. If the
-        // incoming assignment beats the tag owner but loses to the hive's current
-        // tag, partially closing the first conflict would leave both hives wrong.
         val losingConflict = conflicts
             .filterNot { winsOver(incoming, it) }
             .maxWithOrNull(compareBy<NfcTagAssignmentEntity> { it.assignedAt }.thenBy { it.id })
