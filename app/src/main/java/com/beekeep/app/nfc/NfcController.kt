@@ -14,6 +14,7 @@ import android.os.Bundle
 import androidx.core.content.IntentCompat
 import java.io.IOException
 import java.nio.charset.StandardCharsets
+import java.util.Locale
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 
