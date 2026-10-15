@@ -392,6 +392,10 @@ fun BeeKeepApp(
     var fastTagAssignmentMode by rememberSaveable {
         mutableStateOf(autoVoicePrefs.getBoolean("fast_tag_assignment_mode", false))
     }
+    // This state represents the entire multi-hive assignment run, not just the
+    // currently active NFC reader. It gates UI navigation even if a late NFC event
+    // arrives after the controller has handed off between readers.
+    var fastAssignmentSessionActive by rememberSaveable { mutableStateOf(false) }
     var screen by rememberSaveable { mutableStateOf(Screen.HOME) }
     var selectedHiveOpen by rememberSaveable { mutableStateOf(false) }
     var selectedApiaryName by rememberSaveable { mutableStateOf<String?>(null) }
@@ -450,7 +454,11 @@ fun BeeKeepApp(
     val ready by vm.ready.collectAsStateWithLifecycle()
 
     fun advanceToNextUntaggedHiveForFastAssignment(currentHive: Hive, justAssignedUid: String) {
-        if (!fastTagAssignmentMode) return
+        if (!fastTagAssignmentMode) {
+            fastAssignmentSessionActive = false
+            return
+        }
+        fastAssignmentSessionActive = true
 
         // A scan event can be queued just before the write transaction takes ownership.
         // It must never carry an Inspect destination across the fast-assignment handoff.
@@ -473,6 +481,7 @@ fun BeeKeepApp(
             nfc.rememberHandledUid(justAssignedUid)
             // Finish the flow, but retain the last UID latch until that tag leaves.
             nfc.finishFastAssignmentFlow(activity, preserveLastUid = true)
+            fastAssignmentSessionActive = false
             scope.launch {
                 snackbarHostState.showSnackbar(
                     "Fast tag assignment complete for ${currentHive.apiary}: no untagged hives remain after ${hiveReferenceName(currentHive.number)}."
@@ -548,7 +557,15 @@ fun BeeKeepApp(
     }
 
     // Wait until the ViewModel has loaded the scanned hive before presenting Inspect.
-    androidx.compose.runtime.LaunchedEffect(selected?.id, pendingInspectionHiveId) {
+    // Fast assignment is the exception: a selected-hive change is a writer handoff,
+    // never an implicit request to open Inspection.
+    androidx.compose.runtime.LaunchedEffect(selected?.id, pendingInspectionHiveId, fastAssignmentSessionActive) {
+        if (fastAssignmentSessionActive) {
+            if (pendingInspectionHiveId != null) pendingInspectionHiveId = null
+            if (pendingAutoStartVoiceHiveId != null) pendingAutoStartVoiceHiveId = null
+            inspecting = false
+            return@LaunchedEffect
+        }
         val targetHiveId = pendingInspectionHiveId ?: return@LaunchedEffect
         if (selected?.id == targetHiveId) {
             inspecting = true
@@ -707,9 +724,15 @@ fun BeeKeepApp(
         scanning = nfc.isScanning()
     }
 
-    androidx.compose.runtime.LaunchedEffect(ready, incomingNfc?.uid, screen, unassignedTagUid) {
+    androidx.compose.runtime.LaunchedEffect(ready, incomingNfc?.uid, screen, unassignedTagUid, fastAssignmentSessionActive) {
         val result = incomingNfc ?: return@LaunchedEffect
         if (!ready) return@LaunchedEffect
+        // During a fast assignment run, NFC belongs exclusively to the hive writer.
+        // Never resolve a newly written tag through the normal "open Inspection" route.
+        if (fastAssignmentSessionActive) {
+            (activity as? MainActivity)?.pendingNfcResult?.value = null
+            return@LaunchedEffect
+        }
         // Once the unassigned-tag choice is visible, discard any queued reads until
         // the beekeeper chooses an action or cancels. This prevents popup re-entry.
         if (unassignedTagUid != null) {
@@ -1092,7 +1115,10 @@ fun BeeKeepApp(
                 }
             },
             onFastTagAssignmentStarted = {
-                // Clear any pre-existing normal-read navigation before the writer starts.
+                // Mark the whole run active before the writer arms its ReaderMode.
+                // This remains true across next-hive transitions and cannot be inferred
+                // solely from the NFC controller's per-reader state.
+                fastAssignmentSessionActive = true
                 (activity as? MainActivity)?.pendingNfcResult?.value = null
                 pendingInspectionHiveId = null
                 pendingAutoStartVoiceHiveId = null
@@ -1119,12 +1145,20 @@ fun BeeKeepApp(
             onBack = {
                 nfc.stop(activity)
                 nfc.finishFastAssignmentFlow(activity, preserveLastUid = false)
+                fastAssignmentSessionActive = false
+                pendingAutoTagWriteHiveId = null
+                pendingAutoTagWriteIgnoredUid = null
+                pendingInspectionHiveId = null
+                pendingAutoStartVoiceHiveId = null
                 selectedHiveOpen = false
                 vm.clearHive()
             },
             onHome = {
                 nfc.stop(activity)
                 nfc.finishFastAssignmentFlow(activity, preserveLastUid = false)
+                fastAssignmentSessionActive = false
+                pendingAutoTagWriteHiveId = null
+                pendingAutoTagWriteIgnoredUid = null
                 pendingAutoStartVoiceHiveId = null
                 pendingInspectionHiveId = null
                 inspecting = false
@@ -1133,7 +1167,18 @@ fun BeeKeepApp(
                 screen = Screen.HOME
                 vm.clearHive()
             },
-            onInspect = { pendingAutoStartVoiceHiveId = null; inspecting = true },
+            onInspect = {
+                // A deliberate Inspect tap ends the automatic assignment sequence.
+                nfc.stop(activity)
+                nfc.finishFastAssignmentFlow(activity, preserveLastUid = false)
+                fastAssignmentSessionActive = false
+                pendingAutoTagWriteHiveId = null
+                pendingAutoTagWriteIgnoredUid = null
+                pendingAutoStartVoiceHiveId = null
+                pendingInspectionHiveId = null
+                (activity as? MainActivity)?.pendingNfcResult?.value = null
+                inspecting = true
+            },
             onFeed = { logType = HiveLogType.FEED },
             onTreat = { logType = HiveLogType.TREAT },
             onHarvest = { logType = HiveLogType.HARVEST },
@@ -1329,8 +1374,12 @@ fun BeeKeepApp(
                     fastTagAssignmentMode = enabled
                     autoVoicePrefs.edit { putBoolean("fast_tag_assignment_mode", enabled) }
                     if (!enabled) {
+                        fastAssignmentSessionActive = false
                         pendingAutoTagWriteHiveId = null
                         pendingAutoTagWriteIgnoredUid = null
+                        pendingInspectionHiveId = null
+                        pendingAutoStartVoiceHiveId = null
+                        (activity as? MainActivity)?.pendingNfcResult?.value = null
                         nfc.finishFastAssignmentFlow(activity, preserveLastUid = false)
                     }
                 },
