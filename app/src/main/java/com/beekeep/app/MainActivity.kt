@@ -196,11 +196,20 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
         // priority over Android's normal tag dispatch, so a tag can open its hive
         // without switching to a browser or another NFC app.
         nfc.setPassiveReadListener(this) { result ->
+            val deliveryToken = nfc.passiveDeliveryToken()
             lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) {
-                runCatching {
+                val shouldForward = runCatching {
                     val assignedHive = repository.findHiveByNfc(result.uid)
-                    if (assignedHive != null || result.info.hasBeeKeepLaunchRecord ||
-                        BeeKeepNfcPayload.isBeeKeepPayload(result.text) || result.launchPreparationError != null) {
+                    assignedHive != null || result.info.hasBeeKeepLaunchRecord ||
+                        BeeKeepNfcPayload.isBeeKeepPayload(result.text) || result.launchPreparationError != null
+                }.getOrDefault(false)
+                if (!shouldForward || !nfc.canDispatchPassiveRead(deliveryToken, result.uid)) {
+                    return@launch
+                }
+                // A dialog may have opened while the database lookup ran. Re-check
+                // on the main thread immediately before publishing to the UI flow.
+                runOnUiThread {
+                    if (nfc.canDispatchPassiveRead(deliveryToken, result.uid)) {
                         pendingNfcResult.value = result
                     }
                 }
@@ -416,6 +425,19 @@ fun BeeKeepApp(
     val scope = rememberCoroutineScope()
     val snackbarHostState = androidx.compose.material3.SnackbarHostState()
 
+    fun showUnassignedTagPrompt(uid: String, origin: Screen, tag: android.nfc.Tag?) {
+        // Lock NFC before updating Compose state, so queued intents and IO callbacks
+        // cannot race the dialog into opening a second time.
+        nfc.beginUnassignedTagPrompt(activity, uid, tag)
+        unassignedTagOrigin = origin
+        unassignedTagUid = uid
+    }
+
+    fun dismissUnassignedTagPrompt() {
+        nfc.finishUnassignedTagPrompt()
+        unassignedTagUid = null
+    }
+
     val hives by vm.hives.collectAsStateWithLifecycle()
     val deadHives by vm.deadHives.collectAsStateWithLifecycle()
     val apiaries by vm.apiaries.collectAsStateWithLifecycle()
@@ -541,10 +563,12 @@ fun BeeKeepApp(
 
     // Scan and tag-management screens control when another NFC read happens.
     // In particular, do not retry a failed write passively while the Retry dialog is open.
-    androidx.compose.runtime.LaunchedEffect(screen, nfcWriteRetryMessage, nfc) {
+    androidx.compose.runtime.LaunchedEffect(screen, nfcWriteRetryMessage, nfc, unassignedTagUid, addHive) {
         val passiveAllowed = screen != Screen.SCAN &&
             screen != Screen.TAG_MANAGER &&
-            nfcWriteRetryMessage == null
+            nfcWriteRetryMessage == null &&
+            unassignedTagUid == null &&
+            !addHive
         nfc.setPassiveReadingEnabled(activity, passiveAllowed)
     }
 
@@ -657,10 +681,7 @@ fun BeeKeepApp(
                         pendingInspectionHiveId = resolvedHive.id
                         snackbarHostState.showSnackbar("${hiveReferenceName(resolvedHive.number)} recognized • inspection ready")
                     } else {
-                        // Take NFC away from the passive reader before showing a choice.
-                        nfc.setPassiveReadingEnabled(activity, false)
-                        unassignedTagOrigin = Screen.HOME
-                        unassignedTagUid = normalizedUid
+                        showUnassignedTagPrompt(normalizedUid, Screen.HOME, result.platformTag)
                     }
                 }
             }
@@ -670,6 +691,8 @@ fun BeeKeepApp(
     }
 
     fun startManualNfcScan() {
+        // A deliberate tap on Scan is an explicit retry, even if this UID was just dismissed.
+        nfc.clearUnassignedPromptSuppressionForExplicitScan()
         nfc.startReadAndPrepareForBeeKeep(activity) { result ->
             handleManualNfcScanResult(result)
         }
@@ -752,11 +775,8 @@ fun BeeKeepApp(
         } else {
             // Even when a hive is open, an unassigned physical tag must go through
             // an explicit assignment choice. Never infer ownership from current screen.
-            // Stop passive scanning immediately; don't wait for the screen effect to run.
-            nfc.setPassiveReadingEnabled(activity, false)
+            showUnassignedTagPrompt(normalizedUid, Screen.HOME, result.platformTag)
             screen = Screen.SCAN
-            unassignedTagOrigin = Screen.HOME
-            unassignedTagUid = normalizedUid
         }
         (activity as? MainActivity)?.pendingNfcResult?.value = null
     }
@@ -807,7 +827,7 @@ fun BeeKeepApp(
             // Keep outside taps from dismissing this dialog and revealing the
             // scan screen underneath. Back and the explicit Cancel action exit safely.
             onDismissRequest = {
-                unassignedTagUid = null
+                dismissUnassignedTagPrompt()
                 nfc.stop(activity)
                 scanning = false
                 if (unassignedTagOrigin != Screen.TAG_MANAGER) screen = Screen.HOME
@@ -823,7 +843,7 @@ fun BeeKeepApp(
                 ) {
                     TextButton(
                         onClick = {
-                            unassignedTagUid = null
+                            dismissUnassignedTagPrompt()
                             pendingTagUid = uid
                             if (unassignedTagOrigin != Screen.TAG_MANAGER) {
                                 tagManagerReturnScreen = unassignedTagOrigin
@@ -836,7 +856,7 @@ fun BeeKeepApp(
                     }
                     TextButton(
                         onClick = {
-                            unassignedTagUid = null
+                            dismissUnassignedTagPrompt()
                             pendingTagUid = uid
                             // Return to Home after creating a hive from the scanner prompt.
                             if (unassignedTagOrigin != Screen.TAG_MANAGER) screen = Screen.HOME
@@ -848,7 +868,7 @@ fun BeeKeepApp(
                     }
                     TextButton(
                         onClick = {
-                            unassignedTagUid = null
+                            dismissUnassignedTagPrompt()
                             nfc.stop(activity)
                             scanning = false
                             if (unassignedTagOrigin != Screen.TAG_MANAGER) screen = Screen.HOME
