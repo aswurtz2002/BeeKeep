@@ -14,7 +14,6 @@ import android.os.Bundle
 import androidx.core.content.IntentCompat
 import java.io.IOException
 import java.nio.charset.StandardCharsets
-import java.util.Locale
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 
@@ -42,7 +41,7 @@ sealed interface NfcResult {
     data class Written(val info: NfcTagInfo) : NfcResult {
         val uid: String get() = info.uid
     }
-    data class Error(val message: String, val retryable: Boolean = false) : NfcResult
+    data class Error(val message: String) : NfcResult
 }
 
 class NfcController {
@@ -64,10 +63,6 @@ class NfcController {
     @Volatile private var knownHiveTagsReady: Boolean = false
     private var lastHandledUid: String? = null
     private var lastHandledAt = 0L
-    // An unassigned-tag prompt dismissed by the user must not immediately reappear
-    // just because the same tag is still resting against the phone. This latch is
-    // cleared by detecting a different tag or starting an explicit Scan/Write action.
-    @Volatile private var passiveSuppressedUid: String? = null
 
     private companion object {
         const val PASSIVE_REPEAT_DELAY_MS = 1_800L
@@ -88,20 +83,6 @@ class NfcController {
     fun rememberHandledUid(uid: String) {
         synchronized(passiveLock) {
             lastHandledUid = uid
-            lastHandledAt = System.currentTimeMillis()
-        }
-    }
-
-    /**
-     * Suppress passive rediscovery after the user cancels an unassigned-tag prompt.
-     * Reader mode can rediscover a tag as it is re-enabled while the tag is still
-     * physically present, so a short debounce alone is not enough for this flow.
-     */
-    fun suppressPassiveUid(uid: String) {
-        val normalizedUid = NfcUid.normalize(uid) ?: return
-        synchronized(passiveLock) {
-            passiveSuppressedUid = normalizedUid
-            lastHandledUid = normalizedUid
             lastHandledAt = System.currentTimeMillis()
         }
     }
@@ -234,10 +215,7 @@ class NfcController {
                     NfcResult.Error("This NFC tag is assigned to another hive. Nothing was written. Use NFC Tag Management to confirm reassignment.")
                 !allowConfirmedAssignment && isAssignedElsewhere(scannedUid) ->
                     NfcResult.Error("This NFC tag is assigned to another hive. Nothing was written. Use NFC Tag Management to confirm any reassignment.")
-                else -> when (val result = write(tag, text)) {
-                    is NfcResult.Error -> result.copy(retryable = isRetryableTagWriteError(result.message))
-                    else -> result
-                }
+                else -> write(tag, text)
             }
         }, onResult, ignoredUid)
     }
@@ -262,9 +240,6 @@ class NfcController {
         synchronized(passiveLock) {
             passiveReadGeneration.incrementAndGet()
             passiveReadInFlight.set(false)
-            // Explicit user-initiated scans are allowed to inspect even the last
-            // dismissed tag again.
-            passiveSuppressedUid = null
         }
         runCatching { nfc.disableReaderMode(activity) }
         passiveReaderActive = false
@@ -279,17 +254,11 @@ class NfcController {
                 ) return@enableReaderMode
                 if (delivered.compareAndSet(false, true)) {
                     val result = runCatching { operation(tag) }
-                        .getOrElse { e ->
-                            val message = friendlyError(e)
-                            NfcResult.Error(message, retryable = isRetryableTagWriteError(message))
-                        }
-                    // Remember the physical UID even when a write/read operation
-                    // failed. Otherwise passive reading immediately sees the same
-                    // still-held tag as unassigned and can reopen that dialog in a loop.
+                        .getOrElse { e -> NfcResult.Error(friendlyError(e)) }
                     when (result) {
                         is NfcResult.Read -> rememberHandledUid(result.uid)
                         is NfcResult.Written -> rememberHandledUid(result.uid)
-                        is NfcResult.Error -> NfcUid.normalize(uid(tag))?.let(::rememberHandledUid)
+                        is NfcResult.Error -> Unit
                     }
                     activity.runOnUiThread {
                         if (sessionGeneration != scanGeneration.get()) return@runOnUiThread
@@ -302,12 +271,7 @@ class NfcController {
                             try {
                                 onResult(result)
                             } finally {
-                                // A retryable write failure belongs to its Retry/Cancel
-                                // UI. Don't immediately hand the same tag to the passive
-                                // reader before Compose has updated that UI state.
-                                if (result !is NfcResult.Error || !result.retryable) {
-                                    enablePassiveIfNeeded(activity)
-                                }
+                                enablePassiveIfNeeded(activity)
                             }
                         }
                     }
@@ -370,29 +334,16 @@ class NfcController {
                             if (readGeneration != passiveReadGeneration.get()) {
                                 false
                             } else {
-                                val uidKey = NfcUid.normalize(result.uid)
-                                val suppressedUid = passiveSuppressedUid
-                                if (uidKey != null && suppressedUid == uidKey) {
-                                    // Keep this UID suppressed until another physical tag is
-                                    // seen or the user explicitly starts a scan/write flow.
-                                    lastHandledUid = uidKey
-                                    lastHandledAt = System.currentTimeMillis()
+                                val now = System.currentTimeMillis()
+                                if (lastHandledUid == result.uid && now - lastHandledAt < PASSIVE_REPEAT_DELAY_MS) {
+                                    // Refresh while the same tag is still present. This prevents a
+                                    // held tag from repeatedly reopening the same hive.
+                                    lastHandledAt = now
                                     false
                                 } else {
-                                    if (suppressedUid != null && uidKey != suppressedUid) {
-                                        passiveSuppressedUid = null
-                                    }
-                                    val now = System.currentTimeMillis()
-                                    if (lastHandledUid == result.uid && now - lastHandledAt < PASSIVE_REPEAT_DELAY_MS) {
-                                        // Refresh while the same tag is still present. This prevents a
-                                        // held tag from repeatedly reopening the same hive.
-                                        lastHandledAt = now
-                                        false
-                                    } else {
-                                        lastHandledUid = result.uid
-                                        lastHandledAt = now
-                                        true
-                                    }
+                                    lastHandledUid = result.uid
+                                    lastHandledAt = now
+                                    true
                                 }
                             }
                         }
@@ -648,7 +599,7 @@ class NfcController {
             is NfcResult.Written -> NfcResult.Read(written.info, BeeKeepNfcPayload.TAG_PAYLOAD)
             is NfcResult.Error -> result.copy(
                 launchPreparationError = written.message,
-                launchPreparationRetryable = isRetryableTagWriteError(written.message)
+                launchPreparationRetryable = true
             )
             is NfcResult.Read -> result
         }
@@ -687,37 +638,6 @@ class NfcController {
         } catch (_: Exception) {
             null
         }
-    }
-
-    private fun isRetryableTagWriteError(message: String): Boolean {
-        val normalized = message.lowercase(Locale.ROOT)
-        // Permanent capability/identity errors cannot be fixed by another tap.
-        val permanent = listOf(
-            "read-only",
-            "too small",
-            "cannot store ndef",
-            "invalid readable uid",
-            "does not expose a valid",
-            "assigned to another hive",
-            "linked to multiple hive records",
-            "not the assigned tag",
-            "only writes its generic tag marker"
-        )
-        if (permanent.any(normalized::contains)) return false
-
-        // NFC contact loss, connection errors, and post-write verification failures
-        // are transient or may succeed after the user holds the tag more steadily.
-        return listOf(
-            "moved away",
-            "communication failed",
-            "could not verify",
-            "tag was written, but",
-            "tag was formatted, but",
-            "try again",
-            "transceive",
-            "connection lost",
-            "could not complete the nfc operation"
-        ).any(normalized::contains)
     }
 
     private fun friendlyError(e: Throwable): String = when (e) {
