@@ -883,7 +883,9 @@ fun BeeKeepApp(
         // Use the same list order as the Apiary Hives screen, so NEXT follows the
         // order the beekeeper sees in that apiary instead of jumping to another yard.
         val currentApiaryHiveIndex = hivesInThisApiary.indexOfFirst { it.id == hiveForDetail.id }
-        val nextHiveInApiary = hivesInThisApiary.getOrNull(currentApiaryHiveIndex + 1)
+        val nextHiveInApiary = currentApiaryHiveIndex
+            .takeIf { it >= 0 }
+            ?.let { hivesInThisApiary.getOrNull(it + 1) }
         HiveDetailScreen(
             hive = hiveForDetail,
             nextHiveNumber = nextHiveInApiary?.number,
