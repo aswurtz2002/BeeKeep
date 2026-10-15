@@ -127,9 +127,10 @@ class NfcController {
         }
 
         val nfcAdapter = adapter ?: activity.getSystemService(NfcManager::class.java)?.defaultAdapter
-        if (tag != null && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.N) {
-            runCatching {
-                nfcAdapter?.ignore(
+        if (tag != null && nfcAdapter != null &&
+            android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.N) {
+            val ignoreResult = runCatching {
+                nfcAdapter.ignore(
                     tag,
                     UNASSIGNED_TAG_REMOVE_DEBOUNCE_MS,
                     NfcAdapter.OnTagRemovedListener {
@@ -146,6 +147,18 @@ class NfcController {
                     },
                     android.os.Handler(android.os.Looper.getMainLooper())
                 )
+            }
+            // ignore() returns false when the tag has already left the field. In that
+            // case there will be no removal callback, so release the latch now.
+            if (ignoreResult.getOrNull() == false) {
+                synchronized(passiveLock) {
+                    if (suppressedUnassignedUid == normalized) suppressedUnassignedUid = null
+                    if (lastHandledUid == normalized) {
+                        lastHandledUid = null
+                        lastHandledAt = 0L
+                    }
+                    if (unassignedPromptUid == normalized) unassignedPromptUid = null
+                }
             }
         }
         setPassiveReadingEnabled(activity, false)
