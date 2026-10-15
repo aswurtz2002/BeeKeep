@@ -64,6 +64,10 @@ class NfcController {
     private var lastHandledUid: String? = null
     private var lastHandledAt = 0L
 
+    // Fast assignment owns the reader handoff between adjacent hives. Keep the UID
+    // just assigned blocked until a different physical tag is discovered.
+    @Volatile private var fastAssignmentIgnoredUid: String? = null
+
     private companion object {
         const val PASSIVE_REPEAT_DELAY_MS = 1_800L
     }
@@ -84,6 +88,35 @@ class NfcController {
         synchronized(passiveLock) {
             lastHandledUid = uid
             lastHandledAt = System.currentTimeMillis()
+        }
+    }
+
+    fun suppressFastAssignmentUid(uid: String) {
+        val normalized = NfcUid.normalize(uid) ?: return
+        synchronized(passiveLock) {
+            fastAssignmentIgnoredUid = normalized
+        }
+    }
+
+    fun clearFastAssignmentIgnoredUid() {
+        synchronized(passiveLock) {
+            fastAssignmentIgnoredUid = null
+        }
+    }
+
+    private fun shouldIgnoreFastAssignmentUid(uid: String?): Boolean {
+        val normalized = NfcUid.normalize(uid) ?: return false
+        return synchronized(passiveLock) {
+            val blockedUid = fastAssignmentIgnoredUid
+            when {
+                blockedUid == null -> false
+                normalized == blockedUid -> true
+                else -> {
+                    // The next physical tag has arrived. It may now be handled normally.
+                    fastAssignmentIgnoredUid = null
+                    false
+                }
+            }
         }
     }
 
@@ -248,6 +281,10 @@ class NfcController {
         try {
             nfc.enableReaderMode(activity, { tag ->
                 if (!active.get() || sessionGeneration != scanGeneration.get()) return@enableReaderMode
+                val discoveredUid = runCatching { NfcUid.normalize(uid(tag)) }.getOrNull()
+                // Keep a controller-owned guard as well as the per-scan ignored UID, so
+                // a fast scan cannot process the prior hive's tag after a UI handoff.
+                if (shouldIgnoreFastAssignmentUid(discoveredUid)) return@enableReaderMode
                 // During fast assignment, ignore the previous UID without consuming this scan.
                 if (!ignoredUid.isNullOrBlank() &&
                     runCatching { NfcUid.matches(uid(tag), ignoredUid) }.getOrDefault(false)
@@ -317,11 +354,18 @@ class NfcController {
         try {
             nfc.enableReaderMode(activity, { tag ->
                 val readGeneration = passiveReadGeneration.get()
-                if (!activityResumed || active.get() ||
+                if (!activityResumed || active.get() || !passiveReadsEnabled ||
                     !passiveReadInFlight.compareAndSet(false, true)) {
                     return@enableReaderMode
                 }
                 try {
+                    // A callback already in flight when passive reading was disabled
+                    // must not clear the fast-assignment UID latch.
+                    if (!passiveReadsEnabled || readGeneration != passiveReadGeneration.get()) {
+                        return@enableReaderMode
+                    }
+                    val discoveredUid = runCatching { NfcUid.normalize(uid(tag)) }.getOrNull()
+                    if (shouldIgnoreFastAssignmentUid(discoveredUid)) return@enableReaderMode
                     val result = runCatching {
                         val readResult = read(tag)
                         if (readResult is NfcResult.Read) prepareTagForBeeKeep(tag, readResult) else readResult

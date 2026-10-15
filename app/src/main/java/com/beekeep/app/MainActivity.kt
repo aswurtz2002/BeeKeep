@@ -435,6 +435,9 @@ fun BeeKeepApp(
         if (nextUntaggedHive == null) {
             pendingAutoTagWriteHiveId = null
             pendingAutoTagWriteIgnoredUid = null
+            nfc.rememberHandledUid(justAssignedUid)
+            nfc.clearFastAssignmentIgnoredUid()
+            nfc.setPassiveReadingEnabled(activity, true)
             scope.launch {
                 snackbarHostState.showSnackbar(
                     "Fast tag assignment complete for ${currentHive.apiary}: no untagged hives remain after ${hiveReferenceName(currentHive.number)}."
@@ -445,6 +448,8 @@ fun BeeKeepApp(
 
         lastHiveTagSuccessHiveId = null
         lastHiveTagSuccessUid = null
+        nfc.suppressFastAssignmentUid(justAssignedUid)
+        nfc.setPassiveReadingEnabled(activity, false)
         pendingAutoTagWriteHiveId = nextUntaggedHive.id
         pendingAutoTagWriteIgnoredUid = justAssignedUid
         selectedHiveOpen = true
@@ -1055,8 +1060,17 @@ fun BeeKeepApp(
             harvests = harvests,
             nfc = nfc,
             activity = activity,
-            onBack = { selectedHiveOpen = false; vm.clearHive() },
+            onBack = {
+                nfc.stop(activity)
+                nfc.clearFastAssignmentIgnoredUid()
+                nfc.setPassiveReadingEnabled(activity, true)
+                selectedHiveOpen = false
+                vm.clearHive()
+            },
             onHome = {
+                nfc.stop(activity)
+                nfc.clearFastAssignmentIgnoredUid()
+                nfc.setPassiveReadingEnabled(activity, true)
                 pendingAutoStartVoiceHiveId = null
                 pendingInspectionHiveId = null
                 inspecting = false
@@ -1263,6 +1277,8 @@ fun BeeKeepApp(
                     if (!enabled) {
                         pendingAutoTagWriteHiveId = null
                         pendingAutoTagWriteIgnoredUid = null
+                        nfc.clearFastAssignmentIgnoredUid()
+                        nfc.setPassiveReadingEnabled(activity, true)
                     }
                 },
                 largeFieldText = largeFieldText,

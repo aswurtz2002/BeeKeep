@@ -135,6 +135,9 @@ internal fun HiveDetailScreen(
 
     fun startTagWriting(ignoredUid: String? = null) {
         if (hive.isDead || writeStatusType == "saving" || writeStatusType == "removing") return
+        // A write owns NFC until its database assignment finishes. Do not let the
+        // passive reader rediscover the newly written tag during that async gap.
+        nfc.setPassiveReadingEnabled(activity, false)
         writeStatusType = "waiting"
         writeStatus = "Ready to scan. Hold your NFC tag against the back of your phone and keep it still."
         nfc.startWrite(
@@ -156,7 +159,16 @@ internal fun HiveDetailScreen(
                             } else {
                                 error ?: "The tag was written, but its hive assignment could not be saved."
                             }
-                            if (success && fastTagAssignmentMode) onFastTagAssignmentSuccess(result.uid)
+                            if (success) {
+                                // Refresh the one-shot debounce from assignment completion,
+                                // not only from the physical write callback.
+                                nfc.rememberHandledUid(result.uid)
+                                if (fastTagAssignmentMode) {
+                                    onFastTagAssignmentSuccess(result.uid)
+                                } else {
+                                    nfc.setPassiveReadingEnabled(activity, true)
+                                }
+                            }
                         }
                     }
                     is NfcResult.Error -> {
@@ -172,7 +184,7 @@ internal fun HiveDetailScreen(
         )
     }
 
-    LaunchedEffect(hive.id, autoStartTagWriting) {
+    LaunchedEffect(hive.id, autoStartTagWriting, autoStartTagWritingIgnoreUid) {
         if (!autoStartTagWriting) return@LaunchedEffect
         if (!fastTagAssignmentMode) {
             onAutoTagWritingStarted()
@@ -187,6 +199,9 @@ internal fun HiveDetailScreen(
             writeStatus = "Fast tag assignment stopped because this hive already has an NFC tag. No tag was overwritten."
             onAutoTagWritingStarted()
         } else {
+            // Allow the previous tag to leave the reader field before arming the
+            // next hive. The controller also blocks that prior UID across sessions.
+            kotlinx.coroutines.delay(350L)
             startTagWriting(autoStartTagWritingIgnoreUid)
             onAutoTagWritingStarted()
         }
