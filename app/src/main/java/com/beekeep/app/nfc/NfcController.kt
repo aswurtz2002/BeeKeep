@@ -33,7 +33,8 @@ sealed interface NfcResult {
     data class Read(
         val info: NfcTagInfo,
         val text: String?,
-        val launchPreparationError: String? = null
+        val launchPreparationError: String? = null,
+        val launchPreparationRetryable: Boolean = false
     ) : NfcResult {
         val uid: String get() = info.uid
     }
@@ -55,6 +56,7 @@ class NfcController {
     private val passiveLock = Any()
     @Volatile private var activityResumed = false
     @Volatile private var passiveReaderActive = false
+    @Volatile private var passiveReadsEnabled = true
     @Volatile private var passiveReadListener: ((NfcResult.Read) -> Unit)? = null
     @Volatile private var knownHiveIdByTagUid: Map<String, Long> = emptyMap()
     @Volatile private var knownAmbiguousTagUids: Set<String> = emptySet()
@@ -103,6 +105,29 @@ class NfcController {
     fun isAvailable(): Boolean = adapter != null
     fun isEnabled(): Boolean = adapter?.isEnabled == true
     fun isScanning(): Boolean = active.get()
+
+    /**
+     * Explicit Scan and NFC Tag Management flows own their reads. Temporarily suspend
+     * passive reads there so a held tag cannot silently trigger a second write behind
+     * the retry/assignment UI.
+     */
+    fun setPassiveReadingEnabled(activity: Activity, enabled: Boolean) {
+        if (passiveReadsEnabled == enabled) {
+            if (enabled) enablePassiveIfNeeded(activity)
+            return
+        }
+        passiveReadsEnabled = enabled
+        if (!enabled) {
+            synchronized(passiveLock) {
+                passiveReadGeneration.incrementAndGet()
+                passiveReadInFlight.set(false)
+            }
+            runCatching { adapter?.disableReaderMode(activity) }
+            passiveReaderActive = false
+        } else if (activityResumed) {
+            enablePassiveIfNeeded(activity)
+        }
+    }
 
     /** Update the local UID-to-hive index before automatic tag writes are allowed. */
     fun updateKnownHiveTags(
@@ -284,7 +309,7 @@ class NfcController {
             NfcAdapter.FLAG_READER_NO_PLATFORM_SOUNDS
 
     private fun enablePassiveIfNeeded(activity: Activity) {
-        if (!activityResumed || active.get() || passiveReaderActive || !knownHiveTagsReady ||
+        if (!passiveReadsEnabled || !activityResumed || active.get() || passiveReaderActive || !knownHiveTagsReady ||
             passiveReadListener == null || activity.isFinishing || activity.isDestroyed) return
         val nfc = adapter ?: activity.getSystemService(NfcManager::class.java)?.defaultAdapter ?: return
         if (!nfc.isEnabled) return
@@ -572,7 +597,10 @@ class NfcController {
 
         return when (val written = write(tag, BeeKeepNfcPayload.TAG_PAYLOAD)) {
             is NfcResult.Written -> NfcResult.Read(written.info, BeeKeepNfcPayload.TAG_PAYLOAD)
-            is NfcResult.Error -> result.copy(launchPreparationError = written.message)
+            is NfcResult.Error -> result.copy(
+                launchPreparationError = written.message,
+                launchPreparationRetryable = true
+            )
             is NfcResult.Read -> result
         }
     }
