@@ -392,7 +392,6 @@ fun BeeKeepApp(
     var editingApiary by remember { mutableStateOf<Apiary?>(null) }
     var unassignedTagUid by rememberSaveable { mutableStateOf<String?>(null) }
     var nfcWriteRetryMessage by rememberSaveable { mutableStateOf<String?>(null) }
-    var hiveNfcWriteFlowActive by rememberSaveable { mutableStateOf(false) }
     var lastHiveTagSuccessHiveId by rememberSaveable { mutableStateOf<Long?>(null) }
     var lastHiveTagSuccessUid by rememberSaveable { mutableStateOf<String?>(null) }
     var unassignedTagOrigin by rememberSaveable { mutableStateOf(Screen.HOME) }
@@ -532,12 +531,10 @@ fun BeeKeepApp(
 
     // Scan and tag-management screens control when another NFC read happens.
     // In particular, do not retry a failed write passively while the Retry dialog is open.
-    androidx.compose.runtime.LaunchedEffect(screen, unassignedTagUid, nfcWriteRetryMessage, hiveNfcWriteFlowActive, nfc) {
+    androidx.compose.runtime.LaunchedEffect(screen, nfcWriteRetryMessage, nfc) {
         val passiveAllowed = screen != Screen.SCAN &&
             screen != Screen.TAG_MANAGER &&
-            unassignedTagUid == null &&
-            nfcWriteRetryMessage == null &&
-            !hiveNfcWriteFlowActive
+            nfcWriteRetryMessage == null
         nfc.setPassiveReadingEnabled(activity, passiveAllowed)
     }
 
@@ -655,14 +652,7 @@ fun BeeKeepApp(
                     }
                 }
             }
-            is NfcResult.Error -> {
-                if (result.retryable) {
-                    nfcWriteRetryMessage = result.message
-                    unassignedTagUid = null
-                } else {
-                    scope.launch { snackbarHostState.showSnackbar(result.message) }
-                }
-            }
+            is NfcResult.Error -> scope.launch { snackbarHostState.showSnackbar(result.message) }
             is NfcResult.Written -> Unit
         }
     }
@@ -791,10 +781,6 @@ fun BeeKeepApp(
             // Keep outside taps from dismissing this dialog and revealing the
             // scan screen underneath. Back and the explicit Cancel action exit safely.
             onDismissRequest = {
-                // Remember the dismissed UID before passive reading resumes. Otherwise
-                // the same tag can immediately reopen this dialog when it is still held
-                // against the phone.
-                nfc.suppressPassiveUid(uid)
                 unassignedTagUid = null
                 nfc.stop(activity)
                 scanning = false
@@ -836,9 +822,6 @@ fun BeeKeepApp(
                     }
                     TextButton(
                         onClick = {
-                            // Cancel means dismiss this tag for now. Passive NFC should
-                            // not rediscover it and reopen the same prompt in a loop.
-                            nfc.suppressPassiveUid(uid)
                             unassignedTagUid = null
                             nfc.stop(activity)
                             scanning = false
@@ -967,8 +950,6 @@ fun BeeKeepApp(
             },
             onBack = { pendingAutoStartVoiceHiveId = null; inspecting = false },
             onHome = {
-                nfc.stop(activity)
-                hiveNfcWriteFlowActive = false
                 pendingAutoStartVoiceHiveId = null
                 pendingInspectionHiveId = null
                 inspecting = false
@@ -1059,15 +1040,6 @@ fun BeeKeepApp(
             onFastTagAssignmentSuccess = { assignedUid ->
                 advanceToNextUntaggedHiveForFastAssignment(hiveForDetail, assignedUid)
             },
-            onNfcWriteFlowChanged = { active ->
-                hiveNfcWriteFlowActive = active
-                if (active) {
-                    // Never allow a failed tag write to leave an unassigned-tag
-                    // prompt queued behind the writer's retry dialog.
-                    unassignedTagUid = null
-                    nfcWriteRetryMessage = null
-                }
-            },
             nextHiveNumber = nextHiveInApiary?.number,
             onNextHive = {
                 nextHiveInApiary?.let { nextHive ->
@@ -1083,12 +1055,7 @@ fun BeeKeepApp(
             harvests = harvests,
             nfc = nfc,
             activity = activity,
-            onBack = {
-                nfc.stop(activity)
-                hiveNfcWriteFlowActive = false
-                selectedHiveOpen = false
-                vm.clearHive()
-            },
+            onBack = { selectedHiveOpen = false; vm.clearHive() },
             onHome = {
                 pendingAutoStartVoiceHiveId = null
                 pendingInspectionHiveId = null
