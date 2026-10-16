@@ -34,6 +34,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -68,6 +69,11 @@ internal fun FastTagAssignmentScreen(
     var canRetry by remember(hive.id) { mutableStateOf(false) }
     var resumeGeneration by remember(hive.id) { mutableIntStateOf(0) }
     val lifecycleOwner = LocalLifecycleOwner.current
+    // NFC callbacks can outlive a recomposition. Keep the writer connected to the
+    // latest hive list/assignment callbacks instead of an old captured snapshot.
+    val latestIsTagAssignedElsewhere by rememberUpdatedState(isTagAssignedElsewhere)
+    val latestOnAssignTag by rememberUpdatedState(onAssignTag)
+    val latestOnAssignmentSaved by rememberUpdatedState(onAssignmentSaved)
 
     // NFC ReaderMode is cancelled when Android pauses the activity. If the tag's
     // NDEF launch briefly interrupts BeeKeep, re-arm the writer after we resume.
@@ -101,20 +107,20 @@ internal fun FastTagAssignmentScreen(
             text = BeeKeepNfcPayload.TAG_PAYLOAD,
             targetHiveId = hive.id,
             ignoredUid = ignoredUid,
-            isAssignedElsewhere = { candidateUid -> isTagAssignedElsewhere(hive.id, candidateUid) },
+            isAssignedElsewhere = { candidateUid -> latestIsTagAssignedElsewhere(hive.id, candidateUid) },
             onResult = { result ->
                 when (result) {
                     is NfcResult.Written -> {
                         writeStage = "saving"
                         status = "Tag written. Saving the hive assignment…"
-                        onAssignTag(hive.id, result.uid) { success, error ->
+                        latestOnAssignTag(hive.id, result.uid) { success, error ->
                             if (success) {
                                 nfc.rememberHandledUid(result.uid)
                                 nfc.suppressFastAssignmentUid(result.uid)
                                 playNfcAssignmentSuccessFeedback(activity)
                                 writeStage = "done"
                                 status = "Saved. Moving to the next untagged hive…"
-                                onAssignmentSaved(result.uid)
+                                latestOnAssignmentSaved(result.uid)
                             } else {
                                 writeStage = "error"
                                 canRetry = true
@@ -125,7 +131,7 @@ internal fun FastTagAssignmentScreen(
                     is NfcResult.Read -> {
                         writeStage = "error"
                         canRetry = true
-                        status = if (isTagAssignedElsewhere(hive.id, result.uid)) {
+                        status = if (latestIsTagAssignedElsewhere(hive.id, result.uid)) {
                             "This tag is already assigned to another hive. Nothing was changed. Remove it and present an unassigned tag."
                         } else {
                             "The tag was detected but not written. Try a writable, unassigned NFC tag."
