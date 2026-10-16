@@ -69,6 +69,7 @@ internal fun FastTagAssignmentScreen(
     var writeStage by remember(hive.id) { mutableStateOf("preparing") }
     var retryCount by remember(hive.id) { mutableIntStateOf(0) }
     var canRetry by remember(hive.id) { mutableStateOf(false) }
+    var failureTitle by remember(hive.id) { mutableStateOf("⚠ TAG NOT ASSIGNED") }
     var resumeGeneration by remember(hive.id) { mutableIntStateOf(0) }
     var skipInProgress by remember(hive.id) { mutableStateOf(false) }
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -98,6 +99,7 @@ internal fun FastTagAssignmentScreen(
     LaunchedEffect(hive.id, ignoredUid, retryCount, resumeGeneration) {
         if (skipInProgress) return@LaunchedEffect
         canRetry = false
+        failureTitle = "⚠ TAG NOT ASSIGNED"
         writeStage = "preparing"
         status = "Checking that this hive still needs an NFC tag…"
 
@@ -165,8 +167,14 @@ internal fun FastTagAssignmentScreen(
                     is NfcResult.Read -> {
                         writeStage = "error"
                         canRetry = true
-                        status = if (latestIsTagAssignedElsewhere(hive.id, result.uid)) {
-                            "This tag is already assigned to another hive. Nothing was changed. Remove it and present an unassigned tag."
+                        val tagAlreadyAssigned = latestIsTagAssignedElsewhere(hive.id, result.uid)
+                        failureTitle = if (tagAlreadyAssigned) {
+                            "⚠ TAG ALREADY ASSIGNED"
+                        } else {
+                            "⚠ TAG NOT ASSIGNED"
+                        }
+                        status = if (tagAlreadyAssigned) {
+                            "This tag is already assigned to another hive. Nothing was written or changed. Remove it and present an unassigned tag."
                         } else {
                             "The tag was detected but not written. Try a writable, unassigned NFC tag."
                         }
@@ -174,7 +182,22 @@ internal fun FastTagAssignmentScreen(
                     is NfcResult.Error -> {
                         writeStage = "error"
                         canRetry = true
-                        status = result.message
+                        val tagAlreadyAssigned =
+                            result.message.contains("assigned to another hive", ignoreCase = true) ||
+                                result.message.contains("already assigned", ignoreCase = true) ||
+                                result.message.contains("linked to multiple hive records", ignoreCase = true)
+                        failureTitle = if (tagAlreadyAssigned) {
+                            "⚠ TAG ALREADY ASSIGNED"
+                        } else {
+                            "⚠ TAG NOT ASSIGNED"
+                        }
+                        status = if (!tagAlreadyAssigned) {
+                            result.message
+                        } else if (result.message.contains("multiple hive records", ignoreCase = true)) {
+                            "This NFC tag has conflicting hive assignments. Nothing was written. Repair the assignment in NFC Tag Management before using it."
+                        } else {
+                            "This NFC tag is already assigned to another hive. Nothing was written. Remove it and present an unassigned tag."
+                        }
                     }
                 }
             }
@@ -267,7 +290,7 @@ internal fun FastTagAssignmentScreen(
                 }
                 if (writeStage == "error") {
                     Text(
-                        "⚠ TAG NOT ASSIGNED",
+                        failureTitle,
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.ExtraBold,
                         color = MaterialTheme.colorScheme.error,
@@ -291,7 +314,13 @@ internal fun FastTagAssignmentScreen(
                 )
                 if (canRetry) {
                     Button(onClick = { retryCount++ }) {
-                        Text(if (writeStage == "check_error") "RETRY HIVE CHECK" else "RETRY TAG WRITE")
+                        Text(
+                            when {
+                                writeStage == "check_error" -> "RETRY HIVE CHECK"
+                                failureTitle.contains("TAG ALREADY ASSIGNED") -> "SCAN ANOTHER TAG"
+                                else -> "RETRY TAG WRITE"
+                            }
+                        )
                     }
                 }
             }
