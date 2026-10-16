@@ -23,6 +23,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.ChevronRight
+import androidx.compose.material.icons.rounded.KeyboardArrowDown
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
@@ -313,15 +314,15 @@ internal fun HomeScreen(
                 MetricCard("Hives", hives.size.toString(), Modifier.weight(1f))
             }
         }
+        item { HomeHelpMenu() }
         item {
             Row(
-                Modifier.fillMaxWidth().padding(top = 48.dp, bottom = 30.dp),
+                Modifier.fillMaxWidth().padding(top = 24.dp, bottom = 24.dp),
                 horizontalArrangement = Arrangement.Center
             ) {
                 HoneycombNfcIndicator(nfcEnabled = nfcEnabled)
             }
         }
-        item { HomeHelpMenu() }
     }
 }
 
@@ -384,21 +385,25 @@ private fun HomeHelpMenu() {
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { expanded = !expanded }
+                    .padding(vertical = 2.dp),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    Text("Help", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.ExtraBold, color = BeeKeepAccent)
-                    Text(
-                        if (expanded) "Choose a topic to see how it works." else "Need a hand? Open the quick guides.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                TextButton(onClick = { expanded = !expanded }) {
-                    Text(if (expanded) "MINIMIZE" else "SHOW HELP")
-                }
+                Text(
+                    "Help?",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.ExtraBold,
+                    color = BeeKeepAccent
+                )
+                Icon(
+                    imageVector = if (expanded) Icons.Rounded.KeyboardArrowDown else Icons.Rounded.ChevronRight,
+                    contentDescription = if (expanded) "Collapse help" else "Expand help",
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(26.dp)
+                )
             }
 
             if (expanded) {
