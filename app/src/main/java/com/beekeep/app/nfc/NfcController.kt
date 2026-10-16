@@ -342,6 +342,18 @@ class NfcController {
         }
     }
 
+    /**
+     * Check ownership using the same reconciled ledger/cache snapshot as NFC writes.
+     * Callers should not separately inspect Hive.tagUid, because old cached values
+     * can outlive a released assignment and otherwise produce false duplicate warnings.
+     */
+    fun isTagAssignedElsewhere(targetHiveId: Long, uid: String): Boolean {
+        val normalized = NfcUid.normalize(uid) ?: return false
+        if (normalized in knownAmbiguousTagUids) return true
+        val ownerHiveId = knownHiveIdByTagUid[normalized] ?: return false
+        return ownerHiveId != targetHiveId
+    }
+
     fun startRead(activity: Activity, onResult: (NfcResult) -> Unit) {
         start(activity, { tag -> read(tag) }, onResult)
     }
