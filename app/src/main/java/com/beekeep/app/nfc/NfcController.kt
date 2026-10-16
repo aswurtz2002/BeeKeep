@@ -42,7 +42,7 @@ sealed interface NfcResult {
     data class Written(val info: NfcTagInfo) : NfcResult {
         val uid: String get() = info.uid
     }
-    data class Error(val message: String) : NfcResult
+    data class Error(val message: String, val uid: String? = null) : NfcResult
 }
 
 class NfcController {
@@ -417,13 +417,13 @@ class NfcController {
                 scannedUid == null ->
                     NfcResult.Error("This tag does not expose a valid NFC UID. Nothing was written.")
                 expectedUid != null && !NfcUid.matches(scannedUid, expectedUid) ->
-                    NfcResult.Error("This is tag $scannedUid, not the assigned tag $expectedUid. Hold the same tag to write BeeKeep launch data.")
+                    NfcResult.Error("This is tag $scannedUid, not the assigned tag $expectedUid. Hold the same tag to write BeeKeep launch data.", uid = scannedUid)
                 !allowConfirmedAssignment && scannedUid in knownAmbiguousTagUids ->
-                    NfcResult.Error("This NFC UID is linked to multiple hive records. Nothing was written. Repair or confirm the assignment first.")
+                    NfcResult.Error("This NFC UID is linked to multiple hive records. Nothing was written. Repair or confirm the assignment first.", uid = scannedUid)
                 !allowConfirmedAssignment && knownHiveIdByTagUid[scannedUid] != null && knownHiveIdByTagUid[scannedUid] != targetHiveId ->
-                    NfcResult.Error("This NFC tag is assigned to another hive. Nothing was written. Use NFC Tag Management to confirm reassignment.")
+                    NfcResult.Error("This NFC tag is assigned to another hive. Nothing was written. Use NFC Tag Management to confirm reassignment.", uid = scannedUid)
                 !allowConfirmedAssignment && isAssignedElsewhere(scannedUid) ->
-                    NfcResult.Error("This NFC tag is assigned to another hive. Nothing was written. Use NFC Tag Management to confirm any reassignment.")
+                    NfcResult.Error("This NFC tag is assigned to another hive. Nothing was written. Use NFC Tag Management to confirm any reassignment.", uid = scannedUid)
                 else -> write(tag, text)
             }
         }, onResult, ignoredUid)
