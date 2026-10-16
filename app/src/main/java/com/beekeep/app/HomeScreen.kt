@@ -435,7 +435,7 @@ private fun HomeHelpMenu() {
                         )
                     }
                     if (index != topics.lastIndex) {
-                        androidx.compose.material3.HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
+                        Box(Modifier.fillMaxWidth().height(1.dp).background(MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f)))
                     }
                 }
             }
