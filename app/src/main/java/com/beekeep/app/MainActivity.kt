@@ -934,9 +934,9 @@ fun BeeKeepApp(
                 val assignedDistance = if (currentApiary?.latitude != null && currentApiary.longitude != null) {
                     distanceMeters(phoneLocation.latitude, phoneLocation.longitude, currentApiary.latitude, currentApiary.longitude)
                 } else Float.POSITIVE_INFINITY
-                // Ignore ordinary GPS drift. Only consider a move if the phone is
-                // clearly away from the assigned yard and close to another saved yard.
-                if (assignedDistance <= 100f) return@launch
+                // A different yard is the only reason to propose a move. Do not
+                // early-return merely because yards are close together: the phone can
+                // legitimately be within 100 m of both the current and target apiaries.
                 val nearestOther = apiaries
                     .filter { apiary -> currentApiary == null || apiary.id != currentApiary.id }
                     .mapNotNull { apiary ->
@@ -963,9 +963,9 @@ fun BeeKeepApp(
                     } else {
                         pendingApiaryMove = hive to targetApiary
                     }
-                } else if (currentApiary != null) {
+                } else if (currentApiary != null && assignedDistance > 100f) {
                     snackbarHostState.showSnackbar("${hiveReferenceName(hive.number)} is far from ${currentApiary.name}, but no other saved apiary GPS location is nearby. No changes made.")
-                } else {
+                } else if (currentApiary == null) {
                     snackbarHostState.showSnackbar("No saved apiary GPS location is close enough to identify a destination. No changes made.")
                 }
             }
