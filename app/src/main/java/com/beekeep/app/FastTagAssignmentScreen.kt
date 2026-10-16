@@ -21,6 +21,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Nfc
 import androidx.compose.material.icons.rounded.TaskAlt
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -28,6 +29,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -70,6 +72,10 @@ internal fun FastTagAssignmentScreen(
     var retryCount by remember(hive.id) { mutableIntStateOf(0) }
     var canRetry by remember(hive.id) { mutableStateOf(false) }
     var failureTitle by remember(hive.id) { mutableStateOf("⚠ TAG NOT ASSIGNED") }
+    // Keep an error latched across NFC-triggered Activity pause/resume events.
+    // Otherwise the reader's resume effect can reset a warning before the user sees it.
+    var failureSticky by remember(hive.id) { mutableStateOf(false) }
+    var showAssignedTagDialog by remember(hive.id) { mutableStateOf(false) }
     var resumeGeneration by remember(hive.id) { mutableIntStateOf(0) }
     var skipInProgress by remember(hive.id) { mutableStateOf(false) }
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -97,7 +103,9 @@ internal fun FastTagAssignmentScreen(
     BackHandler { onCancel() }
 
     LaunchedEffect(hive.id, ignoredUid, retryCount, resumeGeneration) {
-        if (skipInProgress) return@LaunchedEffect
+        // On resume, preserve failures instead of silently re-arming and clearing them.
+        // Only an explicit Retry / Scan Another Tag action may reset this state.
+        if (skipInProgress || failureSticky) return@LaunchedEffect
         canRetry = false
         failureTitle = "⚠ TAG NOT ASSIGNED"
         writeStage = "preparing"
@@ -108,6 +116,7 @@ internal fun FastTagAssignmentScreen(
             if (check.isFailure) {
                 writeStage = "check_error"
                 canRetry = true
+                failureSticky = true
                 status = "Could not verify this hive's current NFC assignment. No tag was written. Retry the check."
                 return false
             }
@@ -160,6 +169,8 @@ internal fun FastTagAssignmentScreen(
                             } else {
                                 writeStage = "error"
                                 canRetry = true
+                                failureSticky = true
+                                failureTitle = "⚠ TAG NOT ASSIGNED"
                                 status = "TAG NOT ASSIGNED to ${hiveReferenceName(hive.number)}. The physical tag may have been written, but BeeKeep did not save the hive assignment. ${error ?: "Retry the assignment or use another unassigned tag."}"
                             }
                         }
@@ -167,7 +178,9 @@ internal fun FastTagAssignmentScreen(
                     is NfcResult.Read -> {
                         writeStage = "error"
                         canRetry = true
+                        failureSticky = true
                         val tagAlreadyAssigned = latestIsTagAssignedElsewhere(hive.id, result.uid)
+                        showAssignedTagDialog = tagAlreadyAssigned
                         failureTitle = if (tagAlreadyAssigned) {
                             "⚠ TAG ALREADY ASSIGNED"
                         } else {
@@ -182,6 +195,7 @@ internal fun FastTagAssignmentScreen(
                     is NfcResult.Error -> {
                         writeStage = "error"
                         canRetry = true
+                        failureSticky = true
                         val tagAlreadyAssigned =
                             result.message.contains("assigned to another hive", ignoreCase = true) ||
                                 result.message.contains("already assigned", ignoreCase = true) ||
@@ -191,6 +205,7 @@ internal fun FastTagAssignmentScreen(
                         } else {
                             "⚠ TAG NOT ASSIGNED"
                         }
+                        showAssignedTagDialog = tagAlreadyAssigned
                         status = if (!tagAlreadyAssigned) {
                             result.message
                         } else if (result.message.contains("multiple hive records", ignoreCase = true)) {
@@ -199,6 +214,31 @@ internal fun FastTagAssignmentScreen(
                             "This NFC tag is already assigned to another hive. Nothing was written. Remove it and present an unassigned tag."
                         }
                     }
+                }
+            }
+        )
+    }
+
+    if (showAssignedTagDialog) {
+        AlertDialog(
+            onDismissRequest = { /* Keep the warning visible until the user chooses another tag. */ },
+            title = {
+                Text("⚠ TAG ALREADY ASSIGNED", fontWeight = FontWeight.ExtraBold)
+            },
+            text = {
+                Text(
+                    "This physical NFC tag is already assigned to another hive. BeeKeep did not overwrite it or change any hive assignment. Remove it, then scan a different, unassigned tag for ${hiveReferenceName(hive.number)}."
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showAssignedTagDialog = false
+                        failureSticky = false
+                        retryCount++
+                    }
+                ) {
+                    Text("SCAN ANOTHER TAG", fontWeight = FontWeight.Bold)
                 }
             }
         )
@@ -313,7 +353,11 @@ internal fun FastTagAssignmentScreen(
                     color = if (writeStage == "error") MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
                 )
                 if (canRetry) {
-                    Button(onClick = { retryCount++ }) {
+                    Button(onClick = {
+                        showAssignedTagDialog = false
+                        failureSticky = false
+                        retryCount++
+                    }) {
                         Text(
                             when {
                                 writeStage == "check_error" -> "RETRY HIVE CHECK"
