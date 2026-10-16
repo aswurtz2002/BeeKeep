@@ -102,25 +102,22 @@ class LocalHiveRepository(context: Context) {
 
     suspend fun getHive(id: Long): Hive? = withContext(Dispatchers.IO) { db.hives().get(id)?.let(::toHive) }
     suspend fun getAllKnownNfcTagAssignments(): List<Pair<String?, Long>> = withContext(Dispatchers.IO) {
-        val ledgerAssignments = db.nfcTagAssignments().allActiveAssignments()
-            .map { it.tagUid to it.hiveId }
-        val legacyHiveCache = db.hives().allForBackup()
-            .filter { !it.deleted && !it.tagUid.isNullOrBlank() }
-            .map { it.tagUid to it.id }
-        ledgerAssignments + legacyHiveCache
+        NfcAssignmentResolver.currentOwners(
+            assignmentHistory = db.nfcTagAssignments().allForBackup(),
+            hiveCache = db.hives().allForBackup()
+        )
     }
 
     suspend fun findHiveByNfc(tag: String): Hive? = withContext(Dispatchers.IO) {
         val uid = NfcUid.normalize(tag) ?: return@withContext null
-        // Normalize stored legacy values in Kotlin as well as incoming scans. SQL NOCASE
-        // handles case but cannot equate old "AA:BB" / "AA-BB" strings with "AABB".
-        val ledgerOwners = db.nfcTagAssignments().allActiveAssignments()
-            .filter { NfcUid.matches(it.tagUid, uid) }
-            .map { it.hiveId }
-        val cachedOwners = db.hives().allForBackup()
-            .filter { !it.deleted && NfcUid.matches(it.tagUid, uid) }
-            .map { it.id }
-        val owners = (ledgerOwners + cachedOwners).distinct()
+        // Use one consistent owner index for scans, duplicate checks and writes.
+        // The assignment ledger wins over stale cached tag_uid values from older builds.
+        val owners = NfcAssignmentResolver.currentOwners(
+            assignmentHistory = db.nfcTagAssignments().allForBackup(),
+            hiveCache = db.hives().allForBackup()
+        ).filter { NfcUid.matches(it.first, uid) }
+            .map { it.second }
+            .distinct()
         // Refuse ambiguous identifiers rather than choosing a hive by query order.
         if (owners.size != 1) return@withContext null
         db.hives().get(owners.single())
@@ -130,13 +127,13 @@ class LocalHiveRepository(context: Context) {
 
     suspend fun isNfcTagAmbiguous(uid: String): Boolean = withContext(Dispatchers.IO) {
         val normalized = NfcUid.normalize(uid) ?: return@withContext false
-        val ledgerOwners = db.nfcTagAssignments().allActiveAssignments()
-            .filter { NfcUid.matches(it.tagUid, normalized) }
-            .map { it.hiveId }
-        val cachedOwners = db.hives().allForBackup()
-            .filter { !it.deleted && NfcUid.matches(it.tagUid, normalized) }
-            .map { it.id }
-        (ledgerOwners + cachedOwners).distinct().size > 1
+        NfcAssignmentResolver.currentOwners(
+            assignmentHistory = db.nfcTagAssignments().allForBackup(),
+            hiveCache = db.hives().allForBackup()
+        ).filter { NfcUid.matches(it.first, normalized) }
+            .map { it.second }
+            .distinct()
+            .size > 1
     }
 
     suspend fun isNfcTagUnassigned(uid: String): Boolean = withContext(Dispatchers.IO) {
@@ -435,13 +432,21 @@ class LocalHiveRepository(context: Context) {
             val hive = db.hives().get(hiveId) ?: throw IllegalArgumentException("Hive not found.")
             require(hive.status == HiveStatus.ACTIVE) { "Cannot assign an NFC tag to a ${hive.status.lowercase()} colony." }
 
-            val tagConflicts = db.nfcTagAssignments().allActiveAssignments()
-                .filter { NfcUid.matches(it.tagUid, normalized) }
-            val cachedOwners = db.hives().allForBackup()
+            val assignmentHistory = db.nfcTagAssignments().allForBackup()
+            val ledgerHistoryHiveIds = assignmentHistory.map { it.hiveId }.toSet()
+            val ledgerHistoryUids = assignmentHistory.mapNotNull { NfcUid.normalize(it.tagUid) }.toSet()
+            val tagConflicts = assignmentHistory
+                .filter { it.isActive && NfcUid.matches(it.tagUid, normalized) }
+            val matchingCacheOwners = db.hives().allForBackup()
                 .filter { !it.deleted && it.id != hiveId && NfcUid.matches(it.tagUid, normalized) }
+            // A cache-only owner is valid only for a hive and UID never tracked by
+            // the ledger. Closed ledger rows explicitly mean the tag was released.
+            val cachedOwners = matchingCacheOwners.filter {
+                it.id !in ledgerHistoryHiveIds && normalized !in ledgerHistoryUids
+            }
             val ledgerOwners = tagConflicts.map { it.hiveId }.toSet()
             val legacyOnlyOwners = cachedOwners.filter { it.id !in ledgerOwners }
-            val foreignOwnerIds = (tagConflicts.map { it.hiveId } + cachedOwners.map { it.id })
+            val foreignOwnerIds = (tagConflicts.map { it.hiveId } + legacyOnlyOwners.map { it.id })
                 .distinct()
                 .filter { it != hiveId }
             if (foreignOwnerIds.isNotEmpty() && !reassign) {
@@ -457,10 +462,21 @@ class LocalHiveRepository(context: Context) {
                 tagConflicts.single().hiveId == hiveId &&
                 targetAssignments.size == 1 &&
                 NfcUid.matches(targetAssignments.single().tagUid, normalized) &&
-                cachedOwners.isEmpty()
+                matchingCacheOwners.isEmpty()
             if (alreadyCorrect) return@withTransaction
 
             val now = System.currentTimeMillis()
+
+            // Clear stale copies of this UID only after the ledger confirms that no
+            // other hive currently owns it. A released UID must be reusable even if
+            // an older hive row still contains its former tag_uid cache value.
+            matchingCacheOwners.forEach { cachedHive ->
+                db.hives().refreshTagCache(cachedHive.id)
+                val refreshed = db.hives().get(cachedHive.id) ?: return@forEach
+                val repaired = refreshed.copy(updatedAt = now)
+                db.hives().upsert(repaired)
+                enqueue("hive", cachedHive.id, "upsert", hivePayload(repaired))
+            }
             // Close every active ledger conflict, rather than trusting LIMIT 1 lookups.
             val rowsToClose = (tagConflicts + targetAssignments).distinctBy { it.id }
             rowsToClose.forEach { assignment ->
