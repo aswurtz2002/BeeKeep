@@ -140,8 +140,13 @@ internal fun FastTagAssignmentScreen(
         if (!verifyTargetHive()) return@LaunchedEffect
 
         writeStage = "waiting"
-        // Leave the status area clear while scanning; it is reserved for warnings and results.
-        status = ""
+        // Keep the scanning instruction visible for the entire wait. It should not
+        // disappear after the short NFC handoff delay; the next result replaces it.
+        status = if (ignoredUid.isNullOrBlank()) {
+            "Hold the back of your phone near an unassigned NFC tag."
+        } else {
+            "Remove the previous tag, then hold the back of your phone near a new, unassigned tag."
+        }
         nfc.beginFastAssignmentFlow(activity)
         nfc.startWrite(
             activity = activity,
