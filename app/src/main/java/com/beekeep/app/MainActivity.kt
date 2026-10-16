@@ -530,8 +530,12 @@ fun BeeKeepApp(
     val ready by vm.ready.collectAsStateWithLifecycle()
 
     fun advanceToNextUntaggedHiveForFastAssignment(currentHive: Hive, justAssignedUid: String) {
-        // Fast assignment is a session, not a series of Hive Detail page visits.
-        if (!fastTagAssignmentMode && !fastAssignmentSessionActive) {
+        // Use live session state and durable session markers. A callback can arrive
+        // after a recomposition/activity handoff, so captured UI values alone must not
+        // decide that an active assignment run has ended.
+        val persistedSessionActive = autoVoicePrefs.getBoolean("fast_tag_session_active", false) ||
+            autoVoicePrefs.getBoolean("fast_tag_session_screen_active", false)
+        if (!fastAssignmentSessionActive && !fastAssignmentScreenActive && !persistedSessionActive) {
             fastAssignmentSessionActive = false
             return
         }
@@ -542,58 +546,68 @@ fun BeeKeepApp(
         pendingAutoStartVoiceHiveId = null
         inspecting = false
 
-        val apiaryName = fastAssignmentApiaryName ?: currentHive.apiary
+        val apiaryName = fastAssignmentApiaryName
+            ?: autoVoicePrefs.getString("fast_tag_session_apiary", null)
+            ?: currentHive.apiary
         fastAssignmentApiaryName = apiaryName
-        // Room's hive list can update a moment after the assignment callback.
-        // Remember IDs completed in this run so stale state can never select them again.
+
+        // Mark this hive complete before refreshing Room so a delayed emission cannot
+        // make the same hive eligible again.
         val assignedInThisRun = fastAssignmentAssignedHiveIds + currentHive.id
         fastAssignmentAssignedHiveIds = assignedInThisRun
 
-        val apiaryHives = hives.filter {
-            it.apiary.equals(apiaryName, ignoreCase = true) && !it.isDead
-        }
-        val currentIndex = apiaryHives.indexOfFirst { it.id == currentHive.id }
-        val nextCandidates = if (currentIndex >= 0) {
-            apiaryHives.drop(currentIndex + 1) + apiaryHives.take(currentIndex)
-        } else {
-            apiaryHives
-        }
-        val nextUntaggedHive = nextCandidates.firstOrNull { hive ->
-            hive.id != currentHive.id &&
-                hive.id !in assignedInThisRun &&
-                hive.tagUid.isNullOrBlank()
-        }
-
-        // The detail page is no longer the host for a fast-assignment run.
         selectedHiveOpen = false
         pendingAutoTagWriteHiveId = null
         pendingAutoTagWriteIgnoredUid = null
         vm.clearHive()
         nfc.rememberHandledUid(justAssignedUid)
         nfc.suppressFastAssignmentUid(justAssignedUid)
+        // Keep Fast Tag Assignment as the exclusive NFC owner while resolving the next hive.
+        nfc.beginFastAssignmentFlow(activity)
 
-        if (nextUntaggedHive == null) {
-            nfc.finishFastAssignmentFlow(activity, preserveLastUid = true)
-            fastAssignmentSessionActive = false
-            fastAssignmentScreenActive = false
-            fastAssignmentCurrentHiveId = null
-            fastAssignmentApiaryName = null
-            fastAssignmentIgnoredUid = null
-            fastAssignmentAssignedHiveIds = emptySet()
-            scope.launch {
+        scope.launch {
+            // Room is authoritative. The StateFlow list can lag behind the assignment
+            // transaction, and a long-lived NFC callback can otherwise use an old snapshot.
+            val latestHives = runCatching { vm.getHivesSnapshot() }
+                .getOrElse { vm.hives.value.ifEmpty { hives } }
+            val apiaryHives = latestHives.filter {
+                it.apiary.equals(apiaryName, ignoreCase = true) && !it.isDead
+            }
+            val currentIndex = apiaryHives.indexOfFirst { it.id == currentHive.id }
+            val nextCandidates = if (currentIndex >= 0) {
+                apiaryHives.drop(currentIndex + 1) + apiaryHives.take(currentIndex)
+            } else {
+                apiaryHives
+            }
+            val nextUntaggedHive = nextCandidates.firstOrNull { hive ->
+                hive.id != currentHive.id &&
+                    hive.id !in assignedInThisRun &&
+                    hive.tagUid.isNullOrBlank()
+            }
+
+            // A Stop action must win over a slow snapshot lookup; never revive a cancelled run.
+            if (!fastAssignmentSessionActive && !fastAssignmentScreenActive) return@launch
+
+            if (nextUntaggedHive == null) {
+                nfc.finishFastAssignmentFlow(activity, preserveLastUid = true)
+                fastAssignmentSessionActive = false
+                fastAssignmentScreenActive = false
+                fastAssignmentCurrentHiveId = null
+                fastAssignmentApiaryName = null
+                fastAssignmentIgnoredUid = null
+                fastAssignmentAssignedHiveIds = emptySet()
                 snackbarHostState.showSnackbar(
                     "Fast tag assignment complete for $apiaryName. No untagged hives remain."
                 )
+                return@launch
             }
-            return
-        }
 
-        lastHiveTagSuccessHiveId = null
-        lastHiveTagSuccessUid = null
-        nfc.beginFastAssignmentFlow(activity)
-        fastAssignmentCurrentHiveId = nextUntaggedHive.id
-        fastAssignmentIgnoredUid = justAssignedUid
-        fastAssignmentScreenActive = true
+            lastHiveTagSuccessHiveId = null
+            lastHiveTagSuccessUid = null
+            fastAssignmentCurrentHiveId = nextUntaggedHive.id
+            fastAssignmentIgnoredUid = justAssignedUid
+            fastAssignmentScreenActive = true
+        }
     }
 
     fun startFastTagAssignmentFromHive(requestedHive: Hive) {

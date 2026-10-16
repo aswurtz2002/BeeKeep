@@ -90,6 +90,9 @@ class BeeKeepViewModel(
 
     suspend fun findHiveByTag(tag: String): Hive? = repo.findHiveByNfc(tag)
 
+    /** Reads the current Room hive list instead of relying on a possibly stale UI StateFlow snapshot. */
+    suspend fun getHivesSnapshot(): List<Hive> = repo.observeHives().first()
+
     suspend fun isNfcTagAmbiguous(uid: String): Boolean = repo.isNfcTagAmbiguous(uid)
 
     suspend fun getAllKnownNfcTagAssignments(): List<Pair<String?, Long>> =
