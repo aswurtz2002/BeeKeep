@@ -69,6 +69,8 @@ internal fun FastTagAssignmentScreen(
     var writeStage by remember(hive.id) { mutableStateOf("preparing") }
     var retryCount by remember(hive.id) { mutableIntStateOf(0) }
     var canRetry by remember(hive.id) { mutableStateOf(false) }
+    var autoRearmCount by remember(hive.id) { mutableIntStateOf(0) }
+    var rejectedUid by remember(hive.id) { mutableStateOf<String?>(null) }
     var failureTitle by remember(hive.id) { mutableStateOf("⚠ TAG NOT ASSIGNED") }
     // Keep an error latched across NFC-triggered Activity pause/resume events.
     // Otherwise the reader's resume effect can reset a warning before the user sees it.
@@ -83,6 +85,7 @@ internal fun FastTagAssignmentScreen(
     val latestOnHiveSkipped by rememberUpdatedState(onHiveSkipped)
     val latestOnAssignTag by rememberUpdatedState(onAssignTag)
     val latestOnAssignmentSaved by rememberUpdatedState(onAssignmentSaved)
+    val latestRejectedUid by rememberUpdatedState(rejectedUid)
 
     // NFC ReaderMode is cancelled when Android pauses the activity. If the tag's
     // NDEF launch briefly interrupts BeeKeep, re-arm the writer after we resume.
@@ -135,7 +138,7 @@ internal fun FastTagAssignmentScreen(
         } else {
             "Remove the previous tag, then present a new unassigned tag."
         }
-        delay(900L)
+        delay(if (retryCount == 0) 900L else 350L)
 
         // A tag may have been assigned while the reader handoff delay was running.
         // Recheck immediately before starting the physical NFC writer.
@@ -154,7 +157,7 @@ internal fun FastTagAssignmentScreen(
             activity = activity,
             text = BeeKeepNfcPayload.TAG_PAYLOAD,
             targetHiveId = hive.id,
-            ignoredUid = ignoredUid,
+            ignoredUid = latestRejectedUid ?: ignoredUid,
             isAssignedElsewhere = { candidateUid -> latestIsTagAssignedElsewhere(hive.id, candidateUid) },
             onResult = { result ->
                 when (result) {
@@ -180,44 +183,68 @@ internal fun FastTagAssignmentScreen(
                     }
                     is NfcResult.Read -> {
                         writeStage = "error"
-                        canRetry = true
                         failureSticky = true
                         val tagAlreadyAssigned = latestIsTagAssignedElsewhere(hive.id, result.uid)
                         failureTitle = if (tagAlreadyAssigned) {
+                            rejectedUid = result.uid
+                            canRetry = false
+                            autoRearmCount++
                             "⚠ TAG ALREADY ASSIGNED"
                         } else {
+                            canRetry = true
                             "⚠ TAG NOT ASSIGNED"
                         }
                         status = if (tagAlreadyAssigned) {
-                            "This tag is already assigned to another hive. Nothing was written or changed. Remove it and present an unassigned tag."
+                            "This tag is already assigned to another hive. Nothing was written or changed. Remove it and present a new, unassigned tag."
                         } else {
                             "The tag was detected but not written. Try a writable, unassigned NFC tag."
                         }
                     }
                     is NfcResult.Error -> {
                         writeStage = "error"
-                        canRetry = true
                         failureSticky = true
                         val tagAlreadyAssigned =
                             result.message.contains("assigned to another hive", ignoreCase = true) ||
                                 result.message.contains("already assigned", ignoreCase = true) ||
                                 result.message.contains("linked to multiple hive records", ignoreCase = true)
                         failureTitle = if (tagAlreadyAssigned) {
+                            if (!result.uid.isNullOrBlank()) {
+                                rejectedUid = result.uid
+                                canRetry = false
+                                autoRearmCount++
+                            } else {
+                                // If the reader could not identify the rejected UID, keep manual recovery
+                                // available rather than risking an immediate repeat of the same tag.
+                                canRetry = true
+                            }
                             "⚠ TAG ALREADY ASSIGNED"
                         } else {
+                            canRetry = true
                             "⚠ TAG NOT ASSIGNED"
                         }
                         status = if (!tagAlreadyAssigned) {
                             result.message
                         } else if (result.message.contains("multiple hive records", ignoreCase = true)) {
-                            "This NFC tag has conflicting hive assignments. Nothing was written. Repair the assignment in NFC Tag Management before using it."
+                            "This NFC tag has conflicting hive assignments. Nothing was written. Remove it and present a new tag; repair the conflict in NFC Tag Management before assigning it."
                         } else {
-                            "This NFC tag is already assigned to another hive. Nothing was written. Remove it and present an unassigned tag."
+                            "This NFC tag is already assigned to another hive. Nothing was written. Remove it and present a new, unassigned tag."
                         }
                     }
                 }
             }
         )
+    }
+
+    // A rejected tag should show its warning briefly, then return to scanning by itself.
+    // The UID stays blocked, so leaving the same tag against the phone cannot loop the warning.
+    LaunchedEffect(hive.id, autoRearmCount) {
+        if (autoRearmCount == 0) return@LaunchedEffect
+        delay(800L)
+        if (!skipInProgress) {
+            failureSticky = false
+            canRetry = false
+            retryCount++
+        }
     }
 
     val isFailure = writeStage == "error" || writeStage == "check_error"
@@ -379,7 +406,7 @@ internal fun FastTagAssignmentScreen(
                     color = statusContent
                 )
 
-                if (canRetry) {
+                if (canRetry && !failureTitle.contains("TAG ALREADY ASSIGNED")) {
                     Button(
                         onClick = {
                             failureSticky = false
