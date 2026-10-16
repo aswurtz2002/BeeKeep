@@ -1381,7 +1381,7 @@ fun BeeKeepApp(
                                 if (normalizedUid == null || assignments == null) {
                                     onResult(
                                         false,
-                                        "BeeKeep could not verify the saved tag assignment. No success confirmation was played."
+                                        "BeeKeep could not verify that the tag assignment was saved. Check the hive’s tag status before trying again."
                                     )
                                 } else {
                                     val index = NfcUidIndex.fromAssignments(assignments)
@@ -1394,7 +1394,7 @@ fun BeeKeepApp(
                                     if (normalizedUid in index.ambiguousUids || verifiedOwner != hiveId) {
                                         onResult(
                                             false,
-                                            "BeeKeep could not confirm that this tag belongs to ${hiveReferenceName(hives.firstOrNull { it.id == hiveId }?.number ?: hiveId.toString())}. No success confirmation was played."
+                                            "BeeKeep could not confirm that this tag is assigned to ${hiveReferenceName(hives.firstOrNull { it.id == hiveId }?.number ?: hiveId.toString())}. Check the hive’s tag status before scanning again."
                                         )
                                     } else {
                                         onResult(true, null)
