@@ -336,39 +336,39 @@ private fun HomeHelpMenu() {
     val topics = remember {
         listOf(
             HelpTopic("Apiaries and hives", listOf(
-                "Open Apiaries to set up the places where you keep your bees. Give each apiary its own name.",
-                "Choose an apiary to see its hives. Add your hives there so each colony has its own page and records.",
-                "Open a hive whenever you need to inspect it or review its past activity."
+                "Open Apiaries and add each place where you keep bees. Give each apiary its own name.",
+                "Select an apiary to see its hives. Add hives there so each colony has its own page and records.",
+                "Open a hive to inspect it or review its activity history."
             )),
             HelpTopic("NFC tags and Fast Tag Mode", listOf(
-                "Open Settings and turn on Fast tag assignment mode if you want to tag several hives in a row.",
-                "Scan an unassigned tag and follow the prompt to assign it to an existing hive or create a new hive. In fast mode, follow the on-screen steps before scanning the next tag.",
-                "Later, scan an assigned tag to open its hive. NFC must be enabled on your phone. Voice options for scans can also be changed in Settings."
+                "Turn on Fast tag assignment mode in Settings when you want to assign tags to several hives in a row.",
+                "Scan an unassigned tag, then choose an existing hive or create a new one. In fast mode, follow the prompts before scanning the next tag.",
+                "Scan an assigned tag to open its hive. Make sure NFC is enabled on your phone. You can change the voice options for scans in Settings."
             )),
             HelpTopic("Inspections and field notes", listOf(
                 "Open a hive and tap Inspect to record what you find during a visit.",
-                "Fill in the sections you use, such as mite wash, brood and stores, queen status, and health flags. Add field notes or a photo when useful.",
-                "Save the inspection, then check the hive's Records or Recent Activity to find it again. If something looks missing, reopen the record before moving on."
+                "Fill in the sections you use, such as mite wash, brood and stores, queen status, and health flags. Add field notes as needed.",
+                "Review your entries, then save the inspection. You can find past entries under Records or Recent Activity."
             )),
             HelpTopic("Feeding, treatments, harvests and records", listOf(
-                "Open a hive to find its actions. Use Feed, Treat, or Harvest to record that work against the correct colony.",
-                "Use Records and Recent Activity to review earlier work, inspections, and other hive events.",
-                "Keep each action attached to the hive you worked on so its history stays together."
+                "From a hive page, use Feed, Treat, or Harvest to log work for that colony.",
+                "Open Records or Recent Activity to review previous inspections and other hive activity.",
+                "Keep each entry on the correct hive so its history stays together."
             )),
             HelpTopic("Map and apiary locations", listOf(
-                "Use Map on the Home screen to see your saved apiary locations.",
+                "Tap Map in the bottom navigation bar to view your saved apiary locations.",
                 "When adding or editing an apiary, use the location option to save its GPS position. Allow location access when Android asks.",
-                "Use My Location on the map to return to where your phone is. GPS accuracy can vary with signal and surroundings."
+                "Tap My Location on the map to find your current position. GPS accuracy depends on signal and surroundings."
             )),
             HelpTopic("Voice notes", listOf(
-                "Allow microphone access if you want to dictate notes. You can still type notes instead.",
-                "In Settings, choose whether voice recording starts after an NFC hive scan. Entering Inspect manually does not need to start recording.",
-                "You can adjust the ready beep and spoken hive number there too. Check the transcribed note before finishing if speech was unclear."
+                "Allow microphone access to dictate notes. You can type notes instead if you prefer.",
+                "In Settings, choose whether voice recording starts after an NFC hive scan. Opening Inspect manually will not start recording automatically.",
+                "Use the same settings to turn the ready beep on or off and choose whether BeeKeep speaks the hive number. Check transcribed notes for errors before saving."
             )),
             HelpTopic("Settings, backups and sync", listOf(
-                "Settings contains display options, NFC and voice behaviour, field text options, and permission checks.",
-                "Use the backup options to export your data or restore a backup. Read the confirmation carefully before restoring.",
-                "If cloud sync is set up, sign in and use Sync Now when needed. A backup is still a useful extra copy of your records."
+                "Settings includes display options, NFC and voice behaviour, text size, and permission checks.",
+                "Use the backup controls to export your data or restore a backup. Read the confirmation before you continue.",
+                "If BeeKeep Cloud is configured, sign in and use Sync Now to sync your records. Keep an exported backup as an extra copy."
             ))
         )
     }
@@ -417,7 +417,7 @@ private fun HomeHelpMenu() {
                                 when (index) {
                                     0 -> "Organize your apiaries and colonies"
                                     1 -> "Assign tags and scan hives"
-                                    2 -> "Record inspections, notes and photos"
+                                    2 -> "Record inspections and field notes"
                                     3 -> "Log hive work and find past records"
                                     4 -> "Save and view apiary GPS locations"
                                     5 -> "Set up hands-free voice notes"
