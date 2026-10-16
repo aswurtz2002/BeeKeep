@@ -7,14 +7,16 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.ArrowBack
@@ -218,24 +220,56 @@ internal fun FastTagAssignmentScreen(
         )
     }
 
+    val isFailure = writeStage == "error" || writeStage == "check_error"
+    val isActive = writeStage == "preparing" || writeStage == "waiting" || writeStage == "saving"
+    val statusContainer = when {
+        isFailure -> MaterialTheme.colorScheme.errorContainer
+        writeStage == "done" -> MaterialTheme.colorScheme.primaryContainer
+        writeStage == "waiting" -> MaterialTheme.colorScheme.secondaryContainer
+        else -> MaterialTheme.colorScheme.surfaceVariant
+    }
+    val statusContent = when {
+        isFailure -> MaterialTheme.colorScheme.onErrorContainer
+        writeStage == "done" -> MaterialTheme.colorScheme.onPrimaryContainer
+        writeStage == "waiting" -> MaterialTheme.colorScheme.onSecondaryContainer
+        else -> MaterialTheme.colorScheme.onSurfaceVariant
+    }
+    val statusHeading = when (writeStage) {
+        "preparing" -> "CHECKING TARGET HIVE"
+        "waiting" -> "READY FOR TAG"
+        "saving" -> "SAVING ASSIGNMENT"
+        "done" -> "ASSIGNMENT SAVED"
+        "check_error" -> "⚠ HIVE CHECK FAILED"
+        "error" -> failureTitle
+        else -> "FAST TAG ASSIGNMENT"
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
             .safeDrawingPadding()
             .background(MaterialTheme.colorScheme.background)
-            .padding(20.dp),
-        verticalArrangement = Arrangement.spacedBy(18.dp)
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            OutlinedButton(onClick = onCancel) {
+            OutlinedButton(
+                onClick = onCancel,
+                modifier = Modifier.heightIn(min = 52.dp),
+                shape = RoundedCornerShape(16.dp)
+            ) {
                 IconBack()
                 Text("Stop")
             }
-            Column(modifier = Modifier.weight(1f)) {
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(2.dp)
+            ) {
                 Text(
                     "Fast Tag Assignment",
                     style = MaterialTheme.typography.titleLarge,
@@ -251,94 +285,118 @@ internal fun FastTagAssignmentScreen(
 
         Card(
             modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(28.dp),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+            shape = RoundedCornerShape(24.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.primaryContainer
+            ),
+            elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
         ) {
             Column(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp)
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 18.dp, vertical = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(5.dp)
             ) {
                 Text(
-                    "CURRENT HIVE",
+                    "HIVE TO TAG",
                     style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.primary,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer,
                     fontWeight = FontWeight.Bold
                 )
                 Text(
                     hiveReferenceName(hive.number),
-                    style = MaterialTheme.typography.headlineMedium,
-                    fontWeight = FontWeight.ExtraBold
+                    style = MaterialTheme.typography.headlineLarge,
+                    fontWeight = FontWeight.ExtraBold,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer
                 )
-                Text(
-                    hive.apiary,
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(7.dp)
+                ) {
+                    androidx.compose.material3.Icon(
+                        imageVector = Icons.Rounded.Nfc,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp),
+                        tint = MaterialTheme.colorScheme.onPrimaryContainer
+                    )
+                    Text(
+                        hive.apiary,
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                    )
+                }
             }
         }
 
-        Box(
-            modifier = Modifier.fillMaxWidth().weight(1f),
-            contentAlignment = Alignment.Center
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(28.dp),
+            colors = CardDefaults.cardColors(containerColor = statusContainer),
+            elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
         ) {
             Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp, vertical = 22.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(18.dp)
+                verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
-                if (writeStage == "preparing" || writeStage == "waiting" || writeStage == "saving") {
+                if (isActive) {
                     HoneycombNfcIndicator(
                         nfcEnabled = nfc.isEnabled(),
                         size = 112.dp
                     )
                 } else {
                     androidx.compose.material3.Icon(
-                        imageVector = if (writeStage == "done") Icons.Rounded.TaskAlt else Icons.Rounded.Nfc,
-                        contentDescription = null,
-                        tint = if (writeStage == "error" || writeStage == "check_error") MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(62.dp)
-                    )
-                }
-                if (writeStage == "error") {
-                    Text(
-                        failureTitle,
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.ExtraBold,
-                        color = MaterialTheme.colorScheme.error,
-                        textAlign = TextAlign.Center
-                    )
-                } else if (writeStage == "check_error") {
-                    Text(
-                        "⚠ HIVE CHECK FAILED",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.ExtraBold,
-                        color = MaterialTheme.colorScheme.error,
-                        textAlign = TextAlign.Center
-                    )
-                }
-                if (status.isNotBlank()) {
-                    Text(
-                        status,
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold,
-                        textAlign = TextAlign.Center,
-                        color = if (writeStage == "error" || writeStage == "check_error") {
-                            MaterialTheme.colorScheme.error
+                        imageVector = if (writeStage == "done") {
+                            Icons.Rounded.TaskAlt
                         } else {
-                            MaterialTheme.colorScheme.onSurface
-                        }
+                            Icons.Rounded.Nfc
+                        },
+                        contentDescription = null,
+                        tint = statusContent,
+                        modifier = Modifier.size(56.dp)
                     )
                 }
+
+                Text(
+                    statusHeading,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.ExtraBold,
+                    color = statusContent,
+                    textAlign = TextAlign.Center
+                )
+
+                Text(
+                    status,
+                    style = MaterialTheme.typography.bodyLarge,
+                    fontWeight = if (writeStage == "waiting" || isFailure) {
+                        FontWeight.SemiBold
+                    } else {
+                        FontWeight.Medium
+                    },
+                    textAlign = TextAlign.Center,
+                    color = statusContent
+                )
+
                 if (canRetry) {
-                    Button(onClick = {
-                        failureSticky = false
-                        retryCount++
-                    }) {
+                    Button(
+                        onClick = {
+                            failureSticky = false
+                            retryCount++
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 56.dp),
+                        shape = RoundedCornerShape(16.dp)
+                    ) {
                         Text(
                             when {
                                 writeStage == "check_error" -> "RETRY HIVE CHECK"
                                 failureTitle.contains("TAG ALREADY ASSIGNED") -> "SCAN ANOTHER TAG"
                                 else -> "RETRY TAG WRITE"
-                            }
+                            },
+                            fontWeight = FontWeight.ExtraBold
                         )
                     }
                 }
@@ -346,11 +404,13 @@ internal fun FastTagAssignmentScreen(
         }
 
         Text(
-            "Fast tag assignment can make mistakes.",
+            "Use a writable, unassigned tag. Keep it near the back of your phone until BeeKeep confirms the assignment.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center,
-            modifier = Modifier.fillMaxWidth()
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 8.dp, vertical = 2.dp)
         )
     }
 }
