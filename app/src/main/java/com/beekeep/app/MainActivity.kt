@@ -536,6 +536,10 @@ fun BeeKeepApp(
         ) return
 
         nfc.beginFastAssignmentFlow(activity)
+        selectedHiveOpen = false
+        pendingAutoTagWriteHiveId = null
+        pendingAutoTagWriteIgnoredUid = null
+        vm.clearHive()
         scope.launch {
             val latestHives = runCatching { vm.getHivesSnapshot() }.getOrNull()
             if (latestHives == null) {
@@ -1462,7 +1466,7 @@ fun BeeKeepApp(
                 fastAssignmentSessionActive = true
                 fastAssignmentApiaryName = hiveForDetail.apiary
                 fastAssignmentAssignedHiveIds = emptySet()
-                fastAssignmentCurrentHiveId = null
+                fastAssignmentCurrentHiveId = hiveForDetail.id
                 fastAssignmentIgnoredUid = null
                 fastAssignmentScreenActive = false
                 (activity as? MainActivity)?.pendingNfcResult?.value = null
@@ -1472,6 +1476,9 @@ fun BeeKeepApp(
             },
             onFastTagAssignmentSuccess = { assignedUid ->
                 advanceToNextUntaggedHiveForFastAssignment(hiveForDetail, assignedUid)
+            },
+            onFastTagAssignmentSkip = { skippedHiveId, reason ->
+                skipFastAssignmentHive(skippedHiveId, reason)
             },
             nextHiveNumber = nextHiveInApiary?.number,
             onNextHive = {
