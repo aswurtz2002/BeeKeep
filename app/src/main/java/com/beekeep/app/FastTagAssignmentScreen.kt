@@ -10,7 +10,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -25,7 +24,6 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
@@ -281,8 +279,8 @@ internal fun FastTagAssignmentScreen(
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
         ) {
             Column(
-                modifier = Modifier.fillMaxWidth().padding(22.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
                 Text(
                     "CURRENT HIVE",
@@ -300,10 +298,6 @@ internal fun FastTagAssignmentScreen(
                     style = MaterialTheme.typography.bodyLarge,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                Text(
-                    "Present one unassigned tag. BeeKeep will save it and move to the next untagged hive automatically.",
-                    style = MaterialTheme.typography.bodyMedium
-                )
             }
         }
 
@@ -316,9 +310,9 @@ internal fun FastTagAssignmentScreen(
                 verticalArrangement = Arrangement.spacedBy(18.dp)
             ) {
                 if (writeStage == "preparing" || writeStage == "waiting" || writeStage == "saving") {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(62.dp),
-                        strokeWidth = 5.dp
+                    HoneycombNfcIndicator(
+                        nfcEnabled = nfc.isEnabled(),
+                        size = 112.dp
                     )
                 } else {
                     androidx.compose.material3.Icon(
@@ -371,7 +365,7 @@ internal fun FastTagAssignmentScreen(
         }
 
         Text(
-            "No hive details or Inspection page will open during this sequence.",
+            "Fast tag assignment can make mistakes.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center,
