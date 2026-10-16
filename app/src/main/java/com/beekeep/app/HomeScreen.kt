@@ -329,7 +329,7 @@ private data class HelpTopic(val title: String, val steps: List<String>)
 
 @Composable
 private fun HomeHelpMenu() {
-    var expanded by remember { mutableStateOf(true) }
+    var expanded by remember { mutableStateOf(false) }
     var selectedTopicIndex by remember { mutableIntStateOf(-1) }
     var stepIndex by remember { mutableIntStateOf(0) }
 
@@ -341,7 +341,7 @@ private fun HomeHelpMenu() {
                 "Open a hive to inspect it or review its activity history."
             )),
             HelpTopic("NFC tags and Fast Tag Mode", listOf(
-                "Turn on Fast tag assignment mode in Settings when you want to assign tags to several hives in a row.",
+                "Turn on Fast tag assignment mode in Settings when you want to assign tags to multiple hives quickly.",
                 "Scan an unassigned tag, then choose an existing hive or create a new one. In fast mode, follow the prompts before scanning the next tag.",
                 "Scan an assigned tag to open its hive. Make sure NFC is enabled on your phone. You can change the voice options for scans in Settings."
             )),
