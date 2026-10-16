@@ -561,6 +561,25 @@ fun BeeKeepApp(
                 (!fastAssignmentSessionActive && !fastAssignmentScreenActive)
             ) return@launch
 
+            val latestAssignments = runCatching { vm.getAllKnownNfcTagAssignments() }.getOrNull()
+            if (latestAssignments == null) {
+                nfc.finishFastAssignmentFlow(activity, preserveLastUid = true)
+                fastAssignmentSessionActive = false
+                fastAssignmentScreenActive = false
+                fastAssignmentCurrentHiveId = null
+                fastAssignmentApiaryName = null
+                fastAssignmentIgnoredUid = null
+                fastAssignmentAssignedHiveIds = emptySet()
+                snackbarHostState.showSnackbar(
+                    "Fast Tag Assignment stopped. BeeKeep could not verify the NFC assignment ledger, so no further tag will be written."
+                )
+                return@launch
+            }
+            val alreadyAssignedHiveIds = latestAssignments
+                .filter { !it.first.isNullOrBlank() }
+                .map { it.second }
+                .toSet()
+
             val skippedHive = latestHives.firstOrNull { it.id == skippedHiveId }
             val apiaryName = fastAssignmentApiaryName
                 ?: skippedHive?.apiary
@@ -578,6 +597,7 @@ fun BeeKeepApp(
             val nextHive = candidates.firstOrNull { candidate ->
                 candidate.id != skippedHiveId &&
                     candidate.id !in fastAssignmentAssignedHiveIds &&
+                    candidate.id !in alreadyAssignedHiveIds &&
                     candidate.tagUid.isNullOrBlank()
             }
             val skippedLabel = skippedHive?.let { hiveReferenceName(it.number) }
@@ -646,8 +666,25 @@ fun BeeKeepApp(
         scope.launch {
             // Room is authoritative. The StateFlow list can lag behind the assignment
             // transaction, and a long-lived NFC callback can otherwise use an old snapshot.
-            val latestHives = runCatching { vm.getHivesSnapshot() }
-                .getOrElse { vm.hives.value.ifEmpty { hives } }
+            val latestHives = runCatching { vm.getHivesSnapshot() }.getOrNull()
+            val latestAssignments = runCatching { vm.getAllKnownNfcTagAssignments() }.getOrNull()
+            if (latestHives == null || latestAssignments == null) {
+                nfc.finishFastAssignmentFlow(activity, preserveLastUid = true)
+                fastAssignmentSessionActive = false
+                fastAssignmentScreenActive = false
+                fastAssignmentCurrentHiveId = null
+                fastAssignmentApiaryName = null
+                fastAssignmentIgnoredUid = null
+                fastAssignmentAssignedHiveIds = emptySet()
+                snackbarHostState.showSnackbar(
+                    "Hive tag was saved, but Fast Tag Assignment stopped because BeeKeep could not verify the latest hive/tag records. No further tag will be written."
+                )
+                return@launch
+            }
+            val alreadyAssignedHiveIds = latestAssignments
+                .filter { !it.first.isNullOrBlank() }
+                .map { it.second }
+                .toSet()
             val apiaryHives = latestHives.filter {
                 it.apiary.equals(apiaryName, ignoreCase = true) && !it.isDead
             }
@@ -660,6 +697,7 @@ fun BeeKeepApp(
             val nextUntaggedHive = nextCandidates.firstOrNull { hive ->
                 hive.id != currentHive.id &&
                     hive.id !in assignedInThisRun &&
+                    hive.id !in alreadyAssignedHiveIds &&
                     hive.tagUid.isNullOrBlank()
             }
 
@@ -1304,10 +1342,15 @@ fun BeeKeepApp(
                 },
                 checkHiveSkipReason = { hiveId ->
                     val latestHive = vm.getHivesSnapshot().firstOrNull { it.id == hiveId }
+                    val assignedHiveIds = vm.getAllKnownNfcTagAssignments()
+                        .filter { !it.first.isNullOrBlank() }
+                        .map { it.second }
+                        .toSet()
                     when {
                         latestHive == null -> "it no longer exists in the active hive records"
                         latestHive.isDead -> "the colony is marked dead"
-                        !latestHive.tagUid.isNullOrBlank() -> "it already has an NFC tag assigned"
+                        !latestHive.tagUid.isNullOrBlank() || hiveId in assignedHiveIds ->
+                            "it already has an NFC tag assigned"
                         else -> null
                     }
                 },
