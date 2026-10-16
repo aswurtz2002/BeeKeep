@@ -18,8 +18,8 @@ class LocationController(context: Context) {
     private val appContext = context.applicationContext
 
     private companion object {
-        const val MAX_CACHED_AGE_NANOS = 120_000_000_000L
-        const val MAX_ACCEPTABLE_ACCURACY_METERS = 150f
+        const val MAX_CACHED_AGE_NANOS = 60_000_000_000L
+        const val MAX_ACCEPTABLE_ACCURACY_METERS = 50f
     }
 
     fun hasPermission(): Boolean =
