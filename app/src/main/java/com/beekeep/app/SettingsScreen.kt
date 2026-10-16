@@ -560,7 +560,7 @@ if (backupMessage.isNotBlank()) Text(backupMessage, color = if (backupMessage.st
                             color = MaterialTheme.colorScheme.error
                         )
                         Text(
-                            "Delete all hives, records, photos and NFC assignments",
+                            "Delete all hives, records and NFC assignments",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.error.copy(alpha = 0.86f)
                         )
@@ -674,7 +674,7 @@ if (backupMessage.isNotBlank()) Text(backupMessage, color = if (backupMessage.st
                         val count = restorePreview.counts[key] ?: 0
                         if (count > 0) Text("• $label: $count", style = MaterialTheme.typography.bodySmall)
                     }
-                    Text("This merges records. Newer records already on this phone are kept; local-only records are not deleted. Photo files are not included.", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+                    Text("This merges records. Newer records already on this phone are kept; local-only records are not deleted.", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
                 }
             },
             confirmButton = {

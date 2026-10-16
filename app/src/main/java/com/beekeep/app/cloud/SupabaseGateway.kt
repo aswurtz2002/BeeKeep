@@ -150,23 +150,6 @@ class SupabaseGateway(
                     .put("updated_at", resetAt)
                     .put("deleted", true)
 
-                if (row.entity_type == "photo") {
-                    val cloudPath = existingPayload.optString("cloud_path").takeIf { it.isNotBlank() }
-                    if (cloudPath != null) {
-                        payload.put("cloud_path", cloudPath)
-                        val alreadyRemoved = existingPayload.optBoolean("cloud_deleted", false)
-                        val storageRemoved = if (alreadyRemoved) true else try {
-                            supabase.storage["inspection-photos"].delete(cloudPath)
-                            true
-                        } catch (cancelled: CancellationException) {
-                            throw cancelled
-                        } catch (_: Throwable) {
-                            false
-                        }
-                        if (storageRemoved) payload.put("cloud_deleted", true)
-                    }
-                }
-
                 row.copy(
                     payload = payload.toString(),
                     updated_at = resetAt,
@@ -242,31 +225,6 @@ class SupabaseGateway(
         }
     }
 
-    suspend fun uploadPendingPhotos(): CloudResult {
-        val supabase = client ?: return CloudResult.NotConfigured
-        val session = supabase.auth.currentSessionOrNull() ?: return CloudResult.NotSignedIn
-        return try {
-            val userId = session.user?.id ?: return CloudResult.NotSignedIn
-            val pending = repository.pendingPhotos(10)
-            val bucket = supabase.storage["inspection-photos"]
-            for (photo in pending) {
-                val file = java.io.File(photo.localPath)
-                if (!file.exists()) {
-                    repository.markPhotoError(photo.id, "Local photo file is missing")
-                    continue
-                }
-                val cloudPath = "$userId/hive-${photo.hiveId}/inspection-${photo.inspectionId}-${photo.id}.jpg"
-                bucket.upload(cloudPath, file.readBytes()) { upsert = true }
-                repository.markPhotoUploaded(photo.id, cloudPath)
-            }
-            CloudResult.Success
-        } catch (t: CancellationException) {
-            throw t
-        } catch (t: Throwable) {
-            CloudResult.Failure(t.message ?: "Photo upload failed")
-        }
-    }
-
     suspend fun syncNow(): CloudResult = syncMutex.withLock {
         if (!configured || client == null) return@withLock CloudResult.NotConfigured
         val session = client.auth.currentSessionOrNull() ?: run {
@@ -313,15 +271,7 @@ class SupabaseGateway(
             }
 
             val remote = client.from("beekeep_documents").select().decodeList<CloudDocumentRow>()
-            deleteCloudPhotos(remote, userId)
             remote.forEach { repository.applyCloudDocument(it) }
-
-            // Photos are synchronized after their inspection metadata. Local inspection saves never depend on this.
-            when (val photoResult = uploadPendingPhotos()) {
-                CloudResult.Success -> Unit
-                CloudResult.NotConfigured, CloudResult.NotSignedIn -> Unit
-                is CloudResult.Failure -> throw IllegalStateException(photoResult.message)
-            }
 
             repository.pruneSync()
             val now = System.currentTimeMillis()
@@ -339,30 +289,6 @@ class SupabaseGateway(
         } catch (t: Throwable) {
             _account.value = _account.value.copy(syncing = false, error = t.message ?: "Sync failed")
             CloudResult.Failure(t.message ?: "Sync failed")
-        }
-    }
-
-    private suspend fun deleteCloudPhotos(rows: List<CloudDocumentRow>, userId: String) {
-        val supabase = client ?: return
-        for (row in rows) {
-            if (row.user_id != userId || !row.deleted || row.entity_type != "photo") continue
-            val payload = runCatching { JSONObject(row.payload) }.getOrNull() ?: continue
-            if (payload.optBoolean("cloud_deleted", false)) continue
-            val path = payload.optString("cloud_path").takeIf { it.isNotBlank() } ?: continue
-            try {
-                supabase.storage["inspection-photos"].delete(path)
-                val marked = row.copy(
-                    payload = payload.put("cloud_deleted", true).toString()
-                )
-                supabase.from("beekeep_documents").upsert(listOf(marked)) {
-                    onConflict = "user_id,entity_type,entity_id"
-                }
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (_: Throwable) {
-                // Leave the tombstone unmarked. The next sync retries storage cleanup
-                // without blocking synchronization of the remaining hive data.
-            }
         }
     }
 

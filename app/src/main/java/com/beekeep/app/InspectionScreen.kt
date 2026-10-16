@@ -315,7 +315,8 @@ internal fun InspectionScreen(
     onRecordBeeCountChange: (Long, Double, Double) -> Unit,
     onBack: () -> Unit,
     onHome: () -> Unit,
-    onSave: suspend (Inspection) -> Unit
+    onSave: suspend (Inspection) -> Boolean,
+    onSaved: () -> Unit
 ) {
     val haptic = LocalHapticFeedback.current
     val context = LocalContext.current
@@ -468,6 +469,9 @@ internal fun InspectionScreen(
     var voicePartialText by rememberSaveable(hive.id) { mutableStateOf("") }
     var saving by rememberSaveable(hive.id) { mutableStateOf(false) }
     var saveError by rememberSaveable(hive.id) { mutableStateOf("") }
+    // This mutable state object is captured directly by onDispose so a successful-save
+    // transition is visible immediately, even if the parent removes this screen right away.
+    val discardSavedFormDraftOnDispose = remember(hive.id) { mutableStateOf(false) }
     var showBeeCountHistory by rememberSaveable(hive.id) { mutableStateOf(false) }
 
     val currentFormDraft = InspectionFormDraft(
@@ -515,7 +519,11 @@ internal fun InspectionScreen(
         val formDraftForThisHive = latestFormDraft
         val finalizeThisHiveBeeCount = finalizeBeeCountHistory
         onDispose {
-            saveInspectionFormDraft(formDraftPrefs, hiveIdForDraft, formDraftForThisHive.value)
+            if (discardSavedFormDraftOnDispose.value) {
+                formDraftPrefs.edit { remove("hive_${hiveIdForDraft}") }
+            } else {
+                saveInspectionFormDraft(formDraftPrefs, hiveIdForDraft, formDraftForThisHive.value)
+            }
             finalizeThisHiveBeeCount()
         }
     }
@@ -840,14 +848,22 @@ internal fun InspectionScreen(
                                         val now = System.currentTimeMillis()
                                         val inspection = Inspection(
                                             IdGenerator.nextLong(), hive.id, now, ColonyStrength.storedFromGrade(strength), queen, mites,
-                                            sample.coerceAtLeast(1), notes.trim(), null, lat, lon,
+                                            sample.coerceAtLeast(1), notes.trim(), lat, lon,
                                             emergency, supercedure, swarm, eggs, openBrood, cappedBrood,
                                             honey, pollen, emptyComb, diseasesCsv,
                                             beeCountFrames = beeCountHalfSteps / 2.0
                                         )
                                         scope.launch {
                                             try {
-                                                onSave(inspection)
+                                                val saved = onSave(inspection)
+                                                if (saved) {
+                                                    // Clear only after durable save succeeds; keep the independent note draft.
+                                                    discardSavedFormDraftOnDispose.value = true
+                                                    formDraftPrefs.edit { remove("hive_${hive.id}") }
+                                                    onSaved()
+                                                } else {
+                                                    saveError = "Could not save inspection. Your field screen is still open; try again."
+                                                }
                                             } catch (cancelled: kotlinx.coroutines.CancellationException) {
                                                 throw cancelled
                                             } catch (error: Exception) {

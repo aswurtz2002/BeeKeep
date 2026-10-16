@@ -249,7 +249,7 @@ internal fun HiveDetailScreen(
         AlertDialog(
             onDismissRequest = { confirmDead = false },
             title = { Text("Mark colony dead?", fontWeight = FontWeight.ExtraBold) },
-            text = { Text("${hiveReferenceName(hive.number)} will move to colony history. All inspections, treatments, feedings, harvests and photos stay attached. Its NFC tag is released for reuse.") },
+            text = { Text("${hiveReferenceName(hive.number)} will move to colony history. All inspections, treatments, feedings and harvest records stay attached. Its NFC tag is released for reuse.") },
             confirmButton = { TextButton(onClick = { confirmDead = false; onMarkDead() }) { Text("MARK DEAD", fontWeight = FontWeight.ExtraBold, color = MaterialTheme.colorScheme.error) } },
             dismissButton = { TextButton(onClick = { confirmDead = false }) { Text("CANCEL") } }
         )

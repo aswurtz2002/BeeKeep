@@ -86,7 +86,6 @@ data class InspectionEntity(
     @ColumnInfo(name = "mite_count") val miteCount: Int,
     @ColumnInfo(name = "sample_size") val sampleSize: Int,
     val notes: String,
-    @ColumnInfo(name = "photo_path") val photoPath: String? = null,
     val latitude: Double? = null,
     val longitude: Double? = null,
     @ColumnInfo(name = "emergency_cells") val emergencyCells: Int = 0,
@@ -193,21 +192,6 @@ data class TaskEntity(
 
 
 
-@Entity(
-    tableName = "inspection_photos",
-    indices = [Index(value = ["hive_id", "created_at"]), Index(value = ["inspection_id", "created_at"]), Index(value = ["sync_state", "created_at"])]
-)
-data class PhotoEntity(
-    @PrimaryKey val id: Long,
-    @ColumnInfo(name = "hive_id") val hiveId: Long,
-    @ColumnInfo(name = "inspection_id") val inspectionId: Long,
-    @ColumnInfo(name = "local_path") val localPath: String,
-    @ColumnInfo(name = "cloud_path") val cloudPath: String? = null,
-    @ColumnInfo(name = "created_at") val createdAt: Long = System.currentTimeMillis(),
-    @ColumnInfo(name = "sync_state") val syncState: String = "pending",
-    @ColumnInfo(name = "last_error") val lastError: String? = null
-)
-
 // UI-facing domain models.
 data class Hive(
     val id: Long,
@@ -239,7 +223,6 @@ data class Inspection(
     val miteCount: Int,
     val sampleSize: Int,
     val notes: String,
-    val photoPath: String? = null,
     val latitude: Double? = null,
     val longitude: Double? = null,
     val emergencyCells: Int = 0,
