@@ -18,8 +18,8 @@ import android.os.VibratorManager
 fun playNfcAssignmentSuccessFeedback(context: Context) {
     runCatching {
         val tone = ToneGenerator(AudioManager.STREAM_NOTIFICATION, 75)
-        if (tone.startTone(ToneGenerator.TONE_PROP_ACK, 170)) {
-            Handler(Looper.getMainLooper()).postDelayed({ runCatching { tone.release() } }, 220L)
+        if (tone.startTone(ToneGenerator.TONE_PROP_PROMPT, 200)) {
+            Handler(Looper.getMainLooper()).postDelayed({ runCatching { tone.release() } }, 250L)
         } else {
             tone.release()
         }
