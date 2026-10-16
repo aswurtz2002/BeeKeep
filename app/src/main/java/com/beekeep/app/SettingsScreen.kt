@@ -588,7 +588,7 @@ if (backupMessage.isNotBlank()) Text(backupMessage, color = if (backupMessage.st
             title = { Text("Reset all apiaries?", fontWeight = FontWeight.ExtraBold) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("This permanently deletes every apiary and hive, along with inspections, notes, feedings, treatments, harvests, activity history, photos, tasks and all NFC tag assignments.")
+                    Text("This permanently deletes every apiary and hive, along with inspections, notes, feedings, treatments, harvests, activity history, tasks and all NFC tag assignments.")
                     Text(
                         "This cannot be undone. BeeKeep Cloud data for the signed-in account will also be cleared when cloud access is available.",
                         color = MaterialTheme.colorScheme.error,
