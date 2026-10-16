@@ -2,6 +2,9 @@ package com.beekeep.app
 
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
+import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -63,10 +66,25 @@ internal fun FastTagAssignmentScreen(
     var writeStage by remember(hive.id) { mutableStateOf("preparing") }
     var retryCount by remember(hive.id) { mutableIntStateOf(0) }
     var canRetry by remember(hive.id) { mutableStateOf(false) }
+    var resumeGeneration by remember(hive.id) { mutableIntStateOf(0) }
+    val lifecycleOwner = LocalLifecycleOwner.current
+
+    // NFC ReaderMode is cancelled when Android pauses the activity. If the tag's
+    // NDEF launch briefly interrupts BeeKeep, re-arm the writer after we resume.
+    androidx.compose.runtime.DisposableEffect(lifecycleOwner, hive.id) {
+        var initialResumeSeen = false
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                if (initialResumeSeen) resumeGeneration++ else initialResumeSeen = true
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
 
     BackHandler { onCancel() }
 
-    LaunchedEffect(hive.id, ignoredUid, retryCount) {
+    LaunchedEffect(hive.id, ignoredUid, retryCount, resumeGeneration) {
         canRetry = false
         writeStage = "preparing"
         status = if (ignoredUid.isNullOrBlank()) {

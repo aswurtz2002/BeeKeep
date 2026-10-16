@@ -310,6 +310,13 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
     }
 
     private fun handleNfcIntent(intent: Intent?) {
+        // While fast tagging is enabled, never interpret an Android NFC launch intent
+        // as a request to navigate to Inspection. ReaderMode owns the physical tag;
+        // this preference guard also survives a newly-created NfcController instance.
+        if (getSharedPreferences(PREFS, MODE_PRIVATE)
+                .getBoolean("fast_tag_assignment_mode", false)
+        ) return
+
         // NFC dispatch extras are already present in the Intent; parse them immediately
         // so the foreground reader cannot deliver the same physical tap first.
         nfc.readIntent(intent)?.let { result ->
@@ -395,14 +402,54 @@ fun BeeKeepApp(
     // This state represents the entire multi-hive assignment run, not just the
     // currently active NFC reader. It gates UI navigation even if a late NFC event
     // arrives after the controller has handed off between readers.
-    var fastAssignmentSessionActive by remember { mutableStateOf(false) }
-    // After the first hive is tagged, the continuous run uses its own screen and
-    // writes directly to each hive record rather than opening HiveDetailScreen again.
-    var fastAssignmentScreenActive by remember { mutableStateOf(false) }
-    var fastAssignmentCurrentHiveId by remember { mutableStateOf<Long?>(null) }
-    var fastAssignmentApiaryName by remember { mutableStateOf<String?>(null) }
-    var fastAssignmentIgnoredUid by remember { mutableStateOf<String?>(null) }
-    var fastAssignmentAssignedHiveIds by remember { mutableStateOf<Set<Long>>(emptySet()) }
+    // Persist the active run: Android can deliver an NFC NDEF intent while a tag is
+    // being written, which can recreate the activity on some devices. The tagging
+    // screen and its current hive must survive that lifecycle handoff.
+    var fastAssignmentSessionActive by rememberSaveable {
+        mutableStateOf(autoVoicePrefs.getBoolean("fast_tag_session_active", false))
+    }
+    var fastAssignmentScreenActive by rememberSaveable {
+        mutableStateOf(autoVoicePrefs.getBoolean("fast_tag_session_screen_active", false))
+    }
+    var fastAssignmentCurrentHiveId by rememberSaveable {
+        mutableStateOf(autoVoicePrefs.getLong("fast_tag_session_current_hive_id", -1L).takeIf { it > 0L })
+    }
+    var fastAssignmentApiaryName by rememberSaveable {
+        mutableStateOf(autoVoicePrefs.getString("fast_tag_session_apiary", null))
+    }
+    var fastAssignmentIgnoredUid by rememberSaveable {
+        mutableStateOf(autoVoicePrefs.getString("fast_tag_session_ignored_uid", null))
+    }
+    var fastAssignmentAssignedHiveIds by rememberSaveable {
+        mutableStateOf(autoVoicePrefs.getStringSet("fast_tag_session_assigned_ids", emptySet()).orEmpty().mapNotNull { it.toLongOrNull() }.toSet())
+    }
+    // Bundle restoration can contain a pre-scan value if Android recreates the
+    // activity while handling the tag's NDEF launch. Reconcile against the durable
+    // session marker before persisting any Compose state back to preferences.
+    var fastAssignmentStateHydrated by remember { mutableStateOf(false) }
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        val persistedModeEnabled = autoVoicePrefs.getBoolean("fast_tag_assignment_mode", false)
+        fastTagAssignmentMode = persistedModeEnabled
+        fastAssignmentSessionActive = persistedModeEnabled &&
+            autoVoicePrefs.getBoolean("fast_tag_session_active", false)
+        fastAssignmentScreenActive = persistedModeEnabled &&
+            autoVoicePrefs.getBoolean("fast_tag_session_screen_active", false)
+        fastAssignmentCurrentHiveId = autoVoicePrefs
+            .getLong("fast_tag_session_current_hive_id", -1L)
+            .takeIf { it > 0L && fastAssignmentScreenActive }
+        fastAssignmentApiaryName = autoVoicePrefs.getString("fast_tag_session_apiary", null)
+            .takeIf { fastAssignmentScreenActive }
+        fastAssignmentIgnoredUid = autoVoicePrefs.getString("fast_tag_session_ignored_uid", null)
+            .takeIf { fastAssignmentScreenActive }
+        fastAssignmentAssignedHiveIds = autoVoicePrefs
+            .getStringSet("fast_tag_session_assigned_ids", emptySet())
+            .orEmpty()
+            .mapNotNull { it.toLongOrNull() }
+            .toSet()
+            .takeIf { fastAssignmentScreenActive }
+            .orEmpty()
+        fastAssignmentStateHydrated = true
+    }
     var screen by rememberSaveable { mutableStateOf(Screen.HOME) }
     var selectedHiveOpen by rememberSaveable { mutableStateOf(false) }
     var selectedApiaryName by rememberSaveable { mutableStateOf<String?>(null) }
@@ -568,6 +615,35 @@ fun BeeKeepApp(
         vm.clearHive()
     }
 
+    // Keep the in-progress handoff recoverable if Android recreates MainActivity
+    // while dispatching a tag's newly-written NDEF record.
+    androidx.compose.runtime.LaunchedEffect(
+        fastAssignmentStateHydrated,
+        fastAssignmentSessionActive,
+        fastAssignmentScreenActive,
+        fastAssignmentCurrentHiveId,
+        fastAssignmentApiaryName,
+        fastAssignmentIgnoredUid,
+        fastAssignmentAssignedHiveIds
+    ) {
+        if (!fastAssignmentStateHydrated) return@LaunchedEffect
+        autoVoicePrefs.edit {
+            putBoolean("fast_tag_session_active", fastAssignmentSessionActive)
+            putBoolean("fast_tag_session_screen_active", fastAssignmentScreenActive)
+            if (fastAssignmentSessionActive || fastAssignmentScreenActive) {
+                putLong("fast_tag_session_current_hive_id", fastAssignmentCurrentHiveId ?: -1L)
+                putString("fast_tag_session_apiary", fastAssignmentApiaryName)
+                putString("fast_tag_session_ignored_uid", fastAssignmentIgnoredUid)
+                putStringSet("fast_tag_session_assigned_ids", fastAssignmentAssignedHiveIds.map(Long::toString).toSet())
+            } else {
+                remove("fast_tag_session_current_hive_id")
+                remove("fast_tag_session_apiary")
+                remove("fast_tag_session_ignored_uid")
+                remove("fast_tag_session_assigned_ids")
+            }
+        }
+    }
+
     val lifecycleOwner = LocalLifecycleOwner.current
     var nfcEnabledForIndicator by remember(nfc) {
         mutableStateOf(nfc.isAvailable() && nfc.isEnabled())
@@ -627,8 +703,10 @@ fun BeeKeepApp(
         pendingInspectionHiveId,
         fastTagAssignmentMode,
         fastAssignmentSessionActive,
-        fastAssignmentScreenActive
+        fastAssignmentScreenActive,
+        fastAssignmentStateHydrated
     ) {
+        if (!fastAssignmentStateHydrated) return@LaunchedEffect
         // The preference is the authoritative gate: a stale or queued scan must not
         // enter Inspection while Fast Tag Assignment is switched on.
         if (fastTagAssignmentMode || fastAssignmentSessionActive || fastAssignmentScreenActive) {
@@ -812,10 +890,11 @@ fun BeeKeepApp(
         unassignedTagUid,
         fastTagAssignmentMode,
         fastAssignmentSessionActive,
-        fastAssignmentScreenActive
+        fastAssignmentScreenActive,
+        fastAssignmentStateHydrated
     ) {
         val result = incomingNfc ?: return@LaunchedEffect
-        if (!ready) return@LaunchedEffect
+        if (!ready || !fastAssignmentStateHydrated) return@LaunchedEffect
         // The toggle itself—not only the current write transaction—owns NFC routing.
         // Ignore normal scan navigation until Fast Tag Assignment is switched off.
         if (fastTagAssignmentMode || fastAssignmentSessionActive || fastAssignmentScreenActive) {
@@ -1140,7 +1219,7 @@ fun BeeKeepApp(
 
     // Defense in depth: no callback or already-pending state may render Inspection
     // while the Fast Tag Assignment preference is enabled.
-    if (inspecting && !fastTagAssignmentMode) {
+    if (inspecting && !fastTagAssignmentMode && fastAssignmentStateHydrated) {
         val hiveForInspection = selected ?: run { inspecting = false; return }
         InspectionScreen(
             activity, locationController, hiveForInspection,
