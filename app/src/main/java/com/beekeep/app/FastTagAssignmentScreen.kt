@@ -103,8 +103,8 @@ internal fun FastTagAssignmentScreen(
     BackHandler { onCancel() }
 
     LaunchedEffect(hive.id, ignoredUid, retryCount, resumeGeneration) {
-        // On resume, preserve failures instead of silently re-arming and clearing them.
-        // Only an explicit Retry / Scan Another Tag action may reset this state.
+        // On resume, preserve failures long enough for the beekeeper to see them.
+        // Duplicate-tag warnings are cleared by the automatic re-arm effect below.
         if (skipInProgress || failureSticky) return@LaunchedEffect
         canRetry = false
         failureTitle = "⚠ TAG NOT ASSIGNED"
@@ -406,7 +406,7 @@ internal fun FastTagAssignmentScreen(
                     color = statusContent
                 )
 
-                if (canRetry && !failureTitle.contains("TAG ALREADY ASSIGNED")) {
+                if (canRetry) {
                     Button(
                         onClick = {
                             failureSticky = false
