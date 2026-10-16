@@ -35,6 +35,18 @@ class NfcAssignmentResolverTest {
     }
 
     @Test
+    fun `released UID is not claimed by a different legacy cache hive`() {
+        val released = assignment(1, "AABBCCDD", hive = 4, at = 100, unassignedAt = 200)
+
+        val owners = NfcAssignmentResolver.currentOwners(
+            assignmentHistory = listOf(released),
+            hiveCache = listOf(hive(5, "AABBCCDD"))
+        )
+
+        assertFalse(owners.any { NfcUid.matches(it.first, "AABBCCDD") })
+    }
+
+    @Test
     fun `active ledger ownership overrides duplicate legacy cache value`() {
         val active = assignment(1, "AABBCCDD", hive = 6, at = 100)
 
