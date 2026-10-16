@@ -59,6 +59,8 @@ internal fun FastTagAssignmentScreen(
     nfc: NfcController,
     ignoredUid: String?,
     isTagAssignedElsewhere: (Long, String) -> Boolean,
+    checkHiveSkipReason: suspend (Long) -> String?,
+    onHiveSkipped: (Long, String) -> Unit,
     onAssignTag: (Long, String, (Boolean, String?) -> Unit) -> Unit,
     onAssignmentSaved: (String) -> Unit,
     onCancel: () -> Unit
@@ -68,10 +70,13 @@ internal fun FastTagAssignmentScreen(
     var retryCount by remember(hive.id) { mutableIntStateOf(0) }
     var canRetry by remember(hive.id) { mutableStateOf(false) }
     var resumeGeneration by remember(hive.id) { mutableIntStateOf(0) }
+    var skipInProgress by remember(hive.id) { mutableStateOf(false) }
     val lifecycleOwner = LocalLifecycleOwner.current
     // NFC callbacks can outlive a recomposition. Keep the writer connected to the
     // latest hive list/assignment callbacks instead of an old captured snapshot.
     val latestIsTagAssignedElsewhere by rememberUpdatedState(isTagAssignedElsewhere)
+    val latestCheckHiveSkipReason by rememberUpdatedState(checkHiveSkipReason)
+    val latestOnHiveSkipped by rememberUpdatedState(onHiveSkipped)
     val latestOnAssignTag by rememberUpdatedState(onAssignTag)
     val latestOnAssignmentSaved by rememberUpdatedState(onAssignmentSaved)
 
@@ -91,14 +96,43 @@ internal fun FastTagAssignmentScreen(
     BackHandler { onCancel() }
 
     LaunchedEffect(hive.id, ignoredUid, retryCount, resumeGeneration) {
+        if (skipInProgress) return@LaunchedEffect
         canRetry = false
         writeStage = "preparing"
+        status = "Checking that this hive still needs an NFC tag…"
+
+        suspend fun verifyTargetHive(): Boolean {
+            val check = runCatching { latestCheckHiveSkipReason(hive.id) }
+            if (check.isFailure) {
+                writeStage = "check_error"
+                canRetry = true
+                status = "Could not verify this hive's current NFC assignment. No tag was written. Retry the check."
+                return false
+            }
+            val skipReason = check.getOrNull()
+            if (skipReason != null) {
+                skipInProgress = true
+                writeStage = "error"
+                canRetry = false
+                status = "Skipped ${hiveReferenceName(hive.number)}: $skipReason."
+                latestOnHiveSkipped(hive.id, skipReason)
+                return false
+            }
+            return true
+        }
+
+        if (!verifyTargetHive()) return@LaunchedEffect
         status = if (ignoredUid.isNullOrBlank()) {
             "Preparing the NFC reader…"
         } else {
             "Remove the previous tag, then present a new unassigned tag."
         }
         delay(900L)
+
+        // A tag may have been assigned while the reader handoff delay was running.
+        // Recheck immediately before starting the physical NFC writer.
+        if (!verifyTargetHive()) return@LaunchedEffect
+
         writeStage = "waiting"
         status = "Ready. Hold an unassigned NFC tag against the back of your phone."
         nfc.beginFastAssignmentFlow(activity)
@@ -124,7 +158,7 @@ internal fun FastTagAssignmentScreen(
                             } else {
                                 writeStage = "error"
                                 canRetry = true
-                                status = "The tag was written, but BeeKeep could not save the assignment. ${error ?: "Retry with this tag or another unassigned tag."}"
+                                status = "TAG NOT ASSIGNED to ${hiveReferenceName(hive.number)}. The physical tag may have been written, but BeeKeep did not save the hive assignment. ${error ?: "Retry the assignment or use another unassigned tag."}"
                             }
                         }
                     }
@@ -227,8 +261,25 @@ internal fun FastTagAssignmentScreen(
                     androidx.compose.material3.Icon(
                         imageVector = if (writeStage == "done") Icons.Rounded.TaskAlt else Icons.Rounded.Nfc,
                         contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary,
+                        tint = if (writeStage == "error" || writeStage == "check_error") MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
                         modifier = Modifier.size(62.dp)
+                    )
+                }
+                if (writeStage == "error") {
+                    Text(
+                        "⚠ TAG NOT ASSIGNED",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = MaterialTheme.colorScheme.error,
+                        textAlign = TextAlign.Center
+                    )
+                } else if (writeStage == "check_error") {
+                    Text(
+                        "⚠ HIVE CHECK FAILED",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = MaterialTheme.colorScheme.error,
+                        textAlign = TextAlign.Center
                     )
                 }
                 Text(
@@ -239,7 +290,9 @@ internal fun FastTagAssignmentScreen(
                     color = if (writeStage == "error") MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
                 )
                 if (canRetry) {
-                    Button(onClick = { retryCount++ }) { Text("RETRY TAG WRITE") }
+                    Button(onClick = { retryCount++ }) {
+                        Text(if (writeStage == "check_error") "RETRY HIVE CHECK" else "RETRY TAG WRITE")
+                    }
                 }
             }
         }

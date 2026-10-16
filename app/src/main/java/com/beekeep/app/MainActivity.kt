@@ -529,6 +529,80 @@ fun BeeKeepApp(
     val harvests by vm.harvests.collectAsStateWithLifecycle()
     val ready by vm.ready.collectAsStateWithLifecycle()
 
+    fun skipFastAssignmentHive(skippedHiveId: Long, reason: String) {
+        // Ignore stale or duplicate skip callbacks after another hive becomes current.
+        if (fastAssignmentCurrentHiveId != skippedHiveId ||
+            (!fastAssignmentSessionActive && !fastAssignmentScreenActive)
+        ) return
+
+        nfc.beginFastAssignmentFlow(activity)
+        scope.launch {
+            val latestHives = runCatching { vm.getHivesSnapshot() }.getOrNull()
+            if (latestHives == null) {
+                nfc.finishFastAssignmentFlow(activity, preserveLastUid = true)
+                fastAssignmentSessionActive = false
+                fastAssignmentScreenActive = false
+                fastAssignmentCurrentHiveId = null
+                fastAssignmentApiaryName = null
+                fastAssignmentIgnoredUid = null
+                fastAssignmentAssignedHiveIds = emptySet()
+                snackbarHostState.showSnackbar(
+                    "Fast Tag Assignment stopped. BeeKeep could not refresh hive assignments, so no tag was written."
+                )
+                return@launch
+            }
+
+            // Re-check this skip after the suspend point before changing the target.
+            if (fastAssignmentCurrentHiveId != skippedHiveId ||
+                (!fastAssignmentSessionActive && !fastAssignmentScreenActive)
+            ) return@launch
+
+            val skippedHive = latestHives.firstOrNull { it.id == skippedHiveId }
+            val apiaryName = fastAssignmentApiaryName
+                ?: skippedHive?.apiary
+                ?: autoVoicePrefs.getString("fast_tag_session_apiary", null)
+                ?: ""
+            val apiaryHives = latestHives.filter {
+                it.apiary.equals(apiaryName, ignoreCase = true) && !it.isDead
+            }
+            val currentIndex = apiaryHives.indexOfFirst { it.id == skippedHiveId }
+            val candidates = if (currentIndex >= 0) {
+                apiaryHives.drop(currentIndex + 1) + apiaryHives.take(currentIndex)
+            } else {
+                apiaryHives
+            }
+            val nextHive = candidates.firstOrNull { candidate ->
+                candidate.id != skippedHiveId &&
+                    candidate.id !in fastAssignmentAssignedHiveIds &&
+                    candidate.tagUid.isNullOrBlank()
+            }
+            val skippedLabel = skippedHive?.let { hiveReferenceName(it.number) }
+                ?: ("Hive " + skippedHiveId)
+
+            if (nextHive == null) {
+                nfc.finishFastAssignmentFlow(activity, preserveLastUid = true)
+                fastAssignmentSessionActive = false
+                fastAssignmentScreenActive = false
+                fastAssignmentCurrentHiveId = null
+                fastAssignmentApiaryName = null
+                fastAssignmentIgnoredUid = null
+                fastAssignmentAssignedHiveIds = emptySet()
+                snackbarHostState.showSnackbar(
+                    "Skipped $skippedLabel: $reason. No untagged hives remain in $apiaryName."
+                )
+                return@launch
+            }
+
+            // Do not play the success ding for a skip. Keep the last successfully
+            // assigned UID suppressed as the next hive's writer is prepared.
+            lastHiveTagSuccessHiveId = null
+            lastHiveTagSuccessUid = null
+            fastAssignmentCurrentHiveId = nextHive.id
+            fastAssignmentScreenActive = true
+            snackbarHostState.showSnackbar("Skipped $skippedLabel: $reason.")
+        }
+    }
+
     fun advanceToNextUntaggedHiveForFastAssignment(currentHive: Hive, justAssignedUid: String) {
         // Use live session state and durable session markers. A callback can arrive
         // after a recomposition/activity handoff, so captured UI values alone must not
@@ -1224,6 +1298,16 @@ fun BeeKeepApp(
                 isTagAssignedElsewhere = { targetHiveId, uid ->
                     (hives + deadHives).any { it.id != targetHiveId && NfcUid.matches(it.tagUid, uid) }
                 },
+                checkHiveSkipReason = { hiveId ->
+                    val latestHive = vm.getHivesSnapshot().firstOrNull { it.id == hiveId }
+                    when {
+                        latestHive == null -> "it no longer exists in the active hive records"
+                        latestHive.isDead -> "the colony is marked dead"
+                        !latestHive.tagUid.isNullOrBlank() -> "it already has an NFC tag assigned"
+                        else -> null
+                    }
+                },
+                onHiveSkipped = { hiveId, reason -> skipFastAssignmentHive(hiveId, reason) },
                 onAssignTag = { hiveId, uid, onResult ->
                     vm.assignTagToHive(hiveId, uid, onResult = onResult)
                 },
