@@ -256,24 +256,6 @@ internal fun SettingsScreen(
                 Text("Settings", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.ExtraBold)
 }
 
-            SettingsSection("Layout & Appearance", Icons.Rounded.Settings) {
-                SettingsSwitchRow(
-                    title = "Yellow + black field mode",
-                    checked = darkMode,
-                    onCheckedChange = onDarkModeChange
-                )
-                SettingsSwitchRow(
-                    title = "Larger field text",
-                    checked = largeFieldText,
-                    onCheckedChange = onLargeFieldTextChange
-                )
-                SettingsSwitchRow(
-                    title = "Compact hive list cards",
-                    checked = compactHiveRows,
-                    onCheckedChange = onCompactHiveRowsChange
-                )
-            }
-
             SettingsSection("Voice & NFC behaviour", Icons.Rounded.RecordVoiceOver) {
                 SettingsSwitchRow(
                     title = "Auto-start voice after an NFC hive scan",
@@ -395,6 +377,24 @@ internal fun SettingsScreen(
                         rememberLastInspection = it
                         preferences.edit { putBoolean("remember_last_inspection_values", it) }
                     }
+                )
+            }
+
+            SettingsSection("Layout & Appearance", Icons.Rounded.Settings) {
+                SettingsSwitchRow(
+                    title = "Yellow + black field mode",
+                    checked = darkMode,
+                    onCheckedChange = onDarkModeChange
+                )
+                SettingsSwitchRow(
+                    title = "Larger field text",
+                    checked = largeFieldText,
+                    onCheckedChange = onLargeFieldTextChange
+                )
+                SettingsSwitchRow(
+                    title = "Compact hive list cards",
+                    checked = compactHiveRows,
+                    onCheckedChange = onCompactHiveRowsChange
                 )
             }
 
