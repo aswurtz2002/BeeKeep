@@ -262,6 +262,20 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
     }
 
 
+    private fun isFastTagAssignmentAudioSuppressed(): Boolean {
+        val prefs = getSharedPreferences(PREFS, MODE_PRIVATE)
+        return prefs.getBoolean("fast_tag_assignment_mode", false) ||
+            prefs.getBoolean("fast_tag_session_active", false) ||
+            prefs.getBoolean("fast_tag_session_screen_active", false)
+    }
+
+    internal fun stopHiveAnnouncements() {
+        // Clear queued speech as well as stopping audio already being played. This
+        // keeps delayed TextToSpeech initialization from speaking during fast tagging.
+        pendingSpeech = null
+        speechEngine?.stop()
+    }
+
     override fun onInit(status: Int) {
         if (status != TextToSpeech.SUCCESS) {
             speechReady = false
@@ -276,6 +290,10 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
             pendingSpeech = null
             return
         }
+        if (isFastTagAssignmentAudioSuppressed()) {
+            pendingSpeech = null
+            return
+        }
         pendingSpeech?.let { phrase ->
             pendingSpeech = null
             speakText(phrase)
@@ -283,6 +301,10 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
     }
 
     internal fun speakHiveNumber(number: String) {
+        if (isFastTagAssignmentAudioSuppressed()) {
+            stopHiveAnnouncements()
+            return
+        }
         val hiveNumber = number.trim()
         if (hiveNumber.isBlank()) return
         speakText("Hive $hiveNumber")
@@ -575,6 +597,7 @@ fun BeeKeepApp(
     }
 
     fun startFastTagAssignmentFromHive(requestedHive: Hive) {
+        (activity as? MainActivity)?.stopHiveAnnouncements()
         val apiaryHives = hives.filter {
             it.apiary.equals(requestedHive.apiary, ignoreCase = true) && !it.isDead
         }
@@ -1334,6 +1357,7 @@ fun BeeKeepApp(
                 }
             },
             onFastTagAssignmentStarted = {
+                (activity as? MainActivity)?.stopHiveAnnouncements()
                 // The initial write starts on the selected hive. Once it succeeds,
                 // subsequent hives are handled by FastTagAssignmentScreen without
                 // reopening their detail pages.
@@ -1636,6 +1660,7 @@ fun BeeKeepApp(
                 onFastTagAssignmentModeChange = { enabled ->
                     fastTagAssignmentMode = enabled
                     autoVoicePrefs.edit { putBoolean("fast_tag_assignment_mode", enabled) }
+                    if (enabled) (activity as? MainActivity)?.stopHiveAnnouncements()
                     if (!enabled) {
                         fastAssignmentSessionActive = false
                         fastAssignmentScreenActive = false
