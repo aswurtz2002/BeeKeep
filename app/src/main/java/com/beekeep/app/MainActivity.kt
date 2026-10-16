@@ -1338,7 +1338,7 @@ fun BeeKeepApp(
                 nfc = nfc,
                 ignoredUid = fastAssignmentIgnoredUid,
                 isTagAssignedElsewhere = { targetHiveId, uid ->
-                    (hives + deadHives).any { it.id != targetHiveId && NfcUid.matches(it.tagUid, uid) }
+                    nfc.isTagAssignedElsewhere(targetHiveId, uid)
                 },
                 checkHiveSkipReason = { hiveId ->
                     val latestHive = vm.getHivesSnapshot().firstOrNull { it.id == hiveId }
@@ -1604,7 +1604,7 @@ fun BeeKeepApp(
             onHarvest = { logType = HiveLogType.HARVEST },
             onTag = { uid, onResult -> vm.assignTag(uid, onResult) },
             isTagAssignedElsewhere = { targetHiveId, uid ->
-                (hives + deadHives).any { it.id != targetHiveId && NfcUid.matches(it.tagUid, uid) }
+                nfc.isTagAssignedElsewhere(targetHiveId, uid)
             },
             onClearTag = { hiveId, onResult -> vm.clearTagForHive(hiveId, onResult) },
             confirmBeforeTagRemoval = autoVoicePrefs.getBoolean("confirm_tag_removal", true),
