@@ -1,14 +1,64 @@
 package com.beekeep.app.data
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import com.beekeep.app.nfc.NfcUid
 
 class NfcAssignmentResolverTest {
 
     private fun assignment(id: Long, tag: String, hive: Long, at: Long, unassignedAt: Long? = null) =
         NfcTagAssignmentEntity(id, tag, hive, at, unassignedAt)
+
+    private fun hive(id: Long, tagUid: String?) = HiveEntity(
+        id = id,
+        number = "Hive$id",
+        apiaryName = "North Yard",
+        queenStatus = "Laying",
+        strength = 3,
+        mitePercent = 0.0,
+        tagUid = tagUid
+    )
+
+    @Test
+    fun `released UID is not resurrected by stale hive tag cache`() {
+        val released = assignment(1, "AABBCCDD", hive = 5, at = 100, unassignedAt = 200)
+
+        val owners = NfcAssignmentResolver.currentOwners(
+            assignmentHistory = listOf(released),
+            hiveCache = listOf(hive(5, "AA:BB:CC:DD"))
+        )
+
+        assertFalse(owners.any { NfcUid.matches(it.first, "AABBCCDD") })
+    }
+
+    @Test
+    fun `active ledger ownership overrides duplicate legacy cache value`() {
+        val active = assignment(1, "AABBCCDD", hive = 6, at = 100)
+
+        val owners = NfcAssignmentResolver.currentOwners(
+            assignmentHistory = listOf(active),
+            hiveCache = listOf(hive(5, "AA-BB-CC-DD"), hive(6, "AABBCCDD"))
+        )
+
+        assertEquals(listOf("AABBCCDD" to 6L), owners.mapNotNull { (uid, owner) ->
+            NfcUid.normalize(uid)?.let { it to owner }
+        })
+    }
+
+    @Test
+    fun `legacy cached tag is retained when UID and hive have no ledger history`() {
+        val owners = NfcAssignmentResolver.currentOwners(
+            assignmentHistory = emptyList(),
+            hiveCache = listOf(hive(5, "AABBCCDD"))
+        )
+
+        assertEquals(listOf("AABBCCDD" to 5L), owners.mapNotNull { (uid, owner) ->
+            NfcUid.normalize(uid)?.let { it to owner }
+        })
+    }
 
     @Test
     fun `active incoming with no conflicts stays active and closes nothing`() {
