@@ -108,7 +108,6 @@ class BeeKeepViewModel(
         _treatments.value = emptyList()
         _harvests.value = emptyList()
         _events.value = emptyList()
-        _photos.value = emptyList()
     }
 
     private suspend fun refreshSelectedHiveIfCurrent(hiveId: Long) {
