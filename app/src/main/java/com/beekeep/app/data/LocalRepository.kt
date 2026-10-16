@@ -30,7 +30,6 @@ class LocalHiveRepository(context: Context) {
      * prevent data from returning on a later sync, and this runs as one Room transaction.
      */
     suspend fun resetAllData() = withContext(Dispatchers.IO) {
-        var photosToDelete: List<PhotoEntity> = emptyList()
         db.withTransaction {
             val apiaries = db.apiaries().allForBackup()
             val hives = db.hives().allForBackup()
@@ -40,9 +39,7 @@ class LocalHiveRepository(context: Context) {
             val harvests = db.harvests().allForBackup()
             val events = db.events().allForBackup()
             val assignments = db.nfcTagAssignments().allForBackup()
-            val photos = db.photos().allForReset()
             val pendingOutbox = db.outbox().allPendingForReset()
-            photosToDelete = photos
 
             val resetAt = System.currentTimeMillis()
             val recordsToDelete = linkedSetOf<Pair<String, Long>>()
@@ -54,22 +51,11 @@ class LocalHiveRepository(context: Context) {
             harvests.forEach { recordsToDelete.add("harvest" to it.id) }
             events.forEach { recordsToDelete.add("event" to it.id) }
             assignments.forEach { recordsToDelete.add("nfc_assignment" to it.id) }
-            photos.forEach { recordsToDelete.add("photo" to it.id) }
             // Convert queued writes to deletes too, including changes for records already
             // removed locally, so a pending upload can never recreate a wiped record.
             pendingOutbox.forEach { recordsToDelete.add(it.entityType to it.entityId) }
 
-            val photoCloudPaths = photos.mapNotNull { photo ->
-                photo.cloudPath?.takeIf(String::isNotBlank)?.let { photo.id to it }
-            }.toMap().toMutableMap()
-            pendingOutbox.filter { it.entityType == "photo" }.forEach { item ->
-                val path = runCatching { JSONObject(item.payload).optString("cloud_path") }
-                    .getOrNull()?.takeIf(String::isNotBlank)
-                if (path != null) photoCloudPaths[item.entityId] = path
-            }
-
             // Delete children before parent records to respect all Room foreign keys.
-            db.photos().clearAll()
             db.events().clearAll()
             db.harvests().clearAll()
             db.treatments().clearAll()
@@ -86,9 +72,6 @@ class LocalHiveRepository(context: Context) {
                     .put("id", id)
                     .put("updated_at", resetAt)
                     .put("deleted", true)
-                if (type == "photo") {
-                    photoCloudPaths[id]?.let { payload.put("cloud_path", it) }
-                }
                 db.outbox().enqueue(
                     SyncOutboxEntity(
                         id = IdGenerator.nextLong(),
@@ -102,8 +85,6 @@ class LocalHiveRepository(context: Context) {
             }
         }
 
-        // Photo files live outside the Room database.
-        photosToDelete.forEach { photo -> runCatching { java.io.File(photo.localPath).delete() } }
     }
 
     fun observeHives(): Flow<List<Hive>> = db.hives().observeAll().map { it.map(::toHive) }
@@ -118,7 +99,6 @@ class LocalHiveRepository(context: Context) {
     fun observeAllFeedings(): Flow<List<Feeding>> = db.feedings().observeAll().map { it.map(::toFeeding) }
     fun observeAllTreatments(): Flow<List<Treatment>> = db.treatments().observeAll().map { it.map(::toTreatment) }
     fun observeAllHarvests(): Flow<List<Harvest>> = db.harvests().observeAll().map { it.map(::toHarvest) }
-    fun observePhotos(hiveId: Long): Flow<List<PhotoEntity>> = db.photos().observeForHive(hiveId)
 
     suspend fun getHive(id: Long): Hive? = withContext(Dispatchers.IO) { db.hives().get(id)?.let(::toHive) }
     suspend fun getAllKnownNfcTagAssignments(): List<Pair<String?, Long>> = withContext(Dispatchers.IO) {
@@ -385,7 +365,7 @@ class LocalHiveRepository(context: Context) {
 
 
     /**
-     * Keep cloud history and uploaded photos in sync with a permanent local deletion.
+     * Keep cloud history in sync with a permanent local deletion.
      * Tombstones contain identifiers and timestamps only, not the deleted record's notes.
      */
     private suspend fun enqueueHiveHistoryDeletions(hiveId: Long, deletionTime: Long) {
@@ -413,26 +393,9 @@ class LocalHiveRepository(context: Context) {
         db.nfcTagAssignments().listForHiveForDelete(hiveId).forEach {
             enqueue("nfc_assignment", it.id, "delete", tombstone(it.id))
         }
-        db.photos().listForHive(hiveId).forEach { photo ->
-            val cloudPath = photo.cloudPath?.takeIf { it.isNotBlank() } ?: return@forEach
-            enqueue(
-                "photo",
-                photo.id,
-                "delete",
-                JSONObject()
-                    .put("id", photo.id)
-                    .put("hive_id", hiveId)
-                    .put("cloud_path", cloudPath)
-                    .put("updated_at", deletionTime)
-                    .toString()
-            )
-        }
     }
 
     private suspend fun permanentlyDeleteHiveLocal(hiveId: Long) {
-        db.photos().listForHive(hiveId).forEach { runCatching { java.io.File(it.localPath).delete() } }
-        // Photo rows do not have a Room foreign key to hives, so remove them explicitly.
-        db.photos().deleteForHive(hiveId)
         db.events().deleteForHive(hiveId)
         // inspections, feedings, treatments, harvests and NFC assignments cascade.
         db.hives().hardDelete(hiveId)
@@ -651,7 +614,7 @@ class LocalHiveRepository(context: Context) {
             val entity = InspectionEntity(
                 id = i.id, hiveId = i.hiveId, createdAt = i.createdAt, strength = i.strength.coerceIn(0, 10),
                 queenStatus = i.queenStatus.trim().ifBlank { "Laying" }, miteCount = safeMites, sampleSize = safeSample,
-                notes = i.notes.trim(), photoPath = i.photoPath?.trim()?.takeIf { it.isNotBlank() }, latitude = i.latitude, longitude = i.longitude,
+                notes = i.notes.trim(), latitude = i.latitude, longitude = i.longitude,
                 emergencyCells = i.emergencyCells.coerceAtLeast(0), supercedureCells = i.supercedureCells.coerceAtLeast(0), swarmCells = i.swarmCells.coerceAtLeast(0),
                 eggs = normalizeBroodStoresGauge(i.eggs), openBrood = normalizeBroodStoresGauge(i.openBrood), cappedBrood = normalizeBroodStoresGauge(i.cappedBrood),
                 honeyStores = normalizeBroodStoresGauge(i.honeyStores), pollen = normalizeBroodStoresGauge(i.pollen), emptyDrawnComb = normalizeBroodStoresGauge(i.emptyDrawnComb),
@@ -659,9 +622,6 @@ class LocalHiveRepository(context: Context) {
                 beeCountFrames = safeBeeCountFrames
             )
             db.inspections().upsert(entity)
-            if (!i.photoPath.isNullOrBlank()) {
-                db.photos().upsert(PhotoEntity(i.id, i.hiveId, i.id, i.photoPath, null, i.createdAt, "pending"))
-            }
             db.hives().get(i.hiveId)?.let {
                 // The inspection timestamp describes the observation, not when the hive record was edited.
                 // Use wall-clock update time so backfilled inspections cannot make the hive look stale during sync.
@@ -749,9 +709,6 @@ class LocalHiveRepository(context: Context) {
         }
     }
 
-    suspend fun pendingPhotos(limit: Int = 10): List<PhotoEntity> = db.photos().pending(limit)
-    suspend fun markPhotoUploaded(id: Long, cloudPath: String) = db.photos().markUploaded(id, cloudPath)
-    suspend fun markPhotoError(id: Long, error: String) = db.photos().markError(id, error)
 
     suspend fun pendingSync(limit: Int = 50): List<SyncOutboxEntity> = db.outbox().pending(limit)
     suspend fun markSyncDone(id: Long) = db.outbox().setState(id, "done")
@@ -898,7 +855,7 @@ class LocalHiveRepository(context: Context) {
             "inspection" -> if (db.hives().exists(json.optLong("hive_id"))) db.inspections().upsert(InspectionEntity(
                 id=json.optLong("id",doc.entity_id), hiveId=json.optLong("hive_id"), createdAt=json.optLong("created_at",doc.updated_at),
                 strength=json.optInt("strength").coerceIn(0, 10), queenStatus=json.optString("queen_status"), miteCount=json.optInt("mite_count").coerceAtLeast(0), sampleSize=json.optInt("sample_size",1).coerceAtLeast(1),
-                notes=json.optString("notes"), photoPath=json.stringOrNull("photo_path"), latitude=json.doubleOrNull("latitude"), longitude=json.doubleOrNull("longitude"),
+                notes=json.optString("notes"), latitude=json.doubleOrNull("latitude"), longitude=json.doubleOrNull("longitude"),
                 emergencyCells=json.optInt("emergency_cells").coerceAtLeast(0), supercedureCells=json.optInt("supercedure_cells").coerceAtLeast(0), swarmCells=json.optInt("swarm_cells").coerceAtLeast(0), eggs=json.optDouble("eggs", 0.0).coerceAtLeast(0.0), openBrood=json.optDouble("open_brood", 0.0).coerceAtLeast(0.0), cappedBrood=json.optDouble("capped_brood", 0.0).coerceAtLeast(0.0), honeyStores=json.optDouble("honey_stores", 0.0).coerceAtLeast(0.0), pollen=json.optDouble("pollen", 0.0).coerceAtLeast(0.0), emptyDrawnComb=json.optDouble("empty_drawn_comb", 0.0).coerceAtLeast(0.0), diseaseFlags=json.optString("disease_flags"), updatedAt=json.optLong("updated_at",doc.updated_at),
                 beeCountFrames=json.doubleOrNull("bee_count_frames")?.let { (it * 2.0).roundToInt().coerceIn(1, 20) / 2.0 }
             )) else Unit
@@ -911,7 +868,7 @@ class LocalHiveRepository(context: Context) {
 
 
     /**
-     * Portable export of apiaries and their hive history. Photo files and sync transport
+     * Portable export of apiaries and their hive history. Sync transport
      * state are device-specific and deliberately are not part of the JSON backup.
      */
     suspend fun createDataBackupJson(): String = withContext(Dispatchers.IO) {
@@ -1156,7 +1113,6 @@ class LocalHiveRepository(context: Context) {
             }
             if (type == "inspection") {
                 // Device-local image paths aren't portable; keep the current local file when restoring onto the same phone.
-                db.inspections().get(targetId)?.photoPath?.takeIf { it.isNotBlank() }?.let { payload.put("photo_path", it) }
             }
             val incomingUpdatedAt = payload.optLong("updated_at", row.optLong("updatedAt", root.optLong("createdAt")))
             val localUpdatedAt = backupLocalTimestamp(type, targetId, currentApiaries, currentHives, currentAssignments,
@@ -1300,8 +1256,7 @@ class LocalHiveRepository(context: Context) {
     private fun nfcAssignmentPayload(e: NfcTagAssignmentEntity) = JSONObject().put("id",e.id).put("tag_uid",e.tagUid).put("hive_id",e.hiveId).put("assigned_at",e.assignedAt).put("unassigned_at",e.unassignedAt).put("updated_at",maxOf(e.assignedAt, e.unassignedAt ?: 0L)).toString()
     private fun apiaryPayload(e: ApiaryEntity) = JSONObject().put("id",e.id).put("name",e.name).put("notes",e.notes).put("latitude",e.latitude).put("longitude",e.longitude).put("forage_notes",e.forageNotes).put("water_notes",e.waterNotes).put("updated_at",e.updatedAt).put("deleted",e.deleted).toString()
     private fun inspectionPayload(e: InspectionEntity) = JSONObject().put("id",e.id).put("hive_id",e.hiveId).put("created_at",e.createdAt).put("strength",e.strength).put("queen_status",e.queenStatus).put("mite_count",e.miteCount).put("sample_size",e.sampleSize).put("notes",e.notes)
-        // Local device paths are never valid on another device. Photos sync separately.
-        .put("photo_path", JSONObject.NULL).put("latitude",e.latitude).put("longitude",e.longitude).put("emergency_cells",e.emergencyCells).put("supercedure_cells",e.supercedureCells).put("swarm_cells",e.swarmCells).put("eggs",e.eggs).put("open_brood",e.openBrood).put("capped_brood",e.cappedBrood).put("honey_stores",e.honeyStores).put("pollen",e.pollen).put("empty_drawn_comb",e.emptyDrawnComb).put("disease_flags",e.diseaseFlags).put("bee_count_frames",e.beeCountFrames).put("updated_at",e.updatedAt).toString()
+        .put("latitude",e.latitude).put("longitude",e.longitude).put("emergency_cells",e.emergencyCells).put("supercedure_cells",e.supercedureCells).put("swarm_cells",e.swarmCells).put("eggs",e.eggs).put("open_brood",e.openBrood).put("capped_brood",e.cappedBrood).put("honey_stores",e.honeyStores).put("pollen",e.pollen).put("empty_drawn_comb",e.emptyDrawnComb).put("disease_flags",e.diseaseFlags).put("bee_count_frames",e.beeCountFrames).put("updated_at",e.updatedAt).toString()
     private fun feedingPayload(e: FeedingEntity) = JSONObject().put("id",e.id).put("hive_id",e.hiveId).put("created_at",e.createdAt).put("updated_at",e.createdAt).put("feed_type",e.feedType).put("ratio",e.ratio).put("amount",e.amount).put("unit",e.unit).put("notes",e.notes).toString()
     private fun treatmentPayload(e: TreatmentEntity) = JSONObject().put("id",e.id).put("hive_id",e.hiveId).put("created_at",e.createdAt).put("updated_at",e.createdAt).put("treatment_type",e.treatmentType).put("product",e.product).put("inserted_at",e.insertedAt).put("removal_at",e.removalAt).put("withdrawal_until",e.withdrawalUntil).put("notes",e.notes).toString()
     private fun harvestPayload(e: HarvestEntity) = JSONObject().put("id",e.id).put("hive_id",e.hiveId).put("created_at",e.createdAt).put("updated_at",e.createdAt).put("supers_pulled",e.supersPulled).put("wet_honey_weight",e.wetHoneyWeight).put("dry_honey_weight",e.dryHoneyWeight).put("weight_unit",e.weightUnit).put("wax_weight",e.waxWeight).put("propolis_weight",e.propolisWeight).put("notes",e.notes).toString()
@@ -1320,7 +1275,7 @@ class LocalHiveRepository(context: Context) {
         else String.format(java.util.Locale.US, "%.1f", value)
 
     private fun toHive(e: HiveEntity) = Hive(e.id, e.number, e.apiaryName, e.queenStatus, e.queenMarkColor, e.queenOrigin, e.queenAgeMonths, e.queenTemperament, e.strength, e.mitePercent, e.tagUid, e.status, e.deadAt, e.latitude, e.longitude, e.beeCountFrames)
-    private fun toInspection(e: InspectionEntity) = Inspection(e.id, e.hiveId, e.createdAt, e.strength, e.queenStatus, e.miteCount, e.sampleSize, e.notes, e.photoPath, e.latitude, e.longitude, e.emergencyCells, e.supercedureCells, e.swarmCells, e.eggs, e.openBrood, e.cappedBrood, e.honeyStores, e.pollen, e.emptyDrawnComb, e.diseaseFlags, e.beeCountFrames)
+    private fun toInspection(e: InspectionEntity) = Inspection(e.id, e.hiveId, e.createdAt, e.strength, e.queenStatus, e.miteCount, e.sampleSize, e.notes, e.latitude, e.longitude, e.emergencyCells, e.supercedureCells, e.swarmCells, e.eggs, e.openBrood, e.cappedBrood, e.honeyStores, e.pollen, e.emptyDrawnComb, e.diseaseFlags, e.beeCountFrames)
     private fun toFeeding(e: FeedingEntity) = Feeding(e.id, e.hiveId, e.createdAt, e.feedType, e.ratio, e.amount, e.unit, e.notes)
     private fun toTreatment(e: TreatmentEntity) = Treatment(e.id, e.hiveId, e.createdAt, e.treatmentType, e.product, e.insertedAt, e.removalAt, e.withdrawalUntil, e.notes)
     private fun toHarvest(e: HarvestEntity) = Harvest(e.id, e.hiveId, e.createdAt, e.supersPulled, e.wetHoneyWeight, e.dryHoneyWeight, e.weightUnit, e.waxWeight, e.propolisWeight, e.notes)

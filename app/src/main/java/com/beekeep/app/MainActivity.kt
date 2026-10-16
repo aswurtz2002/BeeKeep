@@ -936,7 +936,7 @@ fun BeeKeepApp(
                 } else Float.POSITIVE_INFINITY
                 // Ignore ordinary GPS drift. Only consider a move if the phone is
                 // clearly away from the assigned yard and close to another saved yard.
-                if (assignedDistance <= 300f) return@launch
+                if (assignedDistance <= 100f) return@launch
                 val nearestOther = apiaries
                     .filter { apiary -> currentApiary == null || apiary.id != currentApiary.id }
                     .mapNotNull { apiary ->
@@ -947,7 +947,7 @@ fun BeeKeepApp(
                             latitude, longitude
                         )
                     }
-                    .filter { it.second <= 500f }
+                    .filter { it.second <= 100f }
                     .minByOrNull { it.second }
                 if (nearestOther != null) {
                     val targetApiary = nearestOther.first
@@ -1424,15 +1424,16 @@ fun BeeKeepApp(
                     // Keep the full note log (including an intentional empty value) available for the next Inspect session.
                     activity.getSharedPreferences(INSPECTION_NOTE_DRAFTS, android.content.Context.MODE_PRIVATE)
                         .edit { putString("hive_${inspection.hiveId}", inspection.notes) }
-                    if (vm.selected.value?.id == inspection.hiveId) {
-                        if (pendingAutoStartVoiceHiveId == inspection.hiveId) {
-                            pendingAutoStartVoiceHiveId = null
-                        }
-                        inspecting = false
-                    }
                     scope.launch { snackbarHostState.showSnackbar("Inspection saved") }
                 } else {
                     scope.launch { snackbarHostState.showSnackbar("Could not save inspection. Your field screen is still open; try again.") }
+                }
+                saved
+            },
+            onSaved = {
+                if (vm.selected.value?.id == hiveForInspection.id) {
+                    if (pendingAutoStartVoiceHiveId == hiveForInspection.id) pendingAutoStartVoiceHiveId = null
+                    inspecting = false
                 }
             }
         )

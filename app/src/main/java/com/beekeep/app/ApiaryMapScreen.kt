@@ -30,6 +30,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.GpsFixed
+import androidx.compose.material.icons.rounded.Layers
 import androidx.compose.material.icons.rounded.MyLocation
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -71,6 +72,7 @@ internal fun ApiaryMapScreen(
         mutableStateOf(initialFocusApiaryId)
     }
     var currentLocation by remember { mutableStateOf<LocationController.Result?>(null) }
+    var satelliteView by rememberSaveable { mutableStateOf(false) }
     // Each successful location request must trigger a camera move, even when GPS returns identical coordinates.
     var locationRequestId by remember { mutableStateOf(0L) }
     var locationMessage by remember { mutableStateOf<String?>(null) }
@@ -135,6 +137,7 @@ internal fun ApiaryMapScreen(
             focusedApiaryId = focusedId,
             currentLocation = currentLocation,
             locationRequestId = locationRequestId,
+            satelliteView = satelliteView,
             modifier = Modifier
                 .fillMaxSize()
                 .padding(4.dp)
@@ -171,6 +174,16 @@ internal fun ApiaryMapScreen(
                         "${locatedApiaries.size} of ${apiaries.size} apiaries have GPS pins",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                IconButton(
+                    onClick = { satelliteView = !satelliteView },
+                    modifier = Modifier.size(48.dp)
+                ) {
+                    Icon(
+                        Icons.Rounded.Layers,
+                        contentDescription = if (satelliteView) "Switch to street map" else "Switch to satellite imagery",
+                        tint = if (satelliteView) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
                 IconButton(onClick = {
@@ -309,7 +322,8 @@ internal fun ApiaryMapScreen(
 private data class ApiaryMapWebViewState(
     val htmlHash: Int,
     val currentLocation: LocationController.Result?,
-    val locationRequestId: Long
+    val locationRequestId: Long,
+    val satelliteView: Boolean
 )
 
 @Composable
@@ -318,6 +332,7 @@ internal fun ApiarySatelliteMap(
     focusedApiaryId: Long?,
     currentLocation: LocationController.Result?,
     locationRequestId: Long = 0L,
+    satelliteView: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     // Keep the WebView and MapLibre map alive when only the GPS position changes.
@@ -338,7 +353,14 @@ internal fun ApiarySatelliteMap(
                         super.onPageFinished(view, url)
                         // Re-apply the latest GPS after any map HTML refresh. The JS
                         // function queues the location if MapLibre has not loaded yet.
-                        val location = (view.tag as? ApiaryMapWebViewState)?.currentLocation
+                        val state = view.tag as? ApiaryMapWebViewState
+                        if (state != null) {
+                            view.evaluateJavascript(
+                                "window.beekeepSetSatelliteMode && window.beekeepSetSatelliteMode(${state.satelliteView});",
+                                null
+                            )
+                        }
+                        val location = state?.currentLocation
                         if (location != null) {
                             view.evaluateJavascript(
                                 "window.beekeepQueueLocation && window.beekeepQueueLocation(${location.latitude}, ${location.longitude});",
@@ -351,7 +373,7 @@ internal fun ApiarySatelliteMap(
                 isVerticalScrollBarEnabled = false
                 isHorizontalScrollBarEnabled = false
                 overScrollMode = View.OVER_SCROLL_NEVER
-                tag = ApiaryMapWebViewState(html.hashCode(), currentLocation, locationRequestId)
+                tag = ApiaryMapWebViewState(html.hashCode(), currentLocation, locationRequestId, satelliteView)
                 // Compose can resize AndroidView without firing a browser window resize.
                 // Notify MapLibre whenever the native WebView viewport changes size.
                 addOnLayoutChangeListener { view, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom ->
@@ -375,20 +397,28 @@ internal fun ApiarySatelliteMap(
             if (previous == null || previous.htmlHash != htmlHash) {
                 // A changed apiary list or selected apiary requires fresh map content.
                 // Store the latest GPS so onPageFinished can restore it after loading.
-                webView.tag = ApiaryMapWebViewState(htmlHash, currentLocation, locationRequestId)
+                webView.tag = ApiaryMapWebViewState(htmlHash, currentLocation, locationRequestId, satelliteView)
                 webView.loadDataWithBaseURL("https://beekeep.local/map/", html, "text/html", "UTF-8", null)
-            } else if (previous.currentLocation != currentLocation || previous.locationRequestId != locationRequestId) {
-                webView.tag = ApiaryMapWebViewState(htmlHash, currentLocation, locationRequestId)
-                if (currentLocation != null) {
+            } else {
+                webView.tag = ApiaryMapWebViewState(htmlHash, currentLocation, locationRequestId, satelliteView)
+                if (previous.satelliteView != satelliteView) {
                     webView.evaluateJavascript(
-                        "window.beekeepQueueLocation && window.beekeepQueueLocation(${currentLocation.latitude}, ${currentLocation.longitude});",
+                        "window.beekeepSetSatelliteMode && window.beekeepSetSatelliteMode(${satelliteView});",
                         null
                     )
-                } else {
-                    webView.evaluateJavascript(
-                        "window.beekeepClearCurrentLocation && window.beekeepClearCurrentLocation();",
-                        null
-                    )
+                }
+                if (previous.currentLocation != currentLocation || previous.locationRequestId != locationRequestId) {
+                    if (currentLocation != null) {
+                        webView.evaluateJavascript(
+                            "window.beekeepQueueLocation && window.beekeepQueueLocation(${currentLocation.latitude}, ${currentLocation.longitude});",
+                            null
+                        )
+                    } else {
+                        webView.evaluateJavascript(
+                            "window.beekeepClearCurrentLocation && window.beekeepClearCurrentLocation();",
+                            null
+                        )
+                    }
                 }
             }
         },
@@ -512,6 +542,13 @@ private fun createApiaryMapHtml(
                     let mapReady = false;
                     let tileErrors = 0;
                     window.beekeepPendingLocation = null;
+                    window.beekeepPendingSatelliteMode = false;
+                    window.beekeepSetSatelliteMode = function (enabled) {
+                        window.beekeepPendingSatelliteMode = Boolean(enabled);
+                        if (typeof window.beekeepApplySatelliteMode === "function") {
+                            window.beekeepApplySatelliteMode(window.beekeepPendingSatelliteMode);
+                        }
+                    };
 
                     // This entry point is available even while MapLibre's library/style is
                     // still loading. The camera move is applied as soon as the map is ready.
@@ -618,6 +655,15 @@ private fun createApiaryMapHtml(
                                 });
                             }
                             window.beekeepResizeMap = resizeMapViewport;
+                            window.beekeepApplySatelliteMode = function (enabled) {
+                                if (!mapReady || !map.getLayer("beekeep-satellite-imagery")) return;
+                                map.setLayoutProperty(
+                                    "beekeep-satellite-imagery",
+                                    "visibility",
+                                    enabled ? "visible" : "none"
+                                );
+                                window.beekeepPendingSatelliteMode = Boolean(enabled);
+                            };
 
                             function applyCurrentLocation(location, animate) {
                                 if (!location) return;
@@ -700,6 +746,28 @@ private fun createApiaryMapHtml(
                             map.on('load', function () {
                                 mapReady = true;
                                 errorPanel.style.display = 'none';
+                                // OpenFreeMap supplies the street-map style; satellite imagery comes
+                                // from a separate raster source because OpenFreeMap does not host it.
+                                map.addSource("beekeep-satellite-source", {
+                                    type: "raster",
+                                    tiles: [
+                                        "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
+                                    ],
+                                    tileSize: 256,
+                                    attribution: "Sources: Esri, DigitalGlobe, GeoEye, i-cubed, USDA FSA, USGS, AEX, Getmapping, Aerogrid, IGN, IGP, swisstopo, and the GIS User Community"
+                                });
+                                const firstSymbolLayer = map.getStyle().layers.find(function (layer) {
+                                    return layer.type === "symbol";
+                                });
+                                map.addLayer({
+                                    id: "beekeep-satellite-imagery",
+                                    type: "raster",
+                                    source: "beekeep-satellite-source",
+                                    layout: { visibility: window.beekeepPendingSatelliteMode ? "visible" : "none" },
+                                    paint: { "raster-opacity": 1.0 }
+                                }, firstSymbolLayer ? firstSymbolLayer.id : undefined);
+                                window.beekeepPendingSatelliteMode = Boolean(window.beekeepPendingSatelliteMode);
+                                window.beekeepApplySatelliteMode(window.beekeepPendingSatelliteMode);
                                 resizeMapViewport();
                                 window.setTimeout(resizeMapViewport, 80);
                                 window.setTimeout(resizeMapViewport, 250);

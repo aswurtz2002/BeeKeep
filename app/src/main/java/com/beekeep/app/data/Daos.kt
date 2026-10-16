@@ -229,28 +229,6 @@ interface OutboxDao {
 
 
 @Dao
-interface PhotoDao {
-    @Query("SELECT * FROM inspection_photos")
-    suspend fun allForReset(): List<PhotoEntity>
-    @Query("DELETE FROM inspection_photos")
-    suspend fun clearAll()
-    @Query("SELECT * FROM inspection_photos WHERE hive_id = :hiveId ORDER BY created_at DESC")
-    fun observeForHive(hiveId: Long): Flow<List<PhotoEntity>>
-    @Query("SELECT * FROM inspection_photos WHERE sync_state = 'pending' ORDER BY created_at ASC LIMIT :limit")
-    suspend fun pending(limit: Int = 20): List<PhotoEntity>
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun upsert(entity: PhotoEntity)
-    @Query("UPDATE inspection_photos SET cloud_path = :cloudPath, sync_state = 'uploaded', last_error = NULL WHERE id = :id")
-    suspend fun markUploaded(id: Long, cloudPath: String)
-    @Query("UPDATE inspection_photos SET sync_state = 'failed', last_error = :error WHERE id = :id")
-    suspend fun markError(id: Long, error: String)
-    @Query("SELECT * FROM inspection_photos WHERE hive_id = :hiveId")
-    suspend fun listForHive(hiveId: Long): List<PhotoEntity>
-    @Query("DELETE FROM inspection_photos WHERE hive_id = :hiveId")
-    suspend fun deleteForHive(hiveId: Long)
-}
-
-@Dao
 interface TaskDao {
     @Query("SELECT * FROM tasks ORDER BY due_at DESC")
     fun observeAll(): Flow<List<TaskEntity>>

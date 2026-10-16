@@ -8,8 +8,8 @@ import androidx.room.Room
 import androidx.room.RoomDatabase
 
 @Database(
-    entities = [ApiaryEntity::class, HiveEntity::class, InspectionEntity::class, FeedingEntity::class, TreatmentEntity::class, HarvestEntity::class, ActivityEventEntity::class, SyncOutboxEntity::class, TaskEntity::class, PhotoEntity::class, NfcTagAssignmentEntity::class],
-    version = 11,
+    entities = [ApiaryEntity::class, HiveEntity::class, InspectionEntity::class, FeedingEntity::class, TreatmentEntity::class, HarvestEntity::class, ActivityEventEntity::class, SyncOutboxEntity::class, TaskEntity::class, NfcTagAssignmentEntity::class],
+    version = 12,
     exportSchema = false
 )
 abstract class BeeKeepRoomDb : RoomDatabase() {
@@ -21,7 +21,6 @@ abstract class BeeKeepRoomDb : RoomDatabase() {
     abstract fun harvests(): HarvestDao
     abstract fun events(): EventDao
     abstract fun outbox(): OutboxDao
-    abstract fun photos(): PhotoDao
     abstract fun nfcTagAssignments(): NfcTagAssignmentDao
     abstract fun tasks(): TaskDao
 
@@ -235,10 +234,68 @@ abstract class BeeKeepRoomDb : RoomDatabase() {
             }
         }
 
+        val MIGRATION_11_12 = object : Migration(11, 12) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                // Camera/photo attachments were removed from BeeKeep. Rebuild inspections
+                // without the obsolete device-local photo_path column and drop the old
+                // photo upload queue so old releases cannot reintroduce photo work.
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS `inspections_new` (
+                        `id` INTEGER NOT NULL,
+                        `hive_id` INTEGER NOT NULL,
+                        `created_at` INTEGER NOT NULL,
+                        `strength` INTEGER NOT NULL,
+                        `queenStatus` TEXT NOT NULL,
+                        `mite_count` INTEGER NOT NULL,
+                        `sample_size` INTEGER NOT NULL,
+                        `notes` TEXT NOT NULL,
+                        `latitude` REAL,
+                        `longitude` REAL,
+                        `emergency_cells` INTEGER NOT NULL,
+                        `supercedure_cells` INTEGER NOT NULL,
+                        `swarm_cells` INTEGER NOT NULL,
+                        `eggs` REAL NOT NULL,
+                        `open_brood` REAL NOT NULL,
+                        `capped_brood` REAL NOT NULL,
+                        `honey_stores` REAL NOT NULL,
+                        `pollen` REAL NOT NULL,
+                        `empty_drawn_comb` REAL NOT NULL,
+                        `disease_flags` TEXT NOT NULL,
+                        `updated_at` INTEGER NOT NULL,
+                        `bee_count_frames` REAL,
+                        PRIMARY KEY(`id`),
+                        FOREIGN KEY(`hive_id`) REFERENCES `hives`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE
+                    )
+                """.trimIndent())
+                db.execSQL("""
+                    INSERT INTO `inspections_new` (
+                        `id`, `hive_id`, `created_at`, `strength`, `queenStatus`,
+                        `mite_count`, `sample_size`, `notes`, `latitude`, `longitude`,
+                        `emergency_cells`, `supercedure_cells`, `swarm_cells`, `eggs`,
+                        `open_brood`, `capped_brood`, `honey_stores`, `pollen`,
+                        `empty_drawn_comb`, `disease_flags`, `updated_at`, `bee_count_frames`
+                    )
+                    SELECT
+                        `id`, `hive_id`, `created_at`, `strength`, `queenStatus`,
+                        `mite_count`, `sample_size`, `notes`, `latitude`, `longitude`,
+                        `emergency_cells`, `supercedure_cells`, `swarm_cells`, `eggs`,
+                        `open_brood`, `capped_brood`, `honey_stores`, `pollen`,
+                        `empty_drawn_comb`, `disease_flags`, `updated_at`, `bee_count_frames`
+                    FROM `inspections`
+                """.trimIndent())
+                db.execSQL("DROP TABLE `inspections`")
+                db.execSQL("ALTER TABLE `inspections_new` RENAME TO `inspections`")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_inspections_hive_id_created_at` ON `inspections` (`hive_id`, `created_at`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_inspections_created_at` ON `inspections` (`created_at`)")
+                db.execSQL("DROP TABLE IF EXISTS `inspection_photos`")
+                db.execSQL("DELETE FROM `sync_outbox` WHERE `entity_type` = 'photo'")
+            }
+        }
+
         @Volatile private var INSTANCE: BeeKeepRoomDb? = null
         fun get(context: Context): BeeKeepRoomDb = INSTANCE ?: synchronized(this) {
             INSTANCE ?: Room.databaseBuilder(context.applicationContext, BeeKeepRoomDb::class.java, "beekeep_room.db")
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12)
                 .setJournalMode(RoomDatabase.JournalMode.WRITE_AHEAD_LOGGING)
                 .build()
                 .also { INSTANCE = it }
