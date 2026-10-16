@@ -32,10 +32,10 @@ object LegacyImporter {
                         }
                     }
                     if (source.hasTable("inspections")) {
-                        source.rawQuery("SELECT id,hive_id,created_at,strength,queen_status,mite_count,sample_size,notes,photo_path,latitude,longitude,emergency_cells,supercedure_cells,swarm_cells FROM inspections", null).use { c ->
+                        source.rawQuery("SELECT id,hive_id,created_at,strength,queen_status,mite_count,sample_size,notes,latitude,longitude,emergency_cells,supercedure_cells,swarm_cells FROM inspections", null).use { c ->
                             while (c.moveToNext()) {
                                 val sample = max(1, c.getInt(6))
-                                db.inspections().upsert(InspectionEntity(c.getLong(0), c.getLong(1), c.getLong(2), c.getInt(3), c.getString(4), c.getInt(5), sample, c.getString(7), c.getString(8), if (c.isNull(9)) null else c.getDouble(9), if (c.isNull(10)) null else c.getDouble(10), c.getInt(11), c.getInt(12), c.getInt(13)))
+                                db.inspections().upsert(InspectionEntity(c.getLong(0), c.getLong(1), c.getLong(2), c.getInt(3), c.getString(4), c.getInt(5), sample, c.getString(7), if (c.isNull(8)) null else c.getDouble(8), if (c.isNull(9)) null else c.getDouble(9), c.getInt(10), c.getInt(11), c.getInt(12)))
                             }
                         }
                     }

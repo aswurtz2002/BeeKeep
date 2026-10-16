@@ -36,8 +36,6 @@ class BeeKeepViewModel(
     val harvests: StateFlow<List<Harvest>> = _harvests
     private val _events = MutableStateFlow<List<ActivityEvent>>(emptyList())
     val events: StateFlow<List<ActivityEvent>> = _events
-    private val _photos = MutableStateFlow<List<PhotoEntity>>(emptyList())
-    val photos: StateFlow<List<PhotoEntity>> = _photos
     private val _ready = MutableStateFlow(false)
     val ready: StateFlow<Boolean> = _ready
 
@@ -73,7 +71,6 @@ class BeeKeepViewModel(
             _treatments.value = emptyList()
             _harvests.value = emptyList()
             _events.value = emptyList()
-            _photos.value = emptyList()
 
             if (openedHive != null) {
                 detailJob = launch {
@@ -82,7 +79,6 @@ class BeeKeepViewModel(
                     launch { repo.observeTreatments(id).collect { _treatments.value = it } }
                     launch { repo.observeHarvests(id).collect { _harvests.value = it } }
                     launch { repo.observeEvents(id).collect { _events.value = it } }
-                    launch { repo.observePhotos(id).collect { _photos.value = it } }
                 }
             }
         }
