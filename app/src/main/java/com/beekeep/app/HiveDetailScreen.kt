@@ -109,6 +109,7 @@ internal fun HiveDetailScreen(
     onAutoTagWritingStarted: () -> Unit = {},
     onFastTagAssignmentStarted: () -> Unit = {},
     onFastTagAssignmentSuccess: (String) -> Unit = {},
+    onFastTagAssignmentSkip: (Long, String) -> Unit = { _, _ -> },
     onVerifyTag: () -> Unit,
     onMarkDead: () -> Unit,
     onRestore: () -> Unit,
@@ -134,8 +135,25 @@ internal fun HiveDetailScreen(
         }
     }
 
+    fun skipHiveInFastAssignment(reason: String) {
+        nfc.beginFastAssignmentFlow(activity)
+        onFastTagAssignmentStarted()
+        writeStatusType = "error"
+        writeStatus = "Skipping ${hiveReferenceName(hive.number)}: $reason."
+        onFastTagAssignmentSkip(hive.id, reason)
+    }
+
     fun startTagWriting(ignoredUid: String? = null) {
-        if (hive.isDead || writeStatusType == "saving" || writeStatusType == "removing") return
+        if (writeStatusType == "saving" || writeStatusType == "removing") return
+        if (fastTagAssignmentMode && hive.isDead) {
+            skipHiveInFastAssignment("the colony is marked dead")
+            return
+        }
+        if (fastTagAssignmentMode && !hive.tagUid.isNullOrBlank()) {
+            skipHiveInFastAssignment("it already has an NFC tag assigned")
+            return
+        }
+        if (hive.isDead) return
         // Android can dispatch the just-written tag as an Intent while the next
         // ReaderMode session is being armed. Own both paths for the whole transaction.
         if (fastTagAssignmentMode) {
@@ -198,12 +216,10 @@ internal fun HiveDetailScreen(
             return@LaunchedEffect
         }
         if (hive.isDead) {
-            writeStatusType = "error"
-            writeStatus = "Fast tag assignment skipped this colony because it is marked dead."
+            skipHiveInFastAssignment("the colony is marked dead")
             onAutoTagWritingStarted()
         } else if (!hive.tagUid.isNullOrBlank()) {
-            writeStatusType = "error"
-            writeStatus = "Fast tag assignment stopped because this hive already has an NFC tag. No tag was overwritten."
+            skipHiveInFastAssignment("it already has an NFC tag assigned")
             onAutoTagWritingStarted()
         } else {
             // Start the exclusive-flow guard before the delay as well. The old tag
