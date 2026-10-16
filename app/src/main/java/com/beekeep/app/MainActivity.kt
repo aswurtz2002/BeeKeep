@@ -1366,7 +1366,43 @@ fun BeeKeepApp(
                 },
                 onHiveSkipped = { hiveId, reason -> skipFastAssignmentHive(hiveId, reason) },
                 onAssignTag = { hiveId, uid, onResult ->
-                    vm.assignTagToHive(hiveId, uid, onResult = onResult)
+                    vm.assignTagToHive(hiveId, uid) { saved, error ->
+                        if (!saved) {
+                            // A failed database assignment must never trigger the success ding.
+                            onResult(false, error)
+                        } else {
+                            // Verify the saved UID has one current owner in Room before the
+                            // screen is allowed to announce success or play confirmation feedback.
+                            scope.launch {
+                                val normalizedUid = NfcUid.normalize(uid)
+                                val assignments = runCatching {
+                                    vm.getAllKnownNfcTagAssignments()
+                                }.getOrNull()
+                                if (normalizedUid == null || assignments == null) {
+                                    onResult(
+                                        false,
+                                        "BeeKeep could not verify the saved tag assignment. No success confirmation was played."
+                                    )
+                                } else {
+                                    val index = NfcUidIndex.fromAssignments(assignments)
+                                    nfc.updateKnownHiveTags(
+                                        hiveIdByTagUid = index.uniqueHiveIdByUid,
+                                        ready = ready,
+                                        ambiguousTagUids = index.ambiguousUids
+                                    )
+                                    val verifiedOwner = index.uniqueHiveIdByUid[normalizedUid]
+                                    if (normalizedUid in index.ambiguousUids || verifiedOwner != hiveId) {
+                                        onResult(
+                                            false,
+                                            "BeeKeep could not confirm that this tag belongs to ${hiveReferenceName(hives.firstOrNull { it.id == hiveId }?.number ?: hiveId.toString())}. No success confirmation was played."
+                                        )
+                                    } else {
+                                        onResult(true, null)
+                                    }
+                                }
+                            }
+                        }
+                    }
                 },
                 onAssignmentSaved = { assignedUid ->
                     advanceToNextUntaggedHiveForFastAssignment(targetHive, assignedUid)
