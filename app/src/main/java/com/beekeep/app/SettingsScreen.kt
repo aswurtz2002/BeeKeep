@@ -289,7 +289,7 @@ internal fun SettingsScreen(
                     Text(
                         "TURN THIS SETTING OFF TO CONTINUE NORMAL OPERATION",
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        color = MaterialTheme.colorScheme.error
                     )
                 }
                 SettingsSwitchRow(
