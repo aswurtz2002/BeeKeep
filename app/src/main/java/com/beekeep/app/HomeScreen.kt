@@ -47,6 +47,7 @@ import androidx.compose.ui.res.imageResource
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -105,7 +106,7 @@ private fun MetricCard(
 }
 
 @Composable
-private fun HoneycombNfcIndicator(nfcEnabled: Boolean) {
+internal fun HoneycombNfcIndicator(nfcEnabled: Boolean, size: Dp = 220.dp) {
     val pulse = rememberInfiniteTransition(label = "homeNfcPulse")
     val ringScale by pulse.animateFloat(
         0.84f, 1.27f,
@@ -145,8 +146,8 @@ private fun HoneycombNfcIndicator(nfcEnabled: Boolean) {
     ) {
         Box(
             modifier = Modifier
-                .width(220.dp)
-                .height(226.dp),
+                .width(size)
+                .height(size * (226f / 220f)),
             contentAlignment = Alignment.Center
         ) {
             if (nfcEnabled) {
