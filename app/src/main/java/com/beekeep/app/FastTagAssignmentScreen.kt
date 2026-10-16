@@ -20,14 +20,12 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Nfc
 import androidx.compose.material.icons.rounded.TaskAlt
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -73,7 +71,6 @@ internal fun FastTagAssignmentScreen(
     // Keep an error latched across NFC-triggered Activity pause/resume events.
     // Otherwise the reader's resume effect can reset a warning before the user sees it.
     var failureSticky by remember(hive.id) { mutableStateOf(false) }
-    var showAssignedTagDialog by remember(hive.id) { mutableStateOf(false) }
     var resumeGeneration by remember(hive.id) { mutableIntStateOf(0) }
     var skipInProgress by remember(hive.id) { mutableStateOf(false) }
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -143,7 +140,8 @@ internal fun FastTagAssignmentScreen(
         if (!verifyTargetHive()) return@LaunchedEffect
 
         writeStage = "waiting"
-        status = "Ready. Hold an unassigned NFC tag against the back of your phone."
+        // Leave the status area clear while scanning; it is reserved for warnings and results.
+        status = ""
         nfc.beginFastAssignmentFlow(activity)
         nfc.startWrite(
             activity = activity,
@@ -178,7 +176,6 @@ internal fun FastTagAssignmentScreen(
                         canRetry = true
                         failureSticky = true
                         val tagAlreadyAssigned = latestIsTagAssignedElsewhere(hive.id, result.uid)
-                        showAssignedTagDialog = tagAlreadyAssigned
                         failureTitle = if (tagAlreadyAssigned) {
                             "⚠ TAG ALREADY ASSIGNED"
                         } else {
@@ -203,7 +200,6 @@ internal fun FastTagAssignmentScreen(
                         } else {
                             "⚠ TAG NOT ASSIGNED"
                         }
-                        showAssignedTagDialog = tagAlreadyAssigned
                         status = if (!tagAlreadyAssigned) {
                             result.message
                         } else if (result.message.contains("multiple hive records", ignoreCase = true)) {
@@ -212,31 +208,6 @@ internal fun FastTagAssignmentScreen(
                             "This NFC tag is already assigned to another hive. Nothing was written. Remove it and present an unassigned tag."
                         }
                     }
-                }
-            }
-        )
-    }
-
-    if (showAssignedTagDialog) {
-        AlertDialog(
-            onDismissRequest = { /* Keep the warning visible until the user chooses another tag. */ },
-            title = {
-                Text("⚠ TAG ALREADY ASSIGNED", fontWeight = FontWeight.ExtraBold)
-            },
-            text = {
-                Text(
-                    "This physical NFC tag is already assigned to another hive. BeeKeep did not overwrite it or change any hive assignment. Remove it, then scan a different, unassigned tag for ${hiveReferenceName(hive.number)}."
-                )
-            },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        showAssignedTagDialog = false
-                        failureSticky = false
-                        retryCount++
-                    }
-                ) {
-                    Text("SCAN ANOTHER TAG", fontWeight = FontWeight.Bold)
                 }
             }
         )
@@ -339,16 +310,21 @@ internal fun FastTagAssignmentScreen(
                         textAlign = TextAlign.Center
                     )
                 }
-                Text(
-                    status,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold,
-                    textAlign = TextAlign.Center,
-                    color = if (writeStage == "error") MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
-                )
+                if (status.isNotBlank()) {
+                    Text(
+                        status,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        textAlign = TextAlign.Center,
+                        color = if (writeStage == "error" || writeStage == "check_error") {
+                            MaterialTheme.colorScheme.error
+                        } else {
+                            MaterialTheme.colorScheme.onSurface
+                        }
+                    )
+                }
                 if (canRetry) {
                     Button(onClick = {
-                        showAssignedTagDialog = false
                         failureSticky = false
                         retryCount++
                     }) {
