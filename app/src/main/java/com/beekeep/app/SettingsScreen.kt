@@ -281,7 +281,7 @@ internal fun SettingsScreen(
 
                 // Voice controls stay together at the bottom of this section.
                 SettingsSwitchRow(
-                    title = "Auto-start voice after an NFC hive scan",
+                    title = "Auto-start voice recording after an NFC hive scan",
                     checked = autoVoiceEnabled,
                     onCheckedChange = onAutoVoiceEnabledChange
                 )
