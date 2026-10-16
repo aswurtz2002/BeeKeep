@@ -1342,7 +1342,17 @@ fun BeeKeepApp(
                 },
                 checkHiveSkipReason = { hiveId ->
                     val latestHive = vm.getHivesSnapshot().firstOrNull { it.id == hiveId }
-                    val assignedHiveIds = vm.getAllKnownNfcTagAssignments()
+                    // Refresh the writer's ownership cache from Room immediately before
+                    // each write attempt. Do not let an older in-memory hive/tag snapshot
+                    // classify a released UID as already assigned.
+                    val knownAssignments = vm.getAllKnownNfcTagAssignments()
+                    val currentIndex = NfcUidIndex.fromAssignments(knownAssignments)
+                    nfc.updateKnownHiveTags(
+                        hiveIdByTagUid = currentIndex.uniqueHiveIdByUid,
+                        ready = ready,
+                        ambiguousTagUids = currentIndex.ambiguousUids
+                    )
+                    val assignedHiveIds = knownAssignments
                         .filter { !it.first.isNullOrBlank() }
                         .map { it.second }
                         .toSet()
