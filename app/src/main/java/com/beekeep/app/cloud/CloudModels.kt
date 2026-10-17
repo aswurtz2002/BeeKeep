@@ -10,7 +10,10 @@ data class CloudDocumentRow(
     val payload: String,
     val updated_at: Long,
     val deleted: Boolean = false,
-    val device_id: String = "android"
+    val device_id: String = "android",
+    // Stage 1 adds workspace scope while preserving private per-user sync behavior.
+    // The database trigger fills this for older clients that do not supply it.
+    val workspace_id: String? = null
 )
 
 data class CloudAccountState(
