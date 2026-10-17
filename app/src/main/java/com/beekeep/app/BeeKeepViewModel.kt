@@ -153,7 +153,11 @@ class BeeKeepViewModel(
             onResult(false, "Choose a hive count between 0 and 9,999 per apiary.")
             return
         }
-        val currentHiveCount = _hives.value.size + _deadHives.value.size
+        val lockedIds = BeeKeepEntitlements.lockedHiveIds(appContext)
+        val currentHiveCount = BeeKeepEntitlements.countHivesSubjectToFreeLimit(
+            (_hives.value + _deadHives.value).map { it.id },
+            lockedIds
+        )
         val requestedHiveCount = hiveCounts.sum()
         val limit = BeeKeepEntitlements.hiveLimit(appContext)
         if (requestedHiveCount > 0 && currentHiveCount + requestedHiveCount > limit) {
@@ -208,8 +212,13 @@ class BeeKeepViewModel(
         val cleanApiary = apiary.trim().ifBlank { "Unassigned Yard" }
         viewModelScope.launch {
             val planAtCreation = BeeKeepEntitlements.currentPlan(appContext)
+            val lockedIds = BeeKeepEntitlements.lockedHiveIds(appContext)
+            val currentHiveCount = BeeKeepEntitlements.countHivesSubjectToFreeLimit(
+                (_hives.value + _deadHives.value).map { it.id },
+                lockedIds
+            )
             if (planAtCreation == BeeKeepPlan.FREE &&
-                _hives.value.size + _deadHives.value.size >= BeeKeepEntitlements.FREE_HIVE_LIMIT
+                currentHiveCount >= BeeKeepEntitlements.FREE_HIVE_LIMIT
             ) {
                 onResult(false, BeeKeepEntitlements.freeLimitMessage())
                 return@launch
