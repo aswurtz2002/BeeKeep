@@ -579,6 +579,24 @@ fun BeeKeepApp(
         screen = Screen.PURCHASES
     }
 
+    fun stopFastAssignmentForLockedHive() {
+        nfc.stop(activity)
+        nfc.finishFastAssignmentFlow(activity, preserveLastUid = false)
+        fastAssignmentSessionActive = false
+        fastAssignmentScreenActive = false
+        fastAssignmentCurrentHiveId = null
+        fastAssignmentApiaryName = null
+        fastAssignmentIgnoredUid = null
+        fastAssignmentAssignedHiveIds = emptySet()
+        pendingAutoTagWriteHiveId = null
+        pendingAutoTagWriteIgnoredUid = null
+        pendingAutoStartVoiceHiveId = null
+        pendingInspectionHiveId = null
+        inspecting = false
+        selectedHiveOpen = false
+        vm.clearHive()
+    }
+
     // Show the free-plan limit prompt when the user enters the Add Hive flow at the cap.
     androidx.compose.runtime.LaunchedEffect(
         addHive,
@@ -752,6 +770,8 @@ fun BeeKeepApp(
                 .filter { !it.first.isNullOrBlank() }
                 .map { it.second }
                 .toSet()
+            val currentLockedHiveIds = BeeKeepEntitlements.lockedHiveIds(context)
+            lockedHiveIds = currentLockedHiveIds
             val apiaryHives = latestHives.filter {
                 it.apiary.equals(apiaryName, ignoreCase = true) && !it.isDead
             }
@@ -765,6 +785,7 @@ fun BeeKeepApp(
                 hive.id != currentHive.id &&
                     hive.id !in assignedInThisRun &&
                     hive.id !in alreadyAssignedHiveIds &&
+                    hive.id !in currentLockedHiveIds &&
                     hive.tagUid.isNullOrBlank()
             }
 
@@ -794,6 +815,7 @@ fun BeeKeepApp(
     }
 
     fun startFastTagAssignmentFromHive(requestedHive: Hive) {
+        if (!requestHiveAccess(requestedHive)) return
         (activity as? MainActivity)?.stopHiveAnnouncements()
         val apiaryHives = hives.filter {
             it.apiary.equals(requestedHive.apiary, ignoreCase = true) && !it.isDead
@@ -804,7 +826,9 @@ fun BeeKeepApp(
         } else {
             apiaryHives
         }
-        val firstUntaggedHive = candidateOrder.firstOrNull { it.tagUid.isNullOrBlank() }
+        val firstUntaggedHive = candidateOrder.firstOrNull {
+            it.id !in lockedHiveIds && it.tagUid.isNullOrBlank()
+        }
         if (firstUntaggedHive == null) {
             scope.launch {
                 snackbarHostState.showSnackbar(
@@ -1506,6 +1530,20 @@ fun BeeKeepApp(
     }
     if (fastAssignmentScreenActive) {
         val targetHive = hives.firstOrNull { it.id == fastAssignmentCurrentHiveId }
+        if (targetHive != null && targetHive.id in lockedHiveIds) {
+            LockedHiveScreen(
+                hiveName = hiveDisplayName(targetHive.number),
+                onBack = {
+                    stopFastAssignmentForLockedHive()
+                    screen = Screen.HOME
+                },
+                onUpgrade = {
+                    stopFastAssignmentForLockedHive()
+                    openLockedHiveUpgrade()
+                }
+            )
+            return
+        }
         if (targetHive == null) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Text("Preparing the next hive…", color = MaterialTheme.colorScheme.onSurfaceVariant)
