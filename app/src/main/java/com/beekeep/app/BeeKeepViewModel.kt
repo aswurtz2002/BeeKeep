@@ -154,8 +154,9 @@ class BeeKeepViewModel(
             return
         }
         val currentHiveCount = _hives.value.size + _deadHives.value.size
+        val requestedHiveCount = hiveCounts.sum()
         val limit = BeeKeepEntitlements.hiveLimit(appContext)
-        if (currentHiveCount + hiveCounts.sum() > limit) {
+        if (requestedHiveCount > 0 && currentHiveCount + requestedHiveCount > limit) {
             onResult(false, BeeKeepEntitlements.freeLimitMessage())
             return
         }
