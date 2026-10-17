@@ -1013,6 +1013,11 @@ fun BeeKeepApp(
     }
 
     fun checkHiveLocation(hive: Hive) {
+        if (!requestHiveAccess(hive)) {
+            pendingLocationHive = null
+            locationCheckCallback = null
+            return
+        }
         val currentApiary = apiaries.firstOrNull { it.name.equals(hive.apiary, ignoreCase = true) }
         if (apiaries.none { it.latitude != null && it.longitude != null }) {
             scope.launch { snackbarHostState.showSnackbar("Save GPS coordinates for your apiaries to enable hive location checks.") }
@@ -1357,13 +1362,15 @@ fun BeeKeepApp(
             },
             confirmButton = {
                 TextButton(onClick = {
-                    vm.moveHiveToApiary(hive.id, targetApiary.name) { success, error ->
-                        pendingApiaryMove = null
-                        scope.launch {
-                            snackbarHostState.showSnackbar(
-                                if (success) "${hiveReferenceName(hive.number)} moved to ${targetApiary.name}"
-                                else error ?: "Could not move the hive."
-                            )
+                    pendingApiaryMove = null
+                    if (requestHiveAccess(hive)) {
+                        vm.moveHiveToApiary(hive.id, targetApiary.name) { success, error ->
+                            scope.launch {
+                                snackbarHostState.showSnackbar(
+                                    if (success) "${hiveReferenceName(hive.number)} moved to ${targetApiary.name}"
+                                    else error ?: "Could not move the hive."
+                                )
+                            }
                         }
                     }
                 }) { Text("MOVE HIVE", fontWeight = FontWeight.ExtraBold) }
@@ -1690,10 +1697,16 @@ fun BeeKeepApp(
                 if (pendingAutoStartVoiceHiveId == hiveForInspection.id) pendingAutoStartVoiceHiveId = null
             },
             onSaveHiveLocation = { hiveId, latitude, longitude, onResult ->
-                vm.updateHiveLocation(hiveId, latitude, longitude, onResult)
+                if (requestHiveAccessById(hiveId)) {
+                    vm.updateHiveLocation(hiveId, latitude, longitude, onResult)
+                } else {
+                    onResult("This hive is locked. Renew Pro or purchase Ultimate to edit it.")
+                }
             },
             onRecordBeeCountChange = { hiveId, previousFrames, newFrames ->
-                vm.recordBeeCountChange(hiveId, previousFrames, newFrames)
+                if (requestHiveAccessById(hiveId)) {
+                    vm.recordBeeCountChange(hiveId, previousFrames, newFrames)
+                }
             },
             onBack = { pendingAutoStartVoiceHiveId = null; inspecting = false },
             onHome = {
@@ -1706,16 +1719,20 @@ fun BeeKeepApp(
                 vm.clearHive()
             },
             onSave = { inspection ->
-                val saved = vm.saveInspection(inspection)
-                if (saved) {
-                    // Keep the full note log (including an intentional empty value) available for the next Inspect session.
-                    activity.getSharedPreferences(INSPECTION_NOTE_DRAFTS, android.content.Context.MODE_PRIVATE)
-                        .edit { putString("hive_${inspection.hiveId}", inspection.notes) }
-                    scope.launch { snackbarHostState.showSnackbar("Inspection saved") }
+                if (requestHiveAccess(hiveForInspection)) {
+                    val saved = vm.saveInspection(inspection)
+                    if (saved) {
+                        // Keep the full note log (including an intentional empty value) available for the next Inspect session.
+                        activity.getSharedPreferences(INSPECTION_NOTE_DRAFTS, android.content.Context.MODE_PRIVATE)
+                            .edit { putString("hive_${inspection.hiveId}", inspection.notes) }
+                        scope.launch { snackbarHostState.showSnackbar("Inspection saved") }
+                    } else {
+                        scope.launch { snackbarHostState.showSnackbar("Could not save inspection. Your field screen is still open; try again.") }
+                    }
+                    saved
                 } else {
-                    scope.launch { snackbarHostState.showSnackbar("Could not save inspection. Your field screen is still open; try again.") }
+                    false
                 }
-                saved
             },
             onSaved = {
                 if (vm.selected.value?.id == hiveForInspection.id) {
