@@ -127,8 +127,8 @@ class BeeKeepViewModel(
     ) {
         val cleanPrefix = hivePrefix.trim()
         val cleanApiaryNames = apiaryNames.map(String::trim)
-        if (cleanApiaryNames.isEmpty() || cleanApiaryNames.size > 50) {
-            onResult(false, "Choose between 1 and 50 apiaries.")
+        if (cleanApiaryNames.isEmpty()) {
+            onResult(false, "Create at least one apiary.")
             return
         }
         if (cleanApiaryNames.size != startingHiveNumbers.size ||
@@ -149,16 +149,14 @@ class BeeKeepViewModel(
             onResult(false, "Starting numbers must be between 1 and 999,999.")
             return
         }
-        if (hiveCounts.any { it !in 0..5_000 } || hiveCounts.sum() > 5_000) {
-            onResult(false, "Choose between 0 and 5,000 hives per apiary, with no more than 5,000 total.")
+        if (hiveCounts.any { it !in 0..9_999 }) {
+            onResult(false, "Choose a hive count between 0 and 9,999 per apiary.")
             return
         }
-        if (allowExistingWorkspace && _apiaries.value.size + cleanApiaryNames.size > 50) {
-            onResult(false, "Your workspace can contain no more than 50 apiaries total.")
-            return
-        }
-        if (allowExistingWorkspace && _hives.value.size + _deadHives.value.size + hiveCounts.sum() > 5_000) {
-            onResult(false, "Your workspace can contain no more than 5,000 hives total.")
+        val currentHiveCount = _hives.value.size + _deadHives.value.size
+        val limit = BeeKeepEntitlements.hiveLimit(appContext)
+        if (currentHiveCount + hiveCounts.sum() > limit) {
+            onResult(false, BeeKeepEntitlements.freeLimitMessage())
             return
         }
         if (allowExistingWorkspace) {
@@ -202,6 +200,12 @@ class BeeKeepViewModel(
         val clean = number.trim(); if (clean.isBlank()) { onResult(false, "Enter a hive number."); return }
         val cleanApiary = apiary.trim().ifBlank { "Unassigned Yard" }
         viewModelScope.launch {
+            if (!BeeKeepEntitlements.hasUnlimitedHives(appContext) &&
+                _hives.value.size + _deadHives.value.size >= BeeKeepEntitlements.FREE_HIVE_LIMIT
+            ) {
+                onResult(false, BeeKeepEntitlements.freeLimitMessage())
+                return@launch
+            }
             val duplicate = repo.findHiveByNumberAndApiary(clean, cleanApiary)
             if (duplicate != null) {
                 onResult(false, "Hive $clean already exists in $cleanApiary.")
