@@ -541,7 +541,23 @@ fun BeeKeepApp(
     val harvests by vm.harvests.collectAsStateWithLifecycle()
     val ready by vm.ready.collectAsStateWithLifecycle()
 
+    // Keep a Pro session's expiry live while BeeKeep stays open, not only on app resume.
+    androidx.compose.runtime.LaunchedEffect(purchasePlanName) {
+        if (purchasePlanName == BeeKeepPlan.PRO.name) {
+            val expiresAt = BeeKeepEntitlements.debugProExpiresAt(context)
+            if (expiresAt != null) {
+                val remainingMillis = expiresAt - System.currentTimeMillis()
+                if (remainingMillis > 0L) kotlinx.coroutines.delay(remainingMillis)
+                purchasePlanName = BeeKeepEntitlements.currentPlan(context).name
+                lockedHiveIds = BeeKeepEntitlements.lockedHiveIds(context)
+            }
+        }
+    }
+
     fun requestHiveAccess(hive: Hive): Boolean {
+        val latestPlan = BeeKeepEntitlements.currentPlan(context)
+        if (purchasePlanName != latestPlan.name) purchasePlanName = latestPlan.name
+        lockedHiveIds = BeeKeepEntitlements.lockedHiveIds(context)
         if (hive.id !in lockedHiveIds) return true
         lockedHivePromptName = hiveDisplayName(hive.number)
         lockedHivePromptVisible = true
@@ -1340,7 +1356,7 @@ fun BeeKeepApp(
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("${lockedHivePromptName ?: "This hive"} was added while BeeKeep Pro was active.")
-                    Text("The monthly Pro plan has ended. Renew Pro or purchase Ultimate to unlock this hive and its records.")
+                    Text("Pro access is no longer active. Renew Pro or purchase Ultimate to unlock this hive and its records.")
                 }
             },
             confirmButton = {
