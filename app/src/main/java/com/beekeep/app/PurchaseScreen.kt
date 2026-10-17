@@ -68,7 +68,7 @@ internal fun PurchaseScreen(
 
         PlanCard(
             title = "BeeKeep Pro Monthly",
-            price = "$2.99",
+            price = BeeKeepPricing.formatCad(BeeKeepPricing.PRO_MONTHLY_CAD),
             billing = "CAD / month",
             description = "Unlimited hives with a monthly subscription.",
             current = currentPlan == BeeKeepPlan.PRO,
@@ -84,7 +84,7 @@ internal fun PurchaseScreen(
 
         PlanCard(
             title = "BeeKeep Pro Yearly",
-            price = "$9.99",
+            price = BeeKeepPricing.formatCad(BeeKeepPricing.PRO_YEARLY_CAD),
             billing = "CAD / year",
             description = "Unlimited hives for a full year. Save compared with monthly billing.",
             current = currentPlan == BeeKeepPlan.PRO_YEARLY,
@@ -101,7 +101,7 @@ internal fun PurchaseScreen(
 
         PlanCard(
             title = "BeeKeep Ultimate",
-            price = "$89.99",
+            price = BeeKeepPricing.formatCad(BeeKeepPricing.ULTIMATE_LIFETIME_CAD),
             billing = "CAD / one-time purchase",
             description = "Unlimited hives for one payment. No recurring subscription.",
             current = currentPlan == BeeKeepPlan.ULTIMATE,
@@ -158,7 +158,13 @@ internal fun PurchaseScreen(
                 onClick = { onChoosePlan(BeeKeepPlan.FREE) },
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(16.dp)
-            ) { Text(if (currentPlan == BeeKeepPlan.PRO) "SIMULATE PRO MONTHLY RUNOUT" else "RESET TEST PLAN TO FREE") }
+            ) {
+                Text(when (currentPlan) {
+                    BeeKeepPlan.PRO -> "SIMULATE PRO MONTHLY RUNOUT"
+                    BeeKeepPlan.PRO_YEARLY -> "SIMULATE PRO YEARLY RUNOUT"
+                    else -> "RESET TEST PLAN TO FREE"
+                })
+            }
         }
         Spacer(Modifier.height(8.dp))
     }
