@@ -114,6 +114,9 @@ object BeeKeepEntitlements {
         return proCreatedHiveIds(context)
     }
 
+    internal fun countHivesSubjectToFreeLimit(hiveIds: Collection<Long>, lockedIds: Set<Long>): Int =
+        hiveIds.count { it !in lockedIds }
+
     fun hasUnlimitedHives(context: Context): Boolean =
         currentPlan(context) != BeeKeepPlan.FREE
 
