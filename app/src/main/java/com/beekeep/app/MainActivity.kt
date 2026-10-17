@@ -384,7 +384,8 @@ enum class Screen {
     MORE,
     SETTINGS,
     TAG_MANAGER,
-    COLONY_HISTORY
+    COLONY_HISTORY,
+    PURCHASES
 }
 
 enum class HiveLogType { FEED, TREAT, HARVEST }
@@ -473,6 +474,12 @@ fun BeeKeepApp(
         fastAssignmentStateHydrated = true
     }
     var screen by rememberSaveable { mutableStateOf(Screen.HOME) }
+    var purchasePlanName by rememberSaveable {
+        mutableStateOf(BeeKeepEntitlements.currentPlan(context).name)
+    }
+    val purchasePlan = runCatching { BeeKeepPlan.valueOf(purchasePlanName) }.getOrDefault(BeeKeepPlan.FREE)
+    var purchaseBackScreen by rememberSaveable { mutableStateOf(Screen.MORE) }
+    var purchaseSuccessScreen by rememberSaveable { mutableStateOf(Screen.HOME) }
     var selectedHiveOpen by rememberSaveable { mutableStateOf(false) }
     var selectedApiaryName by rememberSaveable { mutableStateOf<String?>(null) }
     var mapOrigin by rememberSaveable { mutableStateOf(Screen.HOME) }
@@ -1261,6 +1268,32 @@ fun BeeKeepApp(
         )
     }
 
+    if (screen == Screen.PURCHASES) {
+        PurchaseScreen(
+            padding = PaddingValues(0.dp),
+            currentPlan = purchasePlan,
+            onBack = { screen = purchaseBackScreen },
+            onChoosePlan = { plan ->
+                if (BuildConfig.DEBUG) {
+                    BeeKeepEntitlements.setDebugPlan(context, plan)
+                    purchasePlanName = plan.name
+                    if (plan != BeeKeepPlan.FREE) {
+                        screen = purchaseSuccessScreen
+                        scope.launch {
+                            snackbarHostState.showSnackbar(
+                                if (plan == BeeKeepPlan.PRO) "Debug test plan activated: BeeKeep Pro."
+                                else "Debug test plan activated: BeeKeep Ultimate."
+                            )
+                        }
+                    } else {
+                        scope.launch { snackbarHostState.showSnackbar("Debug test plan reset to Free.") }
+                    }
+                }
+            }
+        )
+        return
+    }
+
     if (!ready) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1268,6 +1301,15 @@ fun BeeKeepApp(
                 Text("Loading your hives…", color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
+        return
+    }
+
+    if (addHive && !BeeKeepEntitlements.hasUnlimitedHives(context) &&
+        hives.size + deadHives.size >= BeeKeepEntitlements.FREE_HIVE_LIMIT
+    ) {
+        purchaseBackScreen = screen
+        purchaseSuccessScreen = screen
+        screen = Screen.PURCHASES
         return
     }
 
@@ -1792,6 +1834,7 @@ fun BeeKeepApp(
                 apiaries = apiaries,
                 padding = padding,
                 nfcEnabled = nfcEnabledForIndicator,
+                premiumEnabled = purchasePlan != BeeKeepPlan.FREE,
                 onOpenApiaries = {
                     selectedApiaryName = null
                     screen = Screen.APIARIES
@@ -1836,6 +1879,12 @@ fun BeeKeepApp(
                 onBack = { screen = Screen.SETTINGS },
                 onTagManager = { tagManagerReturnScreen = Screen.MORE; screen = Screen.TAG_MANAGER },
                 onColonyHistory = { screen = Screen.COLONY_HISTORY },
+                onUpgrade = {
+                    purchaseBackScreen = Screen.MORE
+                    purchaseSuccessScreen = Screen.HOME
+                    screen = Screen.PURCHASES
+                },
+                currentPlan = purchasePlan,
                 deadCount = deadHives.size,
                 activity = activity,
                 cloud = cloud
@@ -1929,6 +1978,7 @@ fun BeeKeepApp(
                 onIsTagAmbiguous = { uid -> vm.isNfcTagAmbiguous(uid) },
                 onFindHiveForTag = { uid -> vm.findHiveByTag(uid) }
             )
+            Screen.PURCHASES -> Unit
             Screen.COLONY_HISTORY -> ColonyHistoryScreen(
                 deadHives = deadHives,
                 padding = padding,
@@ -1940,7 +1990,6 @@ fun BeeKeepApp(
     }
 
     if (addApiaryOptionsVisible && screen == Screen.APIARIES) {
-        val apiaryLimitReached = apiaries.size >= 50
         AlertDialog(
             onDismissRequest = { addApiaryOptionsVisible = false },
             title = { Text("Add an Apiary", fontWeight = FontWeight.ExtraBold) },
@@ -1954,7 +2003,6 @@ fun BeeKeepApp(
                             screen = Screen.PREMADE_SETUP
                         },
                         modifier = Modifier.fillMaxWidth(),
-                        enabled = !apiaryLimitReached,
                         shape = RoundedCornerShape(14.dp)
                     ) { Text("Add Apiary with Pre-made Hives") }
                     OutlinedButton(
@@ -1966,13 +2014,6 @@ fun BeeKeepApp(
                         enabled = !apiaryLimitReached,
                         shape = RoundedCornerShape(14.dp)
                     ) { Text("Create Empty Apiary") }
-                    if (apiaryLimitReached) {
-                        Text(
-                            "BeeKeep supports up to 50 apiaries. Remove an apiary before adding another.",
-                            color = MaterialTheme.colorScheme.error,
-                            style = MaterialTheme.typography.bodySmall
-                        )
-                    }
                 }
             },
             confirmButton = {},
@@ -2620,6 +2661,8 @@ private fun MoreScreen(
     onBack: () -> Unit,
     onTagManager: () -> Unit,
     onColonyHistory: () -> Unit,
+    onUpgrade: () -> Unit,
+    currentPlan: BeeKeepPlan,
     deadCount: Int,
     activity: ComponentActivity,
     cloud: SupabaseGateway
@@ -2640,6 +2683,34 @@ private fun MoreScreen(
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text("More", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.ExtraBold)
                 Text("Additional tools and account controls", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+            }
+        }
+
+        Card(
+            onClick = onUpgrade,
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(24.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = if (currentPlan == BeeKeepPlan.FREE) Color(0xFFFFF7E6) else MaterialTheme.colorScheme.surface
+            ),
+            border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFD97706))
+        ) {
+            Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    Text(
+                        if (currentPlan == BeeKeepPlan.FREE) "Upgrade BeeKeep" else "BeeKeep ${currentPlan.displayName} active",
+                        fontWeight = FontWeight.ExtraBold,
+                        style = MaterialTheme.typography.titleMedium,
+                        color = Color(0xFF92400E)
+                    )
+                    Text(
+                        if (currentPlan == BeeKeepPlan.FREE) "Unlock unlimited hives • from $3.99 CAD/month"
+                        else "Unlimited hive creation is enabled on this device",
+                        color = Color(0xFF78350F),
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+                Icon(Icons.Rounded.ChevronRight, contentDescription = "Open BeeKeep plans", tint = Color(0xFFB45309), modifier = Modifier.size(28.dp))
             }
         }
 
