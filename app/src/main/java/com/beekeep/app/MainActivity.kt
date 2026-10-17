@@ -1652,6 +1652,20 @@ fun BeeKeepApp(
     // while the Fast Tag Assignment preference is enabled.
     if (inspecting && !fastTagAssignmentMode && fastAssignmentStateHydrated) {
         val hiveForInspection = selected ?: run { inspecting = false; return }
+        if (hiveForInspection.id in lockedHiveIds) {
+            LockedHiveScreen(
+                hiveName = hiveDisplayName(hiveForInspection.number),
+                onBack = {
+                    inspecting = false
+                    selectedHiveOpen = false
+                    pendingAutoStartVoiceHiveId = null
+                    pendingInspectionHiveId = null
+                    vm.clearHive()
+                },
+                onUpgrade = { openLockedHiveUpgrade() }
+            )
+            return
+        }
         InspectionScreen(
             activity, locationController, hiveForInspection,
             priorInspections = inspections,
