@@ -218,7 +218,11 @@ class LocalHiveRepository(context: Context) {
             }
 
             val requestedHiveCount = cleanHiveNumbers.sumOf { it.size }
-            val currentHiveCount = existingHives.count { !it.deleted }
+            val lockedIds = BeeKeepEntitlements.lockedHiveIds(appContext)
+            val currentHiveCount = BeeKeepEntitlements.countHivesSubjectToFreeLimit(
+                existingHives.filter { !it.deleted }.map { it.id },
+                lockedIds
+            )
             val hiveLimit = BeeKeepEntitlements.hiveLimit(appContext)
             require(requestedHiveCount == 0 || currentHiveCount + requestedHiveCount <= hiveLimit) {
                 BeeKeepEntitlements.freeLimitMessage()
@@ -262,7 +266,11 @@ class LocalHiveRepository(context: Context) {
         db.withTransaction {
         val existing = db.hives().get(h.id)
         if (existing == null && !BeeKeepEntitlements.hasUnlimitedHives(appContext)) {
-            val currentHiveCount = db.hives().allForBackup().count { !it.deleted }
+            val lockedIds = BeeKeepEntitlements.lockedHiveIds(appContext)
+            val currentHiveCount = BeeKeepEntitlements.countHivesSubjectToFreeLimit(
+                db.hives().allForBackup().filter { !it.deleted }.map { it.id },
+                lockedIds
+            )
             require(currentHiveCount < BeeKeepEntitlements.FREE_HIVE_LIMIT) {
                 BeeKeepEntitlements.freeLimitMessage()
             }
