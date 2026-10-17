@@ -62,7 +62,6 @@ import androidx.compose.material.icons.rounded.GpsFixed
 import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.Home
 import androidx.compose.material.icons.rounded.LocationOn
-import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.MyLocation
 import androidx.compose.material.icons.rounded.Map
 import androidx.compose.material.icons.rounded.Mic
@@ -559,8 +558,9 @@ fun BeeKeepApp(
     fun requestHiveAccess(hive: Hive): Boolean {
         val latestPlan = BeeKeepEntitlements.currentPlan(context)
         if (purchasePlanName != latestPlan.name) purchasePlanName = latestPlan.name
-        lockedHiveIds = BeeKeepEntitlements.lockedHiveIds(context)
-        if (hive.id !in lockedHiveIds) return true
+        val latestLockedHiveIds = BeeKeepEntitlements.lockedHiveIds(context)
+        lockedHiveIds = latestLockedHiveIds
+        if (hive.id !in latestLockedHiveIds) return true
         lockedHivePromptName = hiveDisplayName(hive.number)
         lockedHivePromptVisible = true
         return false
