@@ -12,30 +12,100 @@ enum class BeeKeepPlan(val displayName: String) {
 /**
  * Entitlements used by the app's hive-creation gates.
  *
- * Debug builds can simulate a purchase locally for testing. Release builds deliberately
- * ignore this debug preference until verified Google Play Billing is integrated.
+ * Debug builds simulate a monthly Pro plan locally so expiry and locked-hive behavior
+ * can be tested without a billing connection. Release builds deliberately ignore the
+ * debug preference until verified Google Play Billing is integrated.
  */
 object BeeKeepEntitlements {
     const val FREE_HIVE_LIMIT = 150
     private const val PREFS_NAME = "beekeep_prefs"
     private const val DEBUG_PLAN_KEY = "debug_purchase_plan"
+    private const val DEBUG_PRO_EXPIRY_KEY = "debug_pro_expires_at"
+    private const val PRO_CREATED_HIVE_IDS_KEY = "debug_pro_created_hive_ids"
+    private const val DEBUG_PRO_DURATION_MILLIS = 30L * 24L * 60L * 60L * 1000L
 
     fun currentPlan(context: Context): BeeKeepPlan {
         if (!BuildConfig.DEBUG) return BeeKeepPlan.FREE
-        val saved = context.applicationContext
+        val prefs = context.applicationContext
             .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            .getString(DEBUG_PLAN_KEY, BeeKeepPlan.FREE.name)
-        return runCatching { BeeKeepPlan.valueOf(saved ?: BeeKeepPlan.FREE.name) }
+        val saved = prefs.getString(DEBUG_PLAN_KEY, BeeKeepPlan.FREE.name)
+        val plan = runCatching { BeeKeepPlan.valueOf(saved ?: BeeKeepPlan.FREE.name) }
             .getOrDefault(BeeKeepPlan.FREE)
+
+        if (plan == BeeKeepPlan.PRO) {
+            val now = System.currentTimeMillis()
+            val expiresAt = prefs.getLong(DEBUG_PRO_EXPIRY_KEY, 0L)
+            when {
+                // Existing debug installations may already have Pro selected from the
+                // earlier simulator, which had no expiry. Give that selection a full
+                // simulated month instead of expiring it immediately after updating.
+                expiresAt <= 0L -> prefs.edit()
+                    .putLong(DEBUG_PRO_EXPIRY_KEY, now + DEBUG_PRO_DURATION_MILLIS)
+                    .apply()
+                isProPlanExpired(expiresAt, now) -> {
+                    prefs.edit()
+                        .putString(DEBUG_PLAN_KEY, BeeKeepPlan.FREE.name)
+                        .remove(DEBUG_PRO_EXPIRY_KEY)
+                        .apply()
+                    return BeeKeepPlan.FREE
+                }
+            }
+        }
+        return plan
     }
 
     fun setDebugPlan(context: Context, plan: BeeKeepPlan) {
         check(BuildConfig.DEBUG) { "Purchase simulation is only available in debug builds." }
-        context.applicationContext
+        val prefs = context.applicationContext
             .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            .edit()
-            .putString(DEBUG_PLAN_KEY, plan.name)
-            .apply()
+        val editor = prefs.edit().putString(DEBUG_PLAN_KEY, plan.name)
+        when (plan) {
+            BeeKeepPlan.PRO -> editor.putLong(
+                DEBUG_PRO_EXPIRY_KEY,
+                System.currentTimeMillis() + DEBUG_PRO_DURATION_MILLIS
+            )
+            // Ultimate is lifetime; Free simulates either a Pro runout or a test reset.
+            BeeKeepPlan.FREE, BeeKeepPlan.ULTIMATE -> editor.remove(DEBUG_PRO_EXPIRY_KEY)
+        }
+        editor.apply()
+    }
+
+    /**
+     * Remembers only hive IDs created while the simulated monthly Pro entitlement was
+     * active. Existing Free hives are never included in this set.
+     */
+    fun rememberProCreatedHives(context: Context, hiveIds: Collection<Long>) {
+        if (!BuildConfig.DEBUG || hiveIds.isEmpty()) return
+        val prefs = context.applicationContext
+            .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val ids = prefs.getStringSet(PRO_CREATED_HIVE_IDS_KEY, emptySet())
+            .orEmpty()
+            .toMutableSet()
+        ids.addAll(hiveIds.filter { it > 0L }.map(Long::toString))
+        prefs.edit().putStringSet(PRO_CREATED_HIVE_IDS_KEY, ids).apply()
+    }
+
+    fun proCreatedHiveIds(context: Context): Set<Long> {
+        if (!BuildConfig.DEBUG) return emptySet()
+        return context.applicationContext
+            .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .getStringSet(PRO_CREATED_HIVE_IDS_KEY, emptySet())
+            .orEmpty()
+            .mapNotNull(String::toLongOrNull)
+            .toSet()
+    }
+
+    /**
+     * Locked hives are hidden from normal access only after the simulated Pro plan
+     * expires/resets. Selecting Pro again unlocks them; Ultimate also unlocks them.
+     */
+    fun lockedHiveIds(context: Context): Set<Long> {
+        if (!BuildConfig.DEBUG) return emptySet()
+        val plan = currentPlan(context)
+        if (plan != BeeKeepPlan.FREE) return emptySet()
+        return proCreatedHiveIds(context).filterTo(mutableSetOf()) {
+            isHiveLockedForPlan(plan, createdUnderPro = true)
+        }
     }
 
     fun hasUnlimitedHives(context: Context): Boolean =
@@ -46,4 +116,10 @@ object BeeKeepEntitlements {
 
     fun freeLimitMessage(): String =
         "The Free plan supports up to $FREE_HIVE_LIMIT hives. Upgrade to BeeKeep Pro or Ultimate to add more."
+
+    internal fun isProPlanExpired(expiresAtMillis: Long, nowMillis: Long): Boolean =
+        expiresAtMillis > 0L && nowMillis >= expiresAtMillis
+
+    internal fun isHiveLockedForPlan(plan: BeeKeepPlan, createdUnderPro: Boolean): Boolean =
+        plan == BeeKeepPlan.FREE && createdUnderPro
 }
