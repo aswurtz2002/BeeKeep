@@ -89,7 +89,7 @@ internal fun PurchaseScreen(
             description = "Unlimited hives for a full year. Save compared with monthly billing.",
             current = currentPlan == BeeKeepPlan.PRO_YEARLY,
             highlighted = false,
-            badgeText = "${BeeKeepPricing.YEARLY_DISCOUNT_PERCENT}% OFF",
+            badgeText = "${BeeKeepPricing.yearlyDiscountPercent}% OFF",
             actionLabel = when {
                 currentPlan == BeeKeepPlan.PRO_YEARLY -> "PRO YEARLY ACTIVE"
                 debugBuild -> "SIMULATE YEARLY PRO PURCHASE"
