@@ -52,6 +52,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.imageResource
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntSize
@@ -316,11 +317,19 @@ internal fun HomeScreen(
         }
         item { HomeHelpMenu() }
         item {
-            Row(
-                Modifier.fillMaxWidth().padding(top = 24.dp, bottom = 24.dp),
-                horizontalArrangement = Arrangement.Center
+            Column(
+                modifier = Modifier.fillMaxWidth().padding(top = 24.dp, bottom = 24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 HoneycombNfcIndicator(nfcEnabled = nfcEnabled)
+                Text(
+                    text = "NFC tags are sold separately. Choose writable NFC tags compatible with your phone. They’re available from most online retailers.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color(0xFFB91C1C),
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp)
+                )
             }
         }
     }
