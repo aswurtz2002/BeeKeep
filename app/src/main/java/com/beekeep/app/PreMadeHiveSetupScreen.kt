@@ -149,12 +149,6 @@ internal fun PreMadeHiveSetupScreen(
                         style = MaterialTheme.typography.titleLarge,
                         fontWeight = FontWeight.ExtraBold
                     )
-                    Text(
-                        if (addToExistingWorkspace) "Add starter colonies without resetting your existing apiaries"
-                        else "Customize every yard and hive range",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
                 }
             }
 
@@ -162,15 +156,6 @@ internal fun PreMadeHiveSetupScreen(
                 modifier = Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
-                Text(
-                    if (addToExistingWorkspace) {
-                        "Add one or more apiaries and choose how many starter hives each should contain. Your current apiaries and hive records will be kept."
-                    } else {
-                        "Give each apiary its own name, starting hive number, and hive count. Leave a hive count blank or set it to 0 to create an apiary without starter hives."
-                    },
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
                 if (hiveLimit != Int.MAX_VALUE) {
                     Text(
                         "Free plan: $existingHiveCount of 150 hives currently used. Apiaries are unlimited.",
