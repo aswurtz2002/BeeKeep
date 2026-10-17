@@ -15,20 +15,22 @@ jobs:
           distribution: temurin
           java-version: '17'
           cache: gradle
-      - name: Run unit tests and lint
-        run: bash ./gradlew :app:testDebugUnitTest :app:lintDebug --stacktrace
-      - name: Print lint report on failure
+      - name: Run unit tests and lint (debug + staging)
+        run: bash ./gradlew :app:testDebugUnitTest :app:lintDebug :app:testStagingUnitTest :app:lintStaging --stacktrace
+      - name: Print lint reports on failure
         if: failure()
         shell: bash
         run: |
-          report="app/build/intermediates/lint_intermediate_text_report/debug/lintReportDebug/lint-results-debug.txt"
-          if [ -f "$report" ]; then
-            cat "$report"
-          else
-            echo "No lint text report was generated."
-          fi
-      - name: Build debug APK
-        run: bash ./gradlew :app:assembleDebug --stacktrace
+          for report in \
+            "app/build/intermediates/lint_intermediate_text_report/debug/lintReportDebug/lint-results-debug.txt" \
+            "app/build/intermediates/lint_intermediate_text_report/staging/lintReportStaging/lint-results-staging.txt"; do
+            if [ -f "$report" ]; then
+              echo "----- $report -----"
+              cat "$report"
+            fi
+          done
+      - name: Build debug and staging APKs
+        run: bash ./gradlew :app:assembleDebug :app:assembleStaging --stacktrace
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
         with:
@@ -36,3 +38,10 @@ jobs:
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 7
+      - name: Upload configured staging APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: beekeep-staging-apk
+          path: app/build/outputs/apk/staging/app-staging.apk
+          if-no-files-found: error
+          retention-days: 14
