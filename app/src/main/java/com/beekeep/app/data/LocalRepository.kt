@@ -161,7 +161,7 @@ class LocalHiveRepository(context: Context) {
         apiaryNames: List<String>,
         hiveNumbersByApiary: List<List<String>>,
         allowExistingWorkspace: Boolean = false
-    ) = withContext(Dispatchers.IO) {
+    ): List<Long> = withContext(Dispatchers.IO) {
         require(apiaryNames.isNotEmpty()) { "Create at least one apiary." }
         require(apiaryNames.size == hiveNumbersByApiary.size) { "Each apiary needs a hive-name list." }
 
@@ -180,6 +180,7 @@ class LocalHiveRepository(context: Context) {
             clean
         }
 
+        val createdHiveIds = mutableListOf<Long>()
         db.withTransaction {
             val existingApiaries = db.apiaries().allForBackup()
             val existingHives = db.hives().allForBackup()
@@ -247,9 +248,11 @@ class LocalHiveRepository(context: Context) {
                     )
                     db.hives().upsert(hive)
                     enqueue("hive", hive.id, "upsert", hivePayload(hive))
+                    createdHiveIds += hive.id
                 }
             }
         }
+        createdHiveIds
     }
 
     suspend fun saveHive(h: Hive) = withContext(Dispatchers.IO) {
