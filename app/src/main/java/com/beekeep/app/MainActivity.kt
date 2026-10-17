@@ -1729,6 +1729,22 @@ fun BeeKeepApp(
     val currentLogType = logType
     val currentSelected = selected
     if (currentLogType != null && currentSelected != null) {
+        if (currentSelected.id in lockedHiveIds) {
+            LockedHiveScreen(
+                hiveName = hiveDisplayName(currentSelected.number),
+                onBack = {
+                    logType = null
+                    selectedHiveOpen = false
+                    inspecting = false
+                    vm.clearHive()
+                },
+                onUpgrade = {
+                    logType = null
+                    openLockedHiveUpgrade()
+                }
+            )
+            return
+        }
         when (currentLogType) {
             HiveLogType.FEED -> FeedDialog({ logType = null }) { type, ratio, amount, unit, notes ->
                 vm.saveFeeding(type, ratio, amount, unit, notes) { success, error ->
@@ -1904,14 +1920,20 @@ fun BeeKeepApp(
                     inspecting = true
                 }
             },
-            onFeed = { logType = HiveLogType.FEED },
-            onTreat = { logType = HiveLogType.TREAT },
-            onHarvest = { logType = HiveLogType.HARVEST },
-            onTag = { uid, onResult -> vm.assignTag(uid, onResult) },
+            onFeed = { if (requestHiveAccess(hiveForDetail)) logType = HiveLogType.FEED },
+            onTreat = { if (requestHiveAccess(hiveForDetail)) logType = HiveLogType.TREAT },
+            onHarvest = { if (requestHiveAccess(hiveForDetail)) logType = HiveLogType.HARVEST },
+            onTag = { uid, onResult ->
+                if (requestHiveAccess(hiveForDetail)) vm.assignTag(uid, onResult)
+                else onResult(false, "This hive is locked. Renew Pro or purchase Ultimate to manage it.")
+            },
             isTagAssignedElsewhere = { targetHiveId, uid ->
                 nfc.isTagAssignedElsewhere(targetHiveId, uid)
             },
-            onClearTag = { hiveId, onResult -> vm.clearTagForHive(hiveId, onResult) },
+            onClearTag = { hiveId, onResult ->
+                if (requestHiveAccessById(hiveId)) vm.clearTagForHive(hiveId, onResult)
+                else onResult(false, "This hive is locked. Renew Pro or purchase Ultimate to manage its NFC tag.")
+            },
             confirmBeforeTagRemoval = autoVoicePrefs.getBoolean("confirm_tag_removal", true),
             tagAssignmentSuccessUid = if (lastHiveTagSuccessHiveId == hiveForDetail.id) lastHiveTagSuccessUid else null,
             onVerifyTag = {
@@ -1939,19 +1961,25 @@ fun BeeKeepApp(
                 }
             },
             onMarkDead = {
-                vm.markHiveDead(hiveForDetail.id) { _, error ->
-                    scope.launch { snackbarHostState.showSnackbar(error ?: "${hiveReferenceName(hiveForDetail.number)} marked dead. History preserved.") }
+                if (requestHiveAccess(hiveForDetail)) {
+                    vm.markHiveDead(hiveForDetail.id) { _, error ->
+                        scope.launch { snackbarHostState.showSnackbar(error ?: "${hiveReferenceName(hiveForDetail.number)} marked dead. History preserved.") }
+                    }
                 }
             },
             onRestore = {
-                vm.restoreHive(hiveForDetail.id) { _, error ->
-                    scope.launch { snackbarHostState.showSnackbar(error ?: "${hiveReferenceName(hiveForDetail.number)} restored to active.") }
+                if (requestHiveAccess(hiveForDetail)) {
+                    vm.restoreHive(hiveForDetail.id) { _, error ->
+                        scope.launch { snackbarHostState.showSnackbar(error ?: "${hiveReferenceName(hiveForDetail.number)} restored to active.") }
+                    }
                 }
             },
             onDelete = {
-                vm.deleteHivePermanently(hiveForDetail.id) { success, error ->
-                    if (success) { selectedHiveOpen = false; vm.clearHive() }
-                    scope.launch { snackbarHostState.showSnackbar(error ?: "${hiveReferenceName(hiveForDetail.number)} permanently deleted.") }
+                if (requestHiveAccess(hiveForDetail)) {
+                    vm.deleteHivePermanently(hiveForDetail.id) { success, error ->
+                        if (success) { selectedHiveOpen = false; vm.clearHive() }
+                        scope.launch { snackbarHostState.showSnackbar(error ?: "${hiveReferenceName(hiveForDetail.number)} permanently deleted.") }
+                    }
                 }
             }
         )
