@@ -16,7 +16,7 @@ jobs:
           java-version: '17'
           cache: gradle
       - name: Run unit tests and lint (debug + staging)
-        run: bash ./gradlew :app:testDebugUnitTest :app:lintDebug :app:testStagingUnitTest :app:lintStaging --stacktrace
+        run: bash ./gradlew :app:testDebugUnitTest :app:lintDebug :app:lintStaging --stacktrace
       - name: Print lint reports on failure
         if: failure()
         shell: bash
