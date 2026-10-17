@@ -23,6 +23,7 @@ import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Yard
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -33,6 +34,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -79,6 +81,7 @@ internal fun PreMadeHiveSetupScreen(
     var hivePrefix by rememberSaveable(addToExistingWorkspace) { mutableStateOf("") }
     var isSaving by remember { mutableStateOf(false) }
     var errorMessage by rememberSaveable { mutableStateOf<String?>(null) }
+    var hiveLimitPromptVisible by rememberSaveable { mutableStateOf(false) }
 
     val totalHives = hiveCounts.sumOf { it.toIntOrNull() ?: 0 }
     val existingApiaryNamesNormalized = remember(existingApiaryNames) {
@@ -338,10 +341,13 @@ internal fun PreMadeHiveSetupScreen(
                             val starts = startNumbers.map { it.toIntOrNull() }
                             val counts = hiveCounts.map { if (it.isBlank()) 0 else it.toIntOrNull() ?: -1 }
                             errorMessage = when {
+                                totalHives > maximumNewHives && hiveLimit != Int.MAX_VALUE -> {
+                                    // Use the same honey-themed upgrade prompt as individual hive creation.
+                                    hiveLimitPromptVisible = true
+                                    null
+                                }
                                 totalHives > maximumNewHives ->
-                                    if (hiveLimit == Int.MAX_VALUE) "This batch is too large to process at once. Split it into smaller batches."
-                                    else if (addToExistingWorkspace) "You can add only $maximumNewHives more hives before reaching the Free plan's 150-hive limit."
-                                    else "The Free plan supports up to 150 hives. Upgrade to BeeKeep Pro or Ultimate for unlimited hives."
+                                    "This batch is too large to process at once. Split it into smaller batches."
                                 cleanedNames.any(String::isBlank) -> "Enter a name for every apiary."
                                 normalizedNames.distinct().size != normalizedNames.size -> "Each apiary needs a unique name."
                                 addToExistingWorkspace && cleanedNames.any { it.lowercase(Locale.ROOT) in existingApiaryNamesNormalized } ->
@@ -353,7 +359,7 @@ internal fun PreMadeHiveSetupScreen(
                                 } -> "A hive range cannot end above 999,999."
                                 else -> null
                             }
-                            if (errorMessage == null) {
+                            if (errorMessage == null && totalHives <= maximumNewHives) {
                                 isSaving = true
                                 vm.createPreMadeSetup(
                                     hivePrefix = hivePrefix.trim(),
@@ -363,8 +369,19 @@ internal fun PreMadeHiveSetupScreen(
                                     allowExistingWorkspace = addToExistingWorkspace
                                 ) { success, error ->
                                     isSaving = false
-                                    if (success) onComplete(cleanedNames.size, counts.sum())
-                                    else errorMessage = error ?: "Could not create your setup. Please try again."
+                                    if (success) {
+                                        hiveLimitPromptVisible = false
+                                        onComplete(cleanedNames.size, counts.sum())
+                                    } else if (hiveLimit != Int.MAX_VALUE &&
+                                        error?.contains("Free plan", ignoreCase = true) == true
+                                    ) {
+                                        // The view-model remains the source of truth if the count changed
+                                        // between validation and the attempted batch creation.
+                                        errorMessage = null
+                                        hiveLimitPromptVisible = true
+                                    } else {
+                                        errorMessage = error ?: "Could not create your setup. Please try again."
+                                    }
                                 }
                             }
                         },
@@ -384,6 +401,47 @@ internal fun PreMadeHiveSetupScreen(
                     }
                 }
             }
+        }
+        if (hiveLimitPromptVisible) {
+            AlertDialog(
+                onDismissRequest = { hiveLimitPromptVisible = false },
+                shape = RoundedCornerShape(26.dp),
+                containerColor = androidx.compose.ui.graphics.Color(0xFFFFFBEB),
+                titleContentColor = androidx.compose.ui.graphics.Color(0xFF78350F),
+                textContentColor = androidx.compose.ui.graphics.Color(0xFF654321),
+                title = {
+                    Text("Hive Limit Reached", fontWeight = FontWeight.ExtraBold)
+                },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("This setup requests $totalHives starter hives.")
+                        Text(
+                            "You can add $maximumNewHives more hives on your current plan. You currently have $existingHiveCount.",
+                        )
+                        Text(
+                            "Upgrade to Pro or Ultimate to continue with this setup. Apiaries remain unlimited on every plan.",
+                            color = androidx.compose.ui.graphics.Color(0xFF92400E),
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            hiveLimitPromptVisible = false
+                            onUpgrade()
+                        },
+                        shape = RoundedCornerShape(14.dp)
+                    ) {
+                        Text("VIEW UPGRADE PLANS", fontWeight = FontWeight.ExtraBold)
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { hiveLimitPromptVisible = false }) {
+                        Text("NOT NOW", color = androidx.compose.ui.graphics.Color(0xFF78350F))
+                    }
+                }
+            )
         }
     }
 }
