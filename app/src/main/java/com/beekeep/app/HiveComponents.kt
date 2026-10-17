@@ -22,7 +22,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Yard
 import androidx.compose.material.icons.rounded.ChevronRight
+import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilterChip
@@ -53,7 +55,13 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 
 @Composable
-internal fun HiveRow(hive: Hive, supporting: String? = null, compact: Boolean = false, onClick: () -> Unit) {
+internal fun HiveRow(
+    hive: Hive,
+    supporting: String? = null,
+    compact: Boolean = false,
+    locked: Boolean = false,
+    onClick: () -> Unit
+) {
     // The Apiaries hive list now highlights the colony's strength rather than mite percentage.
     val strengthGrade = ColonyStrength.gradeFromStored(hive.strength)
     val strengthColor = when (strengthGrade) {
@@ -75,39 +83,98 @@ internal fun HiveRow(hive: Hive, supporting: String? = null, compact: Boolean = 
         ),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
     ) {
-        Row(Modifier.fillMaxWidth().padding(horizontal = 13.dp, vertical = if (compact) 10.dp else 15.dp), verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(if (compact) 2.dp else 3.dp)) {
-                Text(hiveDisplayName(hive.number), fontWeight = FontWeight.ExtraBold, style = MaterialTheme.typography.titleMedium)
-                Text(hive.apiary, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Text(
-                    hive.beeCountFrames?.let { frames ->
-                        "Queen ${hive.queenStatus} ~ ${formatBeeCountFrames(frames)} Frames of Bees"
-                    } ?: "Queen ${hive.queenStatus}",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    style = MaterialTheme.typography.bodySmall
-                )
-                supporting?.let { Text(it, color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelMedium) }
-            }
-            Column(
-                Modifier.padding(horizontal = 4.dp, vertical = if (compact) 2.dp else 4.dp),
-                horizontalAlignment = Alignment.End,
-                verticalArrangement = Arrangement.spacedBy(2.dp)
+        Box(Modifier.fillMaxWidth()) {
+            Row(
+                Modifier.fillMaxWidth()
+                    .padding(horizontal = 13.dp, vertical = if (compact) 10.dp else 15.dp)
+                    .padding(end = if (locked) 18.dp else 0.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
-                    ColonyStrength.labelForGrade(strengthGrade),
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.ExtraBold,
-                    color = strengthColor,
-                    maxLines = 1
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(if (compact) 2.dp else 3.dp)) {
+                    Text(hiveDisplayName(hive.number), fontWeight = FontWeight.ExtraBold, style = MaterialTheme.typography.titleMedium)
+                    Text(hive.apiary, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(
+                        hive.beeCountFrames?.let { frames ->
+                            "Queen ${hive.queenStatus} ~ ${formatBeeCountFrames(frames)} Frames of Bees"
+                        } ?: "Queen ${hive.queenStatus}",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    supporting?.let { Text(it, color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelMedium) }
+                }
+                Column(
+                    Modifier.padding(horizontal = 4.dp, vertical = if (compact) 2.dp else 4.dp),
+                    horizontalAlignment = Alignment.End,
+                    verticalArrangement = Arrangement.spacedBy(2.dp)
+                ) {
+                    Text(
+                        ColonyStrength.labelForGrade(strengthGrade),
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = strengthColor,
+                        maxLines = 1
+                    )
+                    Icon(Icons.Rounded.ChevronRight, "Open hive", tint = Color(0xFF78350F))
+                }
+            }
+            if (locked) {
+                Icon(
+                    Icons.Rounded.Lock,
+                    contentDescription = "Locked hive",
+                    tint = Color(0xFFB45309),
+                    modifier = Modifier.align(Alignment.TopEnd).padding(top = 7.dp, end = 7.dp).size(16.dp)
                 )
-                Icon(Icons.Rounded.ChevronRight, "Open hive", tint = Color(0xFF78350F))
+            }
+        }
+    }
+}
+
+
+@Composable
+internal fun LockedHiveScreen(hiveName: String, onBack: () -> Unit, onUpgrade: () -> Unit) {
+    BackHandler { onBack() }
+    Box(
+        Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(24.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(24.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+        ) {
+            Column(
+                Modifier.fillMaxWidth().padding(22.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Icon(
+                    Icons.Rounded.Lock,
+                    contentDescription = "Hive locked",
+                    tint = Color(0xFFB45309),
+                    modifier = Modifier.size(42.dp)
+                )
+                Text("Hive Locked", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.ExtraBold)
+                Text(
+                    "$hiveName was added while BeeKeep Pro was active. Renew Pro or purchase BeeKeep Ultimate to unlock this hive and its records.",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Button(onClick = onUpgrade, modifier = Modifier.fillMaxWidth()) {
+                    Text("RENEW PRO OR UPGRADE")
+                }
+                TextButton(onClick = onBack) { Text("BACK TO HIVES") }
             }
         }
     }
 }
 
 @Composable
-internal fun ColonyHistoryScreen(deadHives: List<Hive>, padding: androidx.compose.foundation.layout.PaddingValues, onBack: () -> Unit, onOpenHive: (Long) -> Unit) {
+internal fun ColonyHistoryScreen(
+    deadHives: List<Hive>,
+    lockedHiveIds: Set<Long> = emptySet(),
+    padding: androidx.compose.foundation.layout.PaddingValues,
+    onBack: () -> Unit,
+    onOpenHive: (Long) -> Unit
+) {
     BackHandler { onBack() }
     Column(Modifier.fillMaxSize().padding(padding).padding(horizontal = 16.dp)) {
         Row(Modifier.fillMaxWidth().padding(top = 14.dp, bottom = 10.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -135,7 +202,17 @@ internal fun ColonyHistoryScreen(deadHives: List<Hive>, padding: androidx.compos
                                     style = MaterialTheme.typography.bodySmall
                                 )
                             }
-                            Icon(Icons.Rounded.ChevronRight, "Open colony history", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                if (hive.id in lockedHiveIds) {
+                                    Icon(
+                                        Icons.Rounded.Lock,
+                                        contentDescription = "Locked hive",
+                                        tint = Color(0xFFB45309),
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                                Icon(Icons.Rounded.ChevronRight, "Open colony history", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
                         }
                     }
                 }
