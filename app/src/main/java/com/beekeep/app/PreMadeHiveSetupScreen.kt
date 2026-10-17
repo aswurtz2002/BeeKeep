@@ -55,7 +55,9 @@ internal fun PreMadeHiveSetupScreen(
     existingApiaryNames: List<String> = emptyList(),
     existingHiveCount: Int = 0,
     addToExistingWorkspace: Boolean = false,
+    hiveLimit: Int = BeeKeepEntitlements.FREE_HIVE_LIMIT,
     onBack: () -> Unit,
+    onUpgrade: () -> Unit = {},
     onComplete: (createdApiaries: Int, createdHives: Int) -> Unit
 ) {
     val suggestedApiaryName = remember(existingApiaryNames) {
@@ -70,7 +72,7 @@ internal fun PreMadeHiveSetupScreen(
     var startNumbers by rememberSaveable(addToExistingWorkspace) {
         mutableStateOf(if (addToExistingWorkspace) listOf("1") else listOf("1", "1"))
     }
-    val maximumNewHives = if (addToExistingWorkspace) (5_000 - existingHiveCount).coerceAtLeast(0) else 5_000
+    val maximumNewHives = (hiveLimit - if (addToExistingWorkspace) existingHiveCount else 0).coerceAtLeast(0)
     var hiveCounts by rememberSaveable(addToExistingWorkspace) {
         mutableStateOf(if (addToExistingWorkspace) listOf(minOf(10, maximumNewHives).toString()) else listOf("10", "10"))
     }
@@ -79,14 +81,10 @@ internal fun PreMadeHiveSetupScreen(
     var errorMessage by rememberSaveable { mutableStateOf<String?>(null) }
 
     val totalHives = hiveCounts.sumOf { it.toIntOrNull() ?: 0 }
-    val totalApiaryLimit = 50
-    val maximumApiaries = if (addToExistingWorkspace) {
-        (totalApiaryLimit - existingApiaryNames.size).coerceAtLeast(0)
-    } else totalApiaryLimit
     val existingApiaryNamesNormalized = remember(existingApiaryNames) {
         existingApiaryNames.map { it.trim().lowercase(Locale.ROOT) }.toSet()
     }
-    val canAddApiary = apiaryNames.size < maximumApiaries
+    val canAddApiary = true
 
     BackHandler { if (!isSaving) onBack() }
 
@@ -115,14 +113,6 @@ internal fun PreMadeHiveSetupScreen(
     }
 
     fun addApiary() {
-        if (!canAddApiary) {
-            errorMessage = if (addToExistingWorkspace) {
-                "Your workspace has room for no more than 50 apiaries total."
-            } else {
-                "You can create up to $maximumApiaries apiaries at once."
-            }
-            return
-        }
         apiaryNames = apiaryNames + nextAvailableApiaryName()
         startNumbers = startNumbers + "1"
         hiveCounts = hiveCounts + ""
@@ -178,6 +168,13 @@ internal fun PreMadeHiveSetupScreen(
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+                if (hiveLimit != Int.MAX_VALUE) {
+                    Text(
+                        "Free plan: $existingHiveCount of 150 hives currently used. Apiaries are unlimited.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
 
                 Card(
                     modifier = Modifier.fillMaxWidth(),
@@ -314,16 +311,13 @@ internal fun PreMadeHiveSetupScreen(
                     Icon(Icons.Rounded.Add, contentDescription = null)
                     Text("Add another apiary", modifier = Modifier.padding(start = 8.dp))
                 }
-                if (apiaryNames.size >= maximumApiaries) {
-                    Text(
-                        if (addToExistingWorkspace) "A maximum of 50 apiaries can exist in your workspace."
-                        else "A maximum of $maximumApiaries apiaries can be created at once.",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                }
                 errorMessage?.let { message ->
                     Text(message, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
+                    if (message.contains("Free plan", ignoreCase = true)) {
+                        OutlinedButton(onClick = onUpgrade, modifier = Modifier.fillMaxWidth(), enabled = !isSaving) {
+                            Text("VIEW PRO & ULTIMATE")
+                        }
+                    }
                 }
                 Spacer(Modifier.height(4.dp))
             }
@@ -344,17 +338,16 @@ internal fun PreMadeHiveSetupScreen(
                             val starts = startNumbers.map { it.toIntOrNull() }
                             val counts = hiveCounts.map { if (it.isBlank()) 0 else it.toIntOrNull() ?: -1 }
                             errorMessage = when {
-                                addToExistingWorkspace && apiaryNames.size > maximumApiaries ->
-                                    "Your workspace can contain no more than 50 apiaries total."
                                 totalHives > maximumNewHives ->
-                                    if (addToExistingWorkspace) "You can add only $maximumNewHives more hives before reaching the 5,000-hive workspace limit."
-                                    else "You can create no more than 5,000 hives at once."
+                                    if (hiveLimit == Int.MAX_VALUE) "This batch is too large to process at once. Split it into smaller batches."
+                                    else if (addToExistingWorkspace) "You can add only $maximumNewHives more hives before reaching the Free plan's 150-hive limit."
+                                    else "The Free plan supports up to 150 hives. Upgrade to BeeKeep Pro or Ultimate for unlimited hives."
                                 cleanedNames.any(String::isBlank) -> "Enter a name for every apiary."
                                 normalizedNames.distinct().size != normalizedNames.size -> "Each apiary needs a unique name."
                                 addToExistingWorkspace && cleanedNames.any { it.lowercase(Locale.ROOT) in existingApiaryNamesNormalized } ->
                                     "An apiary with that name already exists. Choose a different name."
                                 starts.any { it?.let { value -> value !in 1..999_999 } ?: true } -> "Starting numbers must be between 1 and 999,999."
-                                counts.any { it < 0 || it > 5_000 } -> "Each hive count must be between 0 and 5,000 (or left blank)."
+                                counts.any { it < 0 || it > 9_999 } -> "Each hive count must be between 0 and 9,999 (or left blank)."
                                 starts.indices.any { i ->
                                     starts[i]?.let { start -> counts[i] > 0 && start.toLong() + counts[i].toLong() - 1L > 999_999L } ?: false
                                 } -> "A hive range cannot end above 999,999."
