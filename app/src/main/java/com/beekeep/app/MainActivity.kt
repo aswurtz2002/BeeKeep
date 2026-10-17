@@ -1437,7 +1437,11 @@ fun BeeKeepApp(
                     } else {
                         scope.launch {
                             snackbarHostState.showSnackbar(
-                                "Test plan reset to Free. Hives created during Pro are locked until Pro is renewed or Ultimate is activated."
+                                if (previousPlan == BeeKeepPlan.PRO) {
+                                    "BeeKeep Pro monthly plan ended. Pro-created hives are locked until Pro is renewed or Ultimate is activated."
+                                } else {
+                                    "Debug test plan reset to Free. Pro-created hives stay locked until Pro is renewed or Ultimate is activated."
+                                }
                             )
                         }
                     }
