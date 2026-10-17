@@ -14,12 +14,26 @@ android {
         targetSdk = 37
         versionCode = 25
         versionName = "1.8.1"
+        manifestPlaceholders["appLabel"] = "BeeKeep"
         val supabaseUrl = ((project.findProperty("supabaseUrl") as String?) ?: "").replace("\\", "\\\\").replace("\"", "\\\"")
         val supabaseKey = ((project.findProperty("supabaseKey") as String?) ?: "").replace("\\", "\\\\").replace("\"", "\\\"")
         buildConfigField("String", "SUPABASE_URL", "\"$supabaseUrl\"")
         buildConfigField("String", "SUPABASE_PUBLISHABLE_KEY", "\"$supabaseKey\"")
     }
-    buildTypes { release { isMinifyEnabled = false } }
+    buildTypes {
+        release { isMinifyEnabled = false }
+
+        // A separately installable, preconfigured app that connects only to BeeKeep-Staging.
+        // Supabase publishable keys are intended for client-side use; never place a secret/service-role key here.
+        create("staging") {
+            initWith(getByName("debug"))
+            applicationIdSuffix = ".staging"
+            versionNameSuffix = "-staging"
+            manifestPlaceholders["appLabel"] = "BeeKeep Staging"
+            buildConfigField("String", "SUPABASE_URL", "\"https://nnmcwsdunpwdktexgivr.supabase.co\"")
+            buildConfigField("String", "SUPABASE_PUBLISHABLE_KEY", "\"sb_publishable_74dplURrV6VbGnQHKGTbLw_lpX-pS20\"")
+        }
+    }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
