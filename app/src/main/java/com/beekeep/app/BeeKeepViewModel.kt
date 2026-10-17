@@ -184,6 +184,7 @@ class BeeKeepViewModel(
         }
 
         viewModelScope.launch {
+            val planAtCreation = BeeKeepEntitlements.currentPlan(appContext)
             runCatching {
                 repo.createStarterSetup(
                     cleanApiaryNames,
@@ -191,7 +192,12 @@ class BeeKeepViewModel(
                     allowExistingWorkspace = allowExistingWorkspace
                 )
             }
-                .onSuccess { onResult(true, null) }
+                .onSuccess { createdHiveIds ->
+                    if (planAtCreation == BeeKeepPlan.PRO) {
+                        BeeKeepEntitlements.rememberProCreatedHives(appContext, createdHiveIds)
+                    }
+                    onResult(true, null)
+                }
                 .onFailure { onResult(false, it.message ?: "Could not create the starter apiaries and hives.") }
         }
     }
@@ -200,7 +206,8 @@ class BeeKeepViewModel(
         val clean = number.trim(); if (clean.isBlank()) { onResult(false, "Enter a hive number."); return }
         val cleanApiary = apiary.trim().ifBlank { "Unassigned Yard" }
         viewModelScope.launch {
-            if (!BeeKeepEntitlements.hasUnlimitedHives(appContext) &&
+            val planAtCreation = BeeKeepEntitlements.currentPlan(appContext)
+            if (planAtCreation == BeeKeepPlan.FREE &&
                 _hives.value.size + _deadHives.value.size >= BeeKeepEntitlements.FREE_HIVE_LIMIT
             ) {
                 onResult(false, BeeKeepEntitlements.freeLimitMessage())
@@ -216,6 +223,9 @@ class BeeKeepViewModel(
                 repo.saveHive(Hive(hiveId, clean, cleanApiary, queen, "", "", null, 3, strength.coerceIn(0, 10), 0.0, null))
                 hiveId
             }.onSuccess { hiveId ->
+                if (planAtCreation == BeeKeepPlan.PRO) {
+                    BeeKeepEntitlements.rememberProCreatedHives(appContext, listOf(hiveId))
+                }
                 val tagError = tagUid?.takeIf { it.isNotBlank() }?.let { tag ->
                     runCatching { repo.assignNfcTag(hiveId, tag) }.exceptionOrNull()?.message?.let { "Hive created. $it" }
                 }
