@@ -54,6 +54,14 @@ object BeeKeepEntitlements {
         return plan
     }
 
+    fun debugProExpiresAt(context: Context): Long? {
+        if (!BuildConfig.DEBUG || currentPlan(context) != BeeKeepPlan.PRO) return null
+        val expiresAt = context.applicationContext
+            .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .getLong(DEBUG_PRO_EXPIRY_KEY, 0L)
+        return expiresAt.takeIf { it > 0L }
+    }
+
     fun setDebugPlan(context: Context, plan: BeeKeepPlan) {
         check(BuildConfig.DEBUG) { "Purchase simulation is only available in debug builds." }
         val prefs = context.applicationContext
