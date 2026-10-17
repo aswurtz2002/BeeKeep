@@ -598,6 +598,22 @@ fun BeeKeepApp(
         vm.clearHive()
     }
 
+    // Stop any in-flight hardware operation as soon as the currently open hive
+    // becomes locked, while leaving the lock screen available to explain the expiry.
+    androidx.compose.runtime.LaunchedEffect(lockedHiveIds, selected?.id, fastAssignmentCurrentHiveId) {
+        val selectedHiveLocked = selected?.id?.let { it in lockedHiveIds } == true
+        val fastTargetLocked = fastAssignmentCurrentHiveId?.let { it in lockedHiveIds } == true
+        if (selectedHiveLocked || fastTargetLocked) {
+            nfc.stop(activity)
+            (activity as? MainActivity)?.pendingNfcResult?.value = null
+            pendingAutoTagWriteHiveId = null
+            pendingAutoTagWriteIgnoredUid = null
+            pendingAutoStartVoiceHiveId = null
+            pendingInspectionHiveId = null
+            inspecting = false
+        }
+    }
+
     // Show the free-plan limit prompt when the user enters the Add Hive flow at the cap.
     androidx.compose.runtime.LaunchedEffect(
         addHive,
@@ -1764,21 +1780,33 @@ fun BeeKeepApp(
         }
         when (currentLogType) {
             HiveLogType.FEED -> FeedDialog({ logType = null }) { type, ratio, amount, unit, notes ->
-                vm.saveFeeding(type, ratio, amount, unit, notes) { success, error ->
-                    if (success) logType = null
-                    scope.launch { snackbarHostState.showSnackbar(error ?: "Feeding logged") }
+                if (requestHiveAccess(currentSelected)) {
+                    vm.saveFeeding(type, ratio, amount, unit, notes) { success, error ->
+                        if (success) logType = null
+                        scope.launch { snackbarHostState.showSnackbar(error ?: "Feeding logged") }
+                    }
+                } else {
+                    logType = null
                 }
             }
             HiveLogType.TREAT -> TreatmentDialog({ logType = null }) { type, product, days, withdrawal, notes ->
-                vm.saveTreatment(type, product, days, withdrawal, notes) { success, error ->
-                    if (success) logType = null
-                    scope.launch { snackbarHostState.showSnackbar(error ?: "Treatment logged") }
+                if (requestHiveAccess(currentSelected)) {
+                    vm.saveTreatment(type, product, days, withdrawal, notes) { success, error ->
+                        if (success) logType = null
+                        scope.launch { snackbarHostState.showSnackbar(error ?: "Treatment logged") }
+                    }
+                } else {
+                    logType = null
                 }
             }
             HiveLogType.HARVEST -> HarvestDialog({ logType = null }) { supers, wet, dry, unit, wax, propolis, notes ->
-                vm.saveHarvest(supers, wet, dry, unit, wax, propolis, notes) { success, error ->
-                    if (success) logType = null
-                    scope.launch { snackbarHostState.showSnackbar(error ?: "Harvest logged") }
+                if (requestHiveAccess(currentSelected)) {
+                    vm.saveHarvest(supers, wet, dry, unit, wax, propolis, notes) { success, error ->
+                        if (success) logType = null
+                        scope.launch { snackbarHostState.showSnackbar(error ?: "Harvest logged") }
+                    }
+                } else {
+                    logType = null
                 }
             }
         }
