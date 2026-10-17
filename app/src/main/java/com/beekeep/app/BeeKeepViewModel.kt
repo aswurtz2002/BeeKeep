@@ -153,9 +153,14 @@ class BeeKeepViewModel(
             onResult(false, "Choose a hive count between 0 and 9,999 per apiary.")
             return
         }
-        val currentHiveCount = _hives.value.size + _deadHives.value.size
+        val lockedIds = BeeKeepEntitlements.lockedHiveIds(appContext)
+        val currentHiveCount = BeeKeepEntitlements.countHivesSubjectToFreeLimit(
+            (_hives.value + _deadHives.value).map { it.id },
+            lockedIds
+        )
+        val requestedHiveCount = hiveCounts.sum()
         val limit = BeeKeepEntitlements.hiveLimit(appContext)
-        if (currentHiveCount + hiveCounts.sum() > limit) {
+        if (requestedHiveCount > 0 && currentHiveCount + requestedHiveCount > limit) {
             onResult(false, BeeKeepEntitlements.freeLimitMessage())
             return
         }
@@ -184,6 +189,7 @@ class BeeKeepViewModel(
         }
 
         viewModelScope.launch {
+            val planAtCreation = BeeKeepEntitlements.currentPlan(appContext)
             runCatching {
                 repo.createStarterSetup(
                     cleanApiaryNames,
@@ -191,7 +197,12 @@ class BeeKeepViewModel(
                     allowExistingWorkspace = allowExistingWorkspace
                 )
             }
-                .onSuccess { onResult(true, null) }
+                .onSuccess { createdHiveIds ->
+                    if (planAtCreation == BeeKeepPlan.PRO) {
+                        BeeKeepEntitlements.rememberProCreatedHives(appContext, createdHiveIds)
+                    }
+                    onResult(true, null)
+                }
                 .onFailure { onResult(false, it.message ?: "Could not create the starter apiaries and hives.") }
         }
     }
@@ -200,8 +211,14 @@ class BeeKeepViewModel(
         val clean = number.trim(); if (clean.isBlank()) { onResult(false, "Enter a hive number."); return }
         val cleanApiary = apiary.trim().ifBlank { "Unassigned Yard" }
         viewModelScope.launch {
-            if (!BeeKeepEntitlements.hasUnlimitedHives(appContext) &&
-                _hives.value.size + _deadHives.value.size >= BeeKeepEntitlements.FREE_HIVE_LIMIT
+            val planAtCreation = BeeKeepEntitlements.currentPlan(appContext)
+            val lockedIds = BeeKeepEntitlements.lockedHiveIds(appContext)
+            val currentHiveCount = BeeKeepEntitlements.countHivesSubjectToFreeLimit(
+                (_hives.value + _deadHives.value).map { it.id },
+                lockedIds
+            )
+            if (planAtCreation == BeeKeepPlan.FREE &&
+                currentHiveCount >= BeeKeepEntitlements.FREE_HIVE_LIMIT
             ) {
                 onResult(false, BeeKeepEntitlements.freeLimitMessage())
                 return@launch
@@ -216,6 +233,9 @@ class BeeKeepViewModel(
                 repo.saveHive(Hive(hiveId, clean, cleanApiary, queen, "", "", null, 3, strength.coerceIn(0, 10), 0.0, null))
                 hiveId
             }.onSuccess { hiveId ->
+                if (planAtCreation == BeeKeepPlan.PRO) {
+                    BeeKeepEntitlements.rememberProCreatedHives(appContext, listOf(hiveId))
+                }
                 val tagError = tagUid?.takeIf { it.isNotBlank() }?.let { tag ->
                     runCatching { repo.assignNfcTag(hiveId, tag) }.exceptionOrNull()?.message?.let { "Hive created. $it" }
                 }

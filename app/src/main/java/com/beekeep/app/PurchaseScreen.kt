@@ -46,7 +46,6 @@ internal fun PurchaseScreen(
     BackHandler { onBack() }
     val debugBuild = BuildConfig.DEBUG
     val honey = Color(0xFFD97706)
-    val cream = Color(0xFFFFFBEB)
 
     Column(
         Modifier
@@ -64,19 +63,6 @@ internal fun PurchaseScreen(
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text("Upgrade BeeKeep", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.ExtraBold)
                 Text("More room for every colony", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
-            }
-        }
-
-        Surface(
-            color = cream,
-            contentColor = Color(0xFF78350F),
-            shape = RoundedCornerShape(22.dp),
-            tonalElevation = 1.dp
-        ) {
-            Column(Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
-                Text("BUILT FOR GROWING APIARIES", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.ExtraBold, letterSpacing = 1.1.sp)
-                Text("Keep every hive in one place.", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.ExtraBold)
-                Text("Both paid plans remove the 150-hive Free limit. Apiaries remain unlimited on every plan.", style = MaterialTheme.typography.bodyMedium)
             }
         }
 
@@ -155,7 +141,7 @@ internal fun PurchaseScreen(
                 onClick = { onChoosePlan(BeeKeepPlan.FREE) },
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(16.dp)
-            ) { Text("RESET TEST PLAN TO FREE") }
+            ) { Text(if (currentPlan == BeeKeepPlan.PRO) "SIMULATE PRO MONTHLY RUNOUT" else "RESET TEST PLAN TO FREE") }
         }
         Spacer(Modifier.height(8.dp))
     }

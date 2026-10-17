@@ -200,7 +200,7 @@ internal fun HomeScreen(
     apiaries: List<Apiary>,
     padding: androidx.compose.foundation.layout.PaddingValues,
     nfcEnabled: Boolean,
-    premiumEnabled: Boolean = false,
+    currentPlan: BeeKeepPlan = BeeKeepPlan.FREE,
     onOpenApiaries: () -> Unit
 ) {
     LazyColumn(
@@ -279,7 +279,7 @@ internal fun HomeScreen(
                         modifier = Modifier.weight(1f),
                         verticalArrangement = Arrangement.spacedBy(5.dp)
                     ) {
-                        if (premiumEnabled) {
+                        if (currentPlan != BeeKeepPlan.FREE) {
                             Row(
                                 verticalAlignment = Alignment.Bottom,
                                 horizontalArrangement = Arrangement.spacedBy(5.dp)
@@ -293,7 +293,7 @@ internal fun HomeScreen(
                                     softWrap = false
                                 )
                                 Text(
-                                    text = "Ultimate",
+                                    text = currentPlan.displayName,
                                     style = MaterialTheme.typography.titleMedium,
                                     color = BeeKeepAccent,
                                     fontWeight = FontWeight.SemiBold,
