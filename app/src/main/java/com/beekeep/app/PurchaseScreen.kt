@@ -25,6 +25,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -140,7 +141,7 @@ internal fun PurchaseScreen(
                 onClick = { onChoosePlan(BeeKeepPlan.FREE) },
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(16.dp)
-            ) { Text("RESET TEST PLAN TO FREE") }
+            ) { Text(if (currentPlan == BeeKeepPlan.PRO) "SIMULATE PRO MONTHLY RUNOUT" else "RESET TEST PLAN TO FREE") }
         }
         Spacer(Modifier.height(8.dp))
     }
