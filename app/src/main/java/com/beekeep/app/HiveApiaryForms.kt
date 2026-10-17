@@ -66,6 +66,9 @@ internal fun AddHiveScreen(
     initialApiary: String?,
     defaultQueenStatus: String = "Laying",
     defaultStrength: Int = 3,
+    hiveLimitPromptVisible: Boolean = false,
+    onDismissHiveLimitPrompt: () -> Unit = {},
+    onOpenUpgrade: () -> Unit = {},
     onBack: () -> Unit,
     onCreate: (String, String, String, Int) -> Unit
 ) {
@@ -153,6 +156,43 @@ internal fun AddHiveScreen(
             enabled = number.isNotBlank() && apiaries.any { it.name == apiary },
             shape = RoundedCornerShape(24.dp)
         ) { Text("CREATE HIVE", fontWeight = FontWeight.ExtraBold) }
+    }
+
+    if (hiveLimitPromptVisible) {
+        AlertDialog(
+            onDismissRequest = onDismissHiveLimitPrompt,
+            shape = RoundedCornerShape(26.dp),
+            containerColor = androidx.compose.ui.graphics.Color(0xFFFFFBEB),
+            titleContentColor = androidx.compose.ui.graphics.Color(0xFF78350F),
+            textContentColor = androidx.compose.ui.graphics.Color(0xFF654321),
+            title = {
+                Text("Hive Limit Reached", fontWeight = FontWeight.ExtraBold)
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("You’ve reached the Free plan limit of 150 hives.")
+                    Text("Your existing hive records are safe. Upgrade to Pro or Ultimate to keep adding hives.")
+                    Text(
+                        "Apiaries remain unlimited on every plan.",
+                        color = androidx.compose.ui.graphics.Color(0xFF92400E),
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = onOpenUpgrade,
+                    shape = RoundedCornerShape(14.dp)
+                ) {
+                    Text("VIEW UPGRADE PLANS", fontWeight = FontWeight.ExtraBold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = onDismissHiveLimitPrompt) {
+                    Text("NOT NOW", color = androidx.compose.ui.graphics.Color(0xFF78350F))
+                }
+            }
+        )
     }
 }
 
