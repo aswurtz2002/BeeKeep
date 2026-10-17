@@ -111,9 +111,7 @@ object BeeKeepEntitlements {
         if (!BuildConfig.DEBUG) return emptySet()
         val plan = currentPlan(context)
         if (plan != BeeKeepPlan.FREE) return emptySet()
-        return proCreatedHiveIds(context).filterTo(mutableSetOf()) {
-            isHiveLockedForPlan(plan, createdUnderPro = true)
-        }
+        return proCreatedHiveIds(context)
     }
 
     fun hasUnlimitedHives(context: Context): Boolean =
