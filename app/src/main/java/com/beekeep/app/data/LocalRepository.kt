@@ -220,7 +220,7 @@ class LocalHiveRepository(context: Context) {
             val requestedHiveCount = cleanHiveNumbers.sumOf { it.size }
             val currentHiveCount = existingHives.count { !it.deleted }
             val hiveLimit = BeeKeepEntitlements.hiveLimit(appContext)
-            require(currentHiveCount + requestedHiveCount <= hiveLimit) {
+            require(requestedHiveCount == 0 || currentHiveCount + requestedHiveCount <= hiveLimit) {
                 BeeKeepEntitlements.freeLimitMessage()
             }
 
