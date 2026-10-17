@@ -62,6 +62,7 @@ import androidx.compose.material.icons.rounded.GpsFixed
 import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.Home
 import androidx.compose.material.icons.rounded.LocationOn
+import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.MyLocation
 import androidx.compose.material.icons.rounded.Map
 import androidx.compose.material.icons.rounded.Mic
@@ -2172,6 +2173,7 @@ fun BeeKeepApp(
                 padding = padding,
                 hives = hives,
                 deadHives = deadHives,
+                lockedHiveIds = lockedHiveIds,
                 nfc = nfc,
                 activity = activity,
                 pendingUid = pendingTagUid,
@@ -2201,8 +2203,20 @@ fun BeeKeepApp(
                         pendingInspectionHiveId = hiveId
                     }
                 },
-                onAssignTag = { hiveId, uid, reassign, onResult -> vm.assignTagToHive(hiveId, uid, reassign, onResult) },
-                onClearTag = { hiveId, onResult -> vm.clearTagForHive(hiveId, onResult) },
+                onAssignTag = { hiveId, uid, reassign, onResult ->
+                    if (requestHiveAccessById(hiveId)) {
+                        vm.assignTagToHive(hiveId, uid, reassign, onResult)
+                    } else {
+                        onResult(false, "This hive is locked. Renew Pro or purchase Ultimate to manage its NFC tag.")
+                    }
+                },
+                onClearTag = { hiveId, onResult ->
+                    if (requestHiveAccessById(hiveId)) {
+                        vm.clearTagForHive(hiveId, onResult)
+                    } else {
+                        onResult(false, "This hive is locked. Renew Pro or purchase Ultimate to manage its NFC tag.")
+                    }
+                },
                 onUnassignedTag = { uid ->
                     unassignedTagOrigin = Screen.TAG_MANAGER
                     unassignedTagUid = uid
@@ -2530,6 +2544,7 @@ private fun TagManagementScreen(
     padding: PaddingValues,
     hives: List<Hive>,
     deadHives: List<Hive>,
+    lockedHiveIds: Set<Long>,
     nfc: NfcController,
     activity: ComponentActivity,
     pendingUid: String?,
@@ -2556,6 +2571,25 @@ private fun TagManagementScreen(
     var launchWriteStatusHandler by remember { mutableStateOf<((String) -> Unit)?>(null) }
     BackHandler { onBack() }
     val assigned = hives.count { !it.tagUid.isNullOrBlank() }
+
+    androidx.compose.runtime.LaunchedEffect(lockedHiveIds) {
+        val activeLockedOperation = sequenceOf(
+            assigningHiveId,
+            pendingRemoveHiveId,
+            reassignPrompt?.first,
+            launchWriteHiveId
+        ).filterNotNull().firstOrNull { it in lockedHiveIds }
+        if (activeLockedOperation != null) {
+            nfc.stop(activity)
+            assigningHiveId = null
+            pendingRemoveHiveId = null
+            reassignPrompt = null
+            launchWriteHiveId = null
+            launchWriteUid = null
+            launchWriteStatusHandler = null
+            status = "This hive is locked because BeeKeep Pro is no longer active. Renew Pro or purchase Ultimate to manage its NFC tag."
+        }
+    }
 
     fun writeLaunchDataAfterAssignment(
         hiveId: Long,
@@ -2829,6 +2863,14 @@ private fun TagManagementScreen(
                             Text(hiveDisplayName(hive.number), fontWeight = FontWeight.Bold)
                             Text(hive.apiary, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
                         }
+                        if (hive.id in lockedHiveIds) {
+                            Icon(
+                                Icons.Rounded.Lock,
+                                contentDescription = "Locked hive",
+                                tint = Color(0xFFB45309),
+                                modifier = Modifier.size(17.dp).padding(end = 2.dp)
+                            )
+                        }
                         Text(if (hive.tagUid.isNullOrBlank()) "UNASSIGNED" else "TAGGED", fontWeight = FontWeight.Bold, color = if (hive.tagUid.isNullOrBlank()) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary)
                     }
                     Text(hive.tagUid ?: "No NFC tag assigned", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
@@ -2846,7 +2888,7 @@ private fun TagManagementScreen(
                                     assigningHiveId = null
                                 }
                             },
-                            enabled = nfc.isAvailable() && nfc.isEnabled(),
+                            enabled = nfc.isAvailable() && nfc.isEnabled() && hive.id !in lockedHiveIds,
                             modifier = Modifier.weight(1f)
                         ) { Text(if (hive.tagUid.isNullOrBlank()) "ASSIGN" else "REPLACE") }
                     }
@@ -2871,7 +2913,7 @@ private fun TagManagementScreen(
                                         is NfcResult.Written -> Unit
                                     }
                                 }
-                            }, modifier = Modifier.weight(1f)) { Text("VERIFY") }
+                            }, enabled = hive.id !in lockedHiveIds, modifier = Modifier.weight(1f)) { Text("VERIFY") }
                             TextButton(
                                 onClick = {
                                     if (confirmBeforeTagRemoval) {
@@ -2883,6 +2925,7 @@ private fun TagManagementScreen(
                                         }
                                     }
                                 },
+                                enabled = hive.id !in lockedHiveIds,
                                 modifier = Modifier.weight(1f)
                             ) { Text("REMOVE") }
                         }
