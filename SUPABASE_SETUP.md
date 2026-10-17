@@ -4,7 +4,7 @@ The Android app is offline-first. Supabase is the cloud backup + cross-device sy
 
 ## 1. Create a Supabase project
 
-Use a new project in the Supabase dashboard. The current Supabase Android/Kotlin quickstart recommends the Kotlin client and a publishable project key rather than a server secret.
+Use a dedicated Supabase project for development/staging. Do not point a staging build at production data.
 
 ## 2. Run the cloud migrations
 
@@ -18,21 +18,35 @@ This Stage 1 migration creates `beekeep_workspaces` and `beekeep_workspace_membe
 
 The earlier cloud setup migration in this repository is `supabase/migrations/20261006_beekeep_cloud_v2.sql`. On a fresh Supabase project, ensure the existing base BeeKeep cloud schema is installed first, run that cloud-sync migration, and then run the Stage 1 workspace migration. Existing deployed projects that already have the v2 schema should run only the new Stage 1 migration.
 
-## 3. Configure Android Studio
+## 3. Build variants
 
-Do not commit your project credentials into source control.
+### Staging (preconfigured)
 
-For a local Android Studio build, pass:
+A dedicated build type is wired to the isolated `BeeKeep-Staging` Supabase project:
 
-`./gradlew :app:assembleDebug -PsupabaseUrl=https://YOUR_PROJECT.supabase.co -PsupabaseKey=YOUR_PUBLISHABLE_KEY`
+```powershell
+./gradlew :app:assembleStaging
+```
 
-The Gradle script places these into `BuildConfig.SUPABASE_URL` and `BuildConfig.SUPABASE_PUBLISHABLE_KEY` at build time.
+The APK is written to `app/build/outputs/apk/staging/app-staging.apk`. Its application ID is `com.beekeep.app.staging`, and the launcher name is **BeeKeep Staging**, so it can be installed beside the normal BeeKeep app without replacing it.
 
-The mobile app never uses a Supabase service-role/secret key.
+The staging build contains only the Supabase **publishable** key, which is designed for client-side use and cannot replace database authorization. Access remains controlled by Auth, grants, and Row Level Security (RLS). Never embed a Supabase secret/service-role key in any Android build or commit one to source control.
+
+GitHub Actions builds and uploads the staging APK as the `beekeep-staging-apk` workflow artifact (retained for 14 days). Open the repository's Actions tab, open a successful **BeeKeep Android build** run, and download that artifact.
+
+### Configure a regular local debug build
+
+For a local Android Studio build using a different project, pass that project's URL and publishable key as Gradle project properties:
+
+```powershell
+./gradlew :app:assembleDebug -PsupabaseUrl=https://YOUR_PROJECT.supabase.co -PsupabaseKey=YOUR_PUBLISHABLE_KEY
+```
+
+The Gradle script places these into `BuildConfig.SUPABASE_URL` and `BuildConfig.SUPABASE_PUBLISHABLE_KEY` at build time. Do not pass a secret/service-role key.
 
 ## 4. Authentication
 
-BeeKeep currently supports email/password sign-in and account creation. Supabase may require email verification depending on the project's Auth settings.
+BeeKeep currently supports email/password sign-in and account creation. Supabase may require email verification depending on the project's Auth settings. Use a dedicated tester account with the staging app.
 
 ## 5. Sync behavior
 
@@ -44,4 +58,4 @@ This is intentionally not dependent on realtime connectivity. Realtime can be ad
 
 Stage 1 only installs the workspace/membership foundation and associates each account's current cloud documents with that account's private workspace. It does not yet allow invitations, workspace switching, cross-user synchronization, or shared NFC assignment. Membership write policies are intentionally closed to mobile clients; future invite/role operations must go through trusted, role-checked server functions.
 
-Before Stage 3 enables shared sync, test this migration against a staging Supabase project with existing records and verify that each account still sees only its own records. Keep a database backup before applying schema migrations to production.
+Before Stage 3 enables shared sync, test with multiple staging accounts and verify each account can still only see its own records. Keep a database backup before applying schema migrations to production.
