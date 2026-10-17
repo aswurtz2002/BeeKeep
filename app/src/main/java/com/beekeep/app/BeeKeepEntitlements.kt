@@ -3,10 +3,30 @@ package com.beekeep.app
 import android.content.Context
 import com.beekeep.app.BuildConfig
 
-enum class BeeKeepPlan(val displayName: String) {
+enum class BeeKeepPlan(
+    val displayName: String,
+    internal val subscriptionDurationMillis: Long = 0L
+) {
     FREE("Free"),
-    PRO("Pro"),
-    ULTIMATE("Ultimate")
+    PRO("Pro", 30L * 24L * 60L * 60L * 1000L),
+    PRO_YEARLY("Pro Yearly", 365L * 24L * 60L * 60L * 1000L),
+    ULTIMATE("Ultimate");
+
+    val isProSubscription: Boolean
+        get() = subscriptionDurationMillis > 0L
+}
+
+/** Pricing labels are CAD; real charges remain disabled until Google Play Billing is integrated. */
+internal object BeeKeepPricing {
+    const val PRO_MONTHLY_CAD = 2.99
+    const val PRO_YEARLY_CAD = 9.99
+    const val ULTIMATE_LIFETIME_CAD = 89.99
+
+    val yearlySavingsCad: Double
+        get() = PRO_MONTHLY_CAD * 12 - PRO_YEARLY_CAD
+
+    val yearlyDiscountPercent: Int
+        get() = ((yearlySavingsCad / (PRO_MONTHLY_CAD * 12)) * 100).toInt()
 }
 
 /**
@@ -22,7 +42,6 @@ object BeeKeepEntitlements {
     private const val DEBUG_PLAN_KEY = "debug_purchase_plan"
     private const val DEBUG_PRO_EXPIRY_KEY = "debug_pro_expires_at"
     private const val PRO_CREATED_HIVE_IDS_KEY = "debug_pro_created_hive_ids"
-    private const val DEBUG_PRO_DURATION_MILLIS = 30L * 24L * 60L * 60L * 1000L
 
     fun currentPlan(context: Context): BeeKeepPlan {
         if (!BuildConfig.DEBUG) return BeeKeepPlan.FREE
@@ -32,15 +51,15 @@ object BeeKeepEntitlements {
         val plan = runCatching { BeeKeepPlan.valueOf(saved ?: BeeKeepPlan.FREE.name) }
             .getOrDefault(BeeKeepPlan.FREE)
 
-        if (plan == BeeKeepPlan.PRO) {
+        if (plan.isProSubscription) {
             val now = System.currentTimeMillis()
             val expiresAt = prefs.getLong(DEBUG_PRO_EXPIRY_KEY, 0L)
             when {
                 // Existing debug installations may already have Pro selected from the
                 // earlier simulator, which had no expiry. Give that selection a full
-                // simulated month instead of expiring it immediately after updating.
+                // simulated subscription term instead of expiring it immediately after updating.
                 expiresAt <= 0L -> prefs.edit()
-                    .putLong(DEBUG_PRO_EXPIRY_KEY, now + DEBUG_PRO_DURATION_MILLIS)
+                    .putLong(DEBUG_PRO_EXPIRY_KEY, now + plan.subscriptionDurationMillis)
                     .apply()
                 isProPlanExpired(expiresAt, now) -> {
                     prefs.edit()
@@ -55,7 +74,7 @@ object BeeKeepEntitlements {
     }
 
     fun debugProExpiresAt(context: Context): Long? {
-        if (!BuildConfig.DEBUG || currentPlan(context) != BeeKeepPlan.PRO) return null
+        if (!BuildConfig.DEBUG || !currentPlan(context).isProSubscription) return null
         val expiresAt = context.applicationContext
             .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             .getLong(DEBUG_PRO_EXPIRY_KEY, 0L)
@@ -68,9 +87,9 @@ object BeeKeepEntitlements {
             .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         val editor = prefs.edit().putString(DEBUG_PLAN_KEY, plan.name)
         when (plan) {
-            BeeKeepPlan.PRO -> editor.putLong(
+            BeeKeepPlan.PRO, BeeKeepPlan.PRO_YEARLY -> editor.putLong(
                 DEBUG_PRO_EXPIRY_KEY,
-                System.currentTimeMillis() + DEBUG_PRO_DURATION_MILLIS
+                System.currentTimeMillis() + plan.subscriptionDurationMillis
             )
             // Ultimate is lifetime; Free simulates either a Pro runout or a test reset.
             BeeKeepPlan.FREE, BeeKeepPlan.ULTIMATE -> editor.remove(DEBUG_PRO_EXPIRY_KEY)
