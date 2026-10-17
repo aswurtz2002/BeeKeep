@@ -2,6 +2,7 @@ package com.beekeep.app
 
 import android.content.Context
 import com.beekeep.app.BuildConfig
+import java.util.Locale
 
 enum class BeeKeepPlan(
     val displayName: String,
@@ -27,12 +28,14 @@ internal object BeeKeepPricing {
 
     val yearlyDiscountPercent: Int
         get() = ((yearlySavingsCad / (PRO_MONTHLY_CAD * 12)) * 100).toInt()
+
+    fun formatCad(amount: Double): String = String.format(Locale.CANADA, "$%.2f", amount)
 }
 
 /**
  * Entitlements used by the app's hive-creation gates.
  *
- * Debug builds simulate a monthly Pro plan locally so expiry and locked-hive behavior
+ * Debug builds simulate monthly and yearly Pro plans locally so expiry and locked-hive behavior
  * can be tested without a billing connection. Release builds deliberately ignore the
  * debug preference until verified Google Play Billing is integrated.
  */
