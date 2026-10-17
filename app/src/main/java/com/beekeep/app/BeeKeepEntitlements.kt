@@ -9,7 +9,7 @@ enum class BeeKeepPlan(
     internal val subscriptionDurationMillis: Long = 0L
 ) {
     FREE("Free"),
-    PRO("Pro", 30L * 24L * 60L * 60L * 1000L),
+    PRO("Pro Monthly", 30L * 24L * 60L * 60L * 1000L),
     PRO_YEARLY("Pro Yearly", 365L * 24L * 60L * 60L * 1000L),
     ULTIMATE("Ultimate");
 
@@ -101,7 +101,7 @@ object BeeKeepEntitlements {
     }
 
     /**
-     * Remembers only hive IDs created while the simulated monthly Pro entitlement was
+     * Remembers only hive IDs created while a simulated Pro subscription was
      * active. Existing Free hives are never included in this set.
      */
     fun rememberProCreatedHives(context: Context, hiveIds: Collection<Long>) {
