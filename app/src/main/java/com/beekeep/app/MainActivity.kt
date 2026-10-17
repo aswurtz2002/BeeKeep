@@ -486,6 +486,7 @@ fun BeeKeepApp(
     var mapFocusApiaryId by rememberSaveable { mutableStateOf<Long?>(null) }
     var inspecting by rememberSaveable { mutableStateOf(false) }
     var addHive by rememberSaveable { mutableStateOf(false) }
+    var hiveLimitPromptVisible by rememberSaveable { mutableStateOf(false) }
     var logType by rememberSaveable { mutableStateOf<HiveLogType?>(null) }
     var addApiary by rememberSaveable { mutableStateOf(false) }
     var addApiaryOptionsVisible by rememberSaveable { mutableStateOf(false) }
@@ -535,6 +536,22 @@ fun BeeKeepApp(
     val treatments by vm.treatments.collectAsStateWithLifecycle()
     val harvests by vm.harvests.collectAsStateWithLifecycle()
     val ready by vm.ready.collectAsStateWithLifecycle()
+
+    // Show the free-plan limit prompt when the user enters the Add Hive flow at the cap.
+    androidx.compose.runtime.LaunchedEffect(
+        addHive,
+        hives.size,
+        deadHives.size,
+        purchasePlan
+    ) {
+        if (
+            addHive &&
+            purchasePlan == BeeKeepPlan.FREE &&
+            hives.size + deadHives.size >= BeeKeepEntitlements.FREE_HIVE_LIMIT
+        ) {
+            hiveLimitPromptVisible = true
+        }
+    }
 
     fun skipFastAssignmentHive(skippedHiveId: Long, reason: String) {
         // Ignore stale or duplicate skip callbacks after another hive becomes current.
@@ -1304,42 +1321,40 @@ fun BeeKeepApp(
         return
     }
 
-    if (addHive && !BeeKeepEntitlements.hasUnlimitedHives(context) &&
-        hives.size + deadHives.size >= BeeKeepEntitlements.FREE_HIVE_LIMIT
-    ) {
-        PurchaseScreen(
-            padding = PaddingValues(0.dp),
-            currentPlan = purchasePlan,
-            onBack = { addHive = false; pendingTagUid = null },
-            onChoosePlan = { plan ->
-                if (BuildConfig.DEBUG) {
-                    BeeKeepEntitlements.setDebugPlan(context, plan)
-                    purchasePlanName = plan.name
-                    if (plan != BeeKeepPlan.FREE) {
-                        scope.launch {
-                            snackbarHostState.showSnackbar(
-                                if (plan == BeeKeepPlan.PRO) "Debug test plan activated: BeeKeep Pro."
-                                else "Debug test plan activated: BeeKeep Ultimate."
-                            )
-                        }
-                    }
-                }
-            }
-        )
-        return
-    }
-
     if (addHive) {
         AddHiveScreen(
             apiaries = apiaries,
             initialApiary = selectedApiaryName,
             defaultQueenStatus = autoVoicePrefs.getString("default_queen_status", "Laying")?.takeIf { it in setOf("Laying", "Queenless", "Virgin") } ?: "Laying",
             defaultStrength = autoVoicePrefs.getInt("default_starting_strength", 3).coerceIn(1, 5),
-            onBack = { addHive = false; pendingTagUid = null }
+            hiveLimitPromptVisible = hiveLimitPromptVisible,
+            onDismissHiveLimitPrompt = { hiveLimitPromptVisible = false },
+            onOpenUpgrade = {
+                hiveLimitPromptVisible = false
+                addHive = false
+                pendingTagUid = null
+                purchaseBackScreen = screen
+                purchaseSuccessScreen = Screen.HOME
+                screen = Screen.PURCHASES
+            },
+            onBack = {
+                addHive = false
+                pendingTagUid = null
+                hiveLimitPromptVisible = false
+            }
         ) { number, apiary, queen, strength ->
             vm.createHive(number, apiary, queen, strength, tagUid = pendingTagUid) { success, error ->
-                scope.launch { snackbarHostState.showSnackbar(error ?: "Hive ${number.trim()} created") }
-                if (success) { addHive = false; pendingTagUid = null }
+                if (!success && error?.contains("Free plan", ignoreCase = true) == true) {
+                    // A limit rejection must open the prompt, not disappear into a snackbar.
+                    hiveLimitPromptVisible = true
+                } else {
+                    scope.launch { snackbarHostState.showSnackbar(error ?: "Hive ${number.trim()} created") }
+                }
+                if (success) {
+                    addHive = false
+                    pendingTagUid = null
+                    hiveLimitPromptVisible = false
+                }
             }
         }
         return
