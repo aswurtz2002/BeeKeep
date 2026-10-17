@@ -3,6 +3,7 @@ package com.beekeep.app.data
 import com.beekeep.app.nfc.NfcUid
 
 import com.beekeep.app.ColonyStrength
+import com.beekeep.app.BeeKeepEntitlements
 
 import android.content.Context
 import androidx.room.withTransaction
@@ -162,7 +163,6 @@ class LocalHiveRepository(context: Context) {
         allowExistingWorkspace: Boolean = false
     ) = withContext(Dispatchers.IO) {
         require(apiaryNames.isNotEmpty()) { "Create at least one apiary." }
-        require(apiaryNames.size <= 50) { "Create no more than 50 apiaries at a time." }
         require(apiaryNames.size == hiveNumbersByApiary.size) { "Each apiary needs a hive-name list." }
 
         val cleanApiaryNames = apiaryNames.map(String::trim)
@@ -179,7 +179,6 @@ class LocalHiveRepository(context: Context) {
             }
             clean
         }
-        require(cleanHiveNumbers.sumOf { it.size } <= 5_000) { "Create no more than 5,000 hives at a time." }
 
         db.withTransaction {
             val existingApiaries = db.apiaries().allForBackup()
@@ -217,11 +216,11 @@ class LocalHiveRepository(context: Context) {
                 }
             }
 
-            require(existingApiaries.count { !it.deleted } + cleanApiaryNames.size <= 50) {
-                "Your workspace can contain no more than 50 apiaries total."
-            }
-            require(existingHives.count { !it.deleted } + cleanHiveNumbers.sumOf { it.size } <= 5_000) {
-                "Your workspace can contain no more than 5,000 hives total."
+            val requestedHiveCount = cleanHiveNumbers.sumOf { it.size }
+            val currentHiveCount = existingHives.count { !it.deleted }
+            val hiveLimit = BeeKeepEntitlements.hiveLimit(appContext)
+            require(currentHiveCount + requestedHiveCount <= hiveLimit) {
+                BeeKeepEntitlements.freeLimitMessage()
             }
 
             val now = System.currentTimeMillis()
@@ -259,6 +258,12 @@ class LocalHiveRepository(context: Context) {
         requireValidCoordinates(h.latitude, h.longitude, "Hive")
         db.withTransaction {
         val existing = db.hives().get(h.id)
+        if (existing == null && !BeeKeepEntitlements.hasUnlimitedHives(appContext)) {
+            val currentHiveCount = db.hives().allForBackup().count { !it.deleted }
+            require(currentHiveCount < BeeKeepEntitlements.FREE_HIVE_LIMIT) {
+                BeeKeepEntitlements.freeLimitMessage()
+            }
+        }
         val cleanApiary = h.apiary.trim()
         val resolvedApiaryId = cleanApiary.takeIf { it.isNotBlank() }?.let { db.apiaries().byName(it)?.id }
         val cleanTag = h.tagUid?.trim()?.takeIf { it.isNotBlank() }
