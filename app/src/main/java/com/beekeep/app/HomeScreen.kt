@@ -200,6 +200,7 @@ internal fun HomeScreen(
     apiaries: List<Apiary>,
     padding: androidx.compose.foundation.layout.PaddingValues,
     nfcEnabled: Boolean,
+    premiumEnabled: Boolean = false,
     onOpenApiaries: () -> Unit
 ) {
     LazyColumn(
@@ -278,14 +279,39 @@ internal fun HomeScreen(
                         modifier = Modifier.weight(1f),
                         verticalArrangement = Arrangement.spacedBy(5.dp)
                     ) {
-                        Text(
-                            text = "BeeKeep",
-                            style = MaterialTheme.typography.headlineLarge,
-                            color = BeeKeepAccent,
-                            fontWeight = FontWeight.Bold,
-                            maxLines = 1,
-                            softWrap = false
-                        )
+                        if (premiumEnabled) {
+                            Row(
+                                verticalAlignment = Alignment.Bottom,
+                                horizontalArrangement = Arrangement.spacedBy(5.dp)
+                            ) {
+                                Text(
+                                    text = "BeeKeep",
+                                    style = MaterialTheme.typography.headlineLarge,
+                                    color = BeeKeepAccent,
+                                    fontWeight = FontWeight.Bold,
+                                    maxLines = 1,
+                                    softWrap = false
+                                )
+                                Text(
+                                    text = "Ultimate",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    color = BeeKeepAccent,
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 1,
+                                    softWrap = false,
+                                    modifier = Modifier.padding(bottom = 5.dp)
+                                )
+                            }
+                        } else {
+                            Text(
+                                text = "BeeKeep",
+                                style = MaterialTheme.typography.headlineLarge,
+                                color = BeeKeepAccent,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1,
+                                softWrap = false
+                            )
+                        }
                         Text(
                             text = "MADE BY BEEKEEPERS\nFOR BEEKEEPERS",
                             style = MaterialTheme.typography.labelMedium,
