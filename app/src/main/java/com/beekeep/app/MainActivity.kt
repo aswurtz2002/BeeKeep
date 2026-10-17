@@ -543,7 +543,7 @@ fun BeeKeepApp(
 
     // Keep a Pro session's expiry live while BeeKeep stays open, not only on app resume.
     androidx.compose.runtime.LaunchedEffect(purchasePlanName) {
-        if (purchasePlanName == BeeKeepPlan.PRO.name) {
+        if (purchasePlan.isProSubscription) {
             val expiresAt = BeeKeepEntitlements.debugProExpiresAt(context)
             if (expiresAt != null) {
                 val remainingMillis = expiresAt - System.currentTimeMillis()
@@ -1446,11 +1446,12 @@ fun BeeKeepApp(
                         screen = purchaseSuccessScreen
                         scope.launch {
                             snackbarHostState.showSnackbar(
-                                if (plan == BeeKeepPlan.PRO) {
+                                if (plan.isProSubscription) {
                                     if (previousPlan == BeeKeepPlan.FREE && hadLockedHives) {
-                                        "BeeKeep Pro renewed. Your previously locked hives are unlocked for another month."
+                                        val term = if (plan == BeeKeepPlan.PRO_YEARLY) "year" else "month"
+                                        "BeeKeep Pro renewed. Your previously locked hives are unlocked for another $term."
                                     } else {
-                                        "Debug test plan activated: BeeKeep Pro."
+                                        "Debug test plan activated: BeeKeep ${plan.displayName}."
                                     }
                                 } else {
                                     "Debug test plan activated: BeeKeep Ultimate."
@@ -1460,8 +1461,9 @@ fun BeeKeepApp(
                     } else {
                         scope.launch {
                             snackbarHostState.showSnackbar(
-                                if (previousPlan == BeeKeepPlan.PRO) {
-                                    "BeeKeep Pro monthly plan ended. Pro-created hives are locked until Pro is renewed or Ultimate is activated."
+                                if (previousPlan.isProSubscription) {
+                                    val term = if (previousPlan == BeeKeepPlan.PRO_YEARLY) "yearly" else "monthly"
+                                    "BeeKeep Pro $term plan ended. Pro-created hives are locked until Pro is renewed or Ultimate is activated."
                                 } else {
                                     "Debug test plan reset to Free. Pro-created hives stay locked until Pro is renewed or Ultimate is activated."
                                 }
@@ -3074,7 +3076,7 @@ private fun MoreScreen(
                         color = Color(0xFF92400E)
                     )
                     Text(
-                        if (currentPlan == BeeKeepPlan.FREE) "Unlock unlimited hives • from $3.99 CAD/month"
+                        if (currentPlan == BeeKeepPlan.FREE) "Unlock unlimited hives • from $2.99 CAD/month"
                         else "Unlimited hive creation is enabled on this device",
                         color = Color(0xFF78350F),
                         style = MaterialTheme.typography.bodySmall
