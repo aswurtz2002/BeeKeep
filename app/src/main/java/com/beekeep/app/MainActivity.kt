@@ -1307,9 +1307,25 @@ fun BeeKeepApp(
     if (addHive && !BeeKeepEntitlements.hasUnlimitedHives(context) &&
         hives.size + deadHives.size >= BeeKeepEntitlements.FREE_HIVE_LIMIT
     ) {
-        purchaseBackScreen = screen
-        purchaseSuccessScreen = screen
-        screen = Screen.PURCHASES
+        PurchaseScreen(
+            padding = PaddingValues(0.dp),
+            currentPlan = purchasePlan,
+            onBack = { addHive = false; pendingTagUid = null },
+            onChoosePlan = { plan ->
+                if (BuildConfig.DEBUG) {
+                    BeeKeepEntitlements.setDebugPlan(context, plan)
+                    purchasePlanName = plan.name
+                    if (plan != BeeKeepPlan.FREE) {
+                        scope.launch {
+                            snackbarHostState.showSnackbar(
+                                if (plan == BeeKeepPlan.PRO) "Debug test plan activated: BeeKeep Pro."
+                                else "Debug test plan activated: BeeKeep Ultimate."
+                            )
+                        }
+                    }
+                }
+            }
+        )
         return
     }
 
@@ -1757,6 +1773,7 @@ fun BeeKeepApp(
             existingApiaryNames = if (isAddingToExistingWorkspace) apiaries.map { it.name } else emptyList(),
             existingHiveCount = if (isAddingToExistingWorkspace) hives.size + deadHives.size else 0,
             addToExistingWorkspace = isAddingToExistingWorkspace,
+            hiveLimit = BeeKeepEntitlements.hiveLimit(context),
             onBack = {
                 if (isAddingToExistingWorkspace) {
                     addingApiariesWithHives = false
@@ -1765,6 +1782,11 @@ fun BeeKeepApp(
                     screen = Screen.HOME
                     firstRunPromptVisible = !autoVoicePrefs.getBoolean("initial_setup_completed", false)
                 }
+            },
+            onUpgrade = {
+                purchaseBackScreen = Screen.PREMADE_SETUP
+                purchaseSuccessScreen = Screen.PREMADE_SETUP
+                screen = Screen.PURCHASES
             },
             onComplete = { createdApiaries, createdHives ->
                 autoVoicePrefs.edit { putBoolean("initial_setup_completed", true) }
