@@ -67,8 +67,8 @@ internal fun PurchaseScreen(
         }
 
         PlanCard(
-            title = "BeeKeep Pro",
-            price = "$3.99",
+            title = "BeeKeep Pro Monthly",
+            price = BeeKeepPricing.formatCad(BeeKeepPricing.PRO_MONTHLY_CAD),
             billing = "CAD / month",
             description = "Unlimited hives with a monthly subscription.",
             current = currentPlan == BeeKeepPlan.PRO,
@@ -83,8 +83,25 @@ internal fun PurchaseScreen(
         )
 
         PlanCard(
+            title = "BeeKeep Pro Yearly",
+            price = BeeKeepPricing.formatCad(BeeKeepPricing.PRO_YEARLY_CAD),
+            billing = "CAD / year",
+            description = "Unlimited hives for a full year. Save compared with monthly billing.",
+            current = currentPlan == BeeKeepPlan.PRO_YEARLY,
+            highlighted = false,
+            badgeText = "${BeeKeepPricing.yearlyDiscountPercent}% OFF",
+            actionLabel = when {
+                currentPlan == BeeKeepPlan.PRO_YEARLY -> "PRO YEARLY ACTIVE"
+                debugBuild -> "SIMULATE YEARLY PRO PURCHASE"
+                else -> "PURCHASES COMING SOON"
+            },
+            actionEnabled = debugBuild && currentPlan != BeeKeepPlan.PRO_YEARLY,
+            onAction = { onChoosePlan(BeeKeepPlan.PRO_YEARLY) }
+        )
+
+        PlanCard(
             title = "BeeKeep Ultimate",
-            price = "$29.99",
+            price = BeeKeepPricing.formatCad(BeeKeepPricing.ULTIMATE_LIFETIME_CAD),
             billing = "CAD / one-time purchase",
             description = "Unlimited hives for one payment. No recurring subscription.",
             current = currentPlan == BeeKeepPlan.ULTIMATE,
@@ -141,7 +158,13 @@ internal fun PurchaseScreen(
                 onClick = { onChoosePlan(BeeKeepPlan.FREE) },
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(16.dp)
-            ) { Text(if (currentPlan == BeeKeepPlan.PRO) "SIMULATE PRO MONTHLY RUNOUT" else "RESET TEST PLAN TO FREE") }
+            ) {
+                Text(when (currentPlan) {
+                    BeeKeepPlan.PRO -> "SIMULATE PRO MONTHLY RUNOUT"
+                    BeeKeepPlan.PRO_YEARLY -> "SIMULATE PRO YEARLY RUNOUT"
+                    else -> "RESET TEST PLAN TO FREE"
+                })
+            }
         }
         Spacer(Modifier.height(8.dp))
     }
@@ -155,6 +178,7 @@ private fun PlanCard(
     description: String,
     current: Boolean,
     highlighted: Boolean,
+    badgeText: String? = null,
     actionLabel: String,
     actionEnabled: Boolean,
     onAction: () -> Unit
@@ -169,9 +193,12 @@ private fun PlanCard(
         Column(Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
                 Text(title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.ExtraBold)
-                if (highlighted) {
-                    Surface(color = Color(0xFFFFEDD5), contentColor = Color(0xFF9A3412), shape = RoundedCornerShape(50)) {
-                        Text("LIFETIME", modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp), style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.ExtraBold)
+                val visibleBadge = badgeText ?: if (highlighted) "LIFETIME" else null
+                if (visibleBadge != null) {
+                    val badgeBackground = if (highlighted) Color(0xFFFFEDD5) else Color(0xFFDCFCE7)
+                    val badgeForeground = if (highlighted) Color(0xFF9A3412) else Color(0xFF166534)
+                    Surface(color = badgeBackground, contentColor = badgeForeground, shape = RoundedCornerShape(50)) {
+                        Text(visibleBadge, modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp), style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.ExtraBold)
                     }
                 }
             }
