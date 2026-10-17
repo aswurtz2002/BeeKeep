@@ -566,7 +566,7 @@ fun BeeKeepApp(
         return false
     }
 
-    fun requestHiveAccess(hiveId: Long): Boolean {
+    fun requestHiveAccessById(hiveId: Long): Boolean {
         val hive = (hives + deadHives).firstOrNull { it.id == hiveId }
         return hive?.let { requestHiveAccess(it) } ?: true
     }
@@ -1959,7 +1959,7 @@ fun BeeKeepApp(
             onBack = { selectedApiaryName = null; screen = Screen.APIARIES },
             onAddHive = { addHive = true },
             onOpenHive = { hiveId ->
-                if (requestHiveAccess(hiveId)) {
+                if (requestHiveAccessById(hiveId)) {
                     val targetHive = hives.firstOrNull { it.id == hiveId }
                     if (fastTagAssignmentMode && targetHive != null) {
                         startFastTagAssignmentFromHive(targetHive)
@@ -2012,7 +2012,7 @@ fun BeeKeepApp(
                 onBack = { screen = Screen.HOME },
                 onAddHive = { selectedApiaryName = null; addHive = true },
                 onOpenHive = { hiveId ->
-                    if (requestHiveAccess(hiveId)) {
+                    if (requestHiveAccessById(hiveId)) {
                         val targetHive = hives.firstOrNull { it.id == hiveId }
                         if (fastTagAssignmentMode && targetHive != null) {
                             startFastTagAssignmentFromHive(targetHive)
@@ -2127,7 +2127,7 @@ fun BeeKeepApp(
                 onPendingUidConsumed = { pendingTagUid = null },
                 onBack = { screen = tagManagerReturnScreen },
                 onOpenHive = { hiveId ->
-                    if (requestHiveAccess(hiveId)) {
+                    if (requestHiveAccessById(hiveId)) {
                         vm.openHive(hiveId)
                         selectedHiveOpen = true
                         screen = Screen.HOME
@@ -2166,7 +2166,7 @@ fun BeeKeepApp(
                 padding = padding,
                 onBack = { screen = Screen.MORE },
                 onOpenHive = { hiveId ->
-                    if (requestHiveAccess(hiveId)) {
+                    if (requestHiveAccessById(hiveId)) {
                         vm.openHive(hiveId)
                         selectedHiveOpen = true
                     }
