@@ -548,9 +548,11 @@ fun BeeKeepApp(
             if (expiresAt != null) {
                 val remainingMillis = expiresAt - System.currentTimeMillis()
                 if (remainingMillis > 0L) kotlinx.coroutines.delay(remainingMillis)
-                purchasePlanName = BeeKeepEntitlements.currentPlan(context).name
-                lockedHiveIds = BeeKeepEntitlements.lockedHiveIds(context)
             }
+            // Re-check even when the expiry getter returns null, since it may have
+            // noticed and normalized an expiry at the exact time this effect started.
+            purchasePlanName = BeeKeepEntitlements.currentPlan(context).name
+            lockedHiveIds = BeeKeepEntitlements.lockedHiveIds(context)
         }
     }
 
