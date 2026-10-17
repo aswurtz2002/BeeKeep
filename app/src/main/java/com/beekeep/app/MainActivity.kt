@@ -603,12 +603,17 @@ fun BeeKeepApp(
         addHive,
         hives.size,
         deadHives.size,
+        lockedHiveIds,
         purchasePlan
     ) {
+        val availablePlanHiveCount = BeeKeepEntitlements.countHivesSubjectToFreeLimit(
+            (hives + deadHives).map { it.id },
+            lockedHiveIds
+        )
         if (
             addHive &&
             purchasePlan == BeeKeepPlan.FREE &&
-            hives.size + deadHives.size >= BeeKeepEntitlements.FREE_HIVE_LIMIT
+            availablePlanHiveCount >= BeeKeepEntitlements.FREE_HIVE_LIMIT
         ) {
             hiveLimitPromptVisible = true
         }
@@ -1963,7 +1968,12 @@ fun BeeKeepApp(
         PreMadeHiveSetupScreen(
             vm = vm,
             existingApiaryNames = if (isAddingToExistingWorkspace) apiaries.map { it.name } else emptyList(),
-            existingHiveCount = if (isAddingToExistingWorkspace) hives.size + deadHives.size else 0,
+            existingHiveCount = if (isAddingToExistingWorkspace) {
+                BeeKeepEntitlements.countHivesSubjectToFreeLimit(
+                    (hives + deadHives).map { it.id },
+                    lockedHiveIds
+                )
+            } else 0,
             addToExistingWorkspace = isAddingToExistingWorkspace,
             hiveLimit = BeeKeepEntitlements.hiveLimit(context),
             onBack = {
