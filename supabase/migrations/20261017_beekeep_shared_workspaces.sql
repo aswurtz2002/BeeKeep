@@ -138,46 +138,38 @@ create trigger beekeep_create_personal_workspace_after_signup
 after insert on auth.users
 for each row execute function public.create_beekeep_personal_workspace_for_user();
 
--- Associate the current per-user cloud documents with their user's personal workspace.
--- The user_id column and policies remain in place during this foundation stage so the
--- existing app release continues syncing privately until the shared-sync stage is complete.
-alter table public.beekeep_documents
-    add column if not exists workspace_id uuid;
+-- Keep the legacy beekeep_documents table shape unchanged. Older app versions decode every
+-- returned document field, so workspace scope is stored in a side table rather than adding a
+-- workspace_id column to beekeep_documents. This allows old builds to keep syncing privately.
+create table if not exists public.beekeep_document_workspaces (
+    user_id uuid not null references auth.users(id) on delete cascade,
+    entity_type text not null,
+    entity_id bigint not null,
+    workspace_id uuid not null references public.beekeep_workspaces(id) on delete cascade,
+    primary key (user_id, entity_type, entity_id),
+    constraint beekeep_document_workspaces_document_fkey
+        foreign key (user_id, entity_type, entity_id)
+        references public.beekeep_documents(user_id, entity_type, entity_id)
+        on delete cascade
+);
 
-update public.beekeep_documents d
-set workspace_id = w.id
-from public.beekeep_workspaces w
-where w.owner_user_id = d.user_id
-  and w.is_personal = true
-  and d.workspace_id is null;
+create index if not exists beekeep_document_workspaces_workspace_idx
+    on public.beekeep_document_workspaces (workspace_id, entity_type, entity_id);
 
-do $function$
-begin
-    if not exists (
-        select 1
-        from pg_constraint c
-        where c.conname = 'beekeep_documents_workspace_id_fkey'
-          and c.conrelid = 'public.beekeep_documents'::regclass
-    ) then
-        alter table public.beekeep_documents
-            add constraint beekeep_documents_workspace_id_fkey
-            foreign key (workspace_id)
-            references public.beekeep_workspaces(id)
-            on delete cascade;
-    end if;
-end;
-$function$;
+-- Backfill each document to the private workspace owned by its existing user.
+insert into public.beekeep_document_workspaces (user_id, entity_type, entity_id, workspace_id)
+select d.user_id, d.entity_type, d.entity_id, w.id
+from public.beekeep_documents d
+join public.beekeep_workspaces w
+  on w.owner_user_id = d.user_id
+ and w.is_personal = true
+on conflict (user_id, entity_type, entity_id)
+do update set workspace_id = excluded.workspace_id;
 
-alter table public.beekeep_documents
-    alter column workspace_id set not null;
-
-create index if not exists beekeep_documents_workspace_updated_at_idx
-    on public.beekeep_documents (workspace_id, updated_at desc);
-
--- The current Android client does not send workspace_id yet. For now, force every existing
--- per-user sync write into that user's personal workspace. Stage 3 will replace this with
--- membership validation when users can explicitly select a shared workspace.
-create or replace function public.keep_beekeep_documents_in_personal_workspace()
+-- Keep the mapping current as older and current app versions continue to write user-scoped
+-- documents. This trigger intentionally maps writes only to the signed-in user's personal
+-- workspace; Stage 3 will replace this behavior for explicitly selected shared workspaces.
+create or replace function public.record_beekeep_document_personal_workspace()
 returns trigger
 language plpgsql
 security definer
@@ -199,17 +191,34 @@ begin
         raise exception 'BeeKeep personal workspace is missing; sign in again or contact support';
     end if;
 
-    new.workspace_id := personal_workspace_id;
+    insert into public.beekeep_document_workspaces (user_id, entity_type, entity_id, workspace_id)
+    values (new.user_id, new.entity_type, new.entity_id, personal_workspace_id)
+    on conflict (user_id, entity_type, entity_id)
+    do update set workspace_id = excluded.workspace_id;
+
     return new;
 end;
 $function$;
 
 drop trigger if exists beekeep_documents_assign_personal_workspace on public.beekeep_documents;
 create trigger beekeep_documents_assign_personal_workspace
-before insert or update on public.beekeep_documents
-for each row execute function public.keep_beekeep_documents_in_personal_workspace();
+after insert or update on public.beekeep_documents
+for each row execute function public.record_beekeep_document_personal_workspace();
 
-revoke all on function public.keep_beekeep_documents_in_personal_workspace() from public, anon, authenticated;
+revoke all on function public.record_beekeep_document_personal_workspace() from public, anon, authenticated;
+
+alter table public.beekeep_document_workspaces enable row level security;
+
+drop policy if exists "BeeKeep users can read their document workspace mappings" on public.beekeep_document_workspaces;
+create policy "BeeKeep users can read their document workspace mappings"
+on public.beekeep_document_workspaces
+for select to authenticated
+using (auth.uid() = user_id);
+
+-- Mapping writes are trigger-only. Keep the join metadata private until the shared-sync stage
+-- adds membership-based reads and a server-validated write path.
+revoke all on table public.beekeep_document_workspaces from anon, authenticated;
+grant select on table public.beekeep_document_workspaces to authenticated;
 
 alter table public.beekeep_workspaces enable row level security;
 alter table public.beekeep_workspace_members enable row level security;
