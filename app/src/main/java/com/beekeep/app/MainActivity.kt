@@ -62,6 +62,7 @@ import androidx.compose.material.icons.rounded.GpsFixed
 import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.Home
 import androidx.compose.material.icons.rounded.LocationOn
+import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.MyLocation
 import androidx.compose.material.icons.rounded.Map
 import androidx.compose.material.icons.rounded.Mic
@@ -478,6 +479,9 @@ fun BeeKeepApp(
         mutableStateOf(BeeKeepEntitlements.currentPlan(context).name)
     }
     val purchasePlan = runCatching { BeeKeepPlan.valueOf(purchasePlanName) }.getOrDefault(BeeKeepPlan.FREE)
+    var lockedHiveIds by remember { mutableStateOf(BeeKeepEntitlements.lockedHiveIds(context)) }
+    var lockedHivePromptVisible by rememberSaveable { mutableStateOf(false) }
+    var lockedHivePromptName by rememberSaveable { mutableStateOf<String?>(null) }
     var purchaseBackScreen by rememberSaveable { mutableStateOf(Screen.MORE) }
     var purchaseSuccessScreen by rememberSaveable { mutableStateOf(Screen.HOME) }
     var selectedHiveOpen by rememberSaveable { mutableStateOf(false) }
@@ -536,6 +540,26 @@ fun BeeKeepApp(
     val treatments by vm.treatments.collectAsStateWithLifecycle()
     val harvests by vm.harvests.collectAsStateWithLifecycle()
     val ready by vm.ready.collectAsStateWithLifecycle()
+
+    fun requestHiveAccess(hive: Hive): Boolean {
+        if (hive.id !in lockedHiveIds) return true
+        lockedHivePromptName = hiveDisplayName(hive.number)
+        lockedHivePromptVisible = true
+        return false
+    }
+
+    fun requestHiveAccess(hiveId: Long): Boolean {
+        val hive = (hives + deadHives).firstOrNull { it.id == hiveId }
+        return hive?.let { requestHiveAccess(it) } ?: true
+    }
+
+    fun openLockedHiveUpgrade() {
+        lockedHivePromptVisible = false
+        lockedHivePromptName = null
+        purchaseBackScreen = screen
+        purchaseSuccessScreen = screen
+        screen = Screen.PURCHASES
+    }
 
     // Show the free-plan limit prompt when the user enters the Add Hive flow at the cap.
     androidx.compose.runtime.LaunchedEffect(
@@ -622,6 +646,7 @@ fun BeeKeepApp(
                 candidate.id != skippedHiveId &&
                     candidate.id !in fastAssignmentAssignedHiveIds &&
                     candidate.id !in alreadyAssignedHiveIds &&
+                    candidate.id !in lockedHiveIds &&
                     candidate.tagUid.isNullOrBlank()
             }
             val skippedLabel = skippedHive?.let { hiveReferenceName(it.number) }
@@ -840,6 +865,8 @@ fun BeeKeepApp(
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
                 nfcEnabledForIndicator = nfc.isAvailable() && nfc.isEnabled()
+                purchasePlanName = BeeKeepEntitlements.currentPlan(context).name
+                lockedHiveIds = BeeKeepEntitlements.lockedHiveIds(context)
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -1033,14 +1060,21 @@ fun BeeKeepApp(
                     val resolvedHiveId = NfcTagResolution.resolveHiveId(assignedHive?.id)
                     val resolvedHive = assignedHive?.takeIf { it.id == resolvedHiveId }
                     if (resolvedHive != null) {
-                        checkHiveLocation(resolvedHive)
-                        if (autoVoicePrefs.getBoolean("speak_hive_number_on_scan", true)) onSpeakHiveNumber(resolvedHive.number)
-                        vm.openHive(resolvedHive.id)
-                        selectedHiveOpen = true
-                        screen = Screen.HOME
-                        pendingAutoStartVoiceHiveId = resolvedHive.id
-                        pendingInspectionHiveId = resolvedHive.id
-                        snackbarHostState.showSnackbar("${hiveReferenceName(resolvedHive.number)} recognized • inspection ready")
+                        if (!requestHiveAccess(resolvedHive)) {
+                            screen = Screen.HOME
+                            pendingAutoStartVoiceHiveId = null
+                            pendingInspectionHiveId = null
+                            inspecting = false
+                        } else {
+                            checkHiveLocation(resolvedHive)
+                            if (autoVoicePrefs.getBoolean("speak_hive_number_on_scan", true)) onSpeakHiveNumber(resolvedHive.number)
+                            vm.openHive(resolvedHive.id)
+                            selectedHiveOpen = true
+                            screen = Screen.HOME
+                            pendingAutoStartVoiceHiveId = resolvedHive.id
+                            pendingInspectionHiveId = resolvedHive.id
+                            snackbarHostState.showSnackbar("${hiveReferenceName(resolvedHive.number)} recognized • inspection ready")
+                        }
                     } else {
                         showUnassignedTagPrompt(normalizedUid, Screen.HOME, result.platformTag)
                     }
@@ -1132,22 +1166,29 @@ fun BeeKeepApp(
         val resolvedHiveId = NfcTagResolution.resolveHiveId(assignedHive?.id)
         val resolvedHive = assignedHive?.takeIf { it.id == resolvedHiveId }
         if (resolvedHive != null) {
-            checkHiveLocation(resolvedHive)
-            if (autoVoicePrefs.getBoolean("speak_hive_number_on_scan", true)) onSpeakHiveNumber(resolvedHive.number)
-            val alreadyOpen = selectedHiveOpen && selected?.id == resolvedHive.id
-            val alreadyInspectingThisHive = inspecting && selected?.id == resolvedHive.id
-            if (!alreadyInspectingThisHive) pendingAutoStartVoiceHiveId = resolvedHive.id
-            if (!alreadyOpen) {
-                vm.openHive(resolvedHive.id)
-                selectedHiveOpen = true
-            }
-            screen = Screen.HOME
-            if (selected?.id == resolvedHive.id) {
-                inspecting = true
+            if (!requestHiveAccess(resolvedHive)) {
+                screen = Screen.HOME
+                pendingAutoStartVoiceHiveId = null
+                pendingInspectionHiveId = null
+                inspecting = false
             } else {
-                pendingInspectionHiveId = resolvedHive.id
+                checkHiveLocation(resolvedHive)
+                if (autoVoicePrefs.getBoolean("speak_hive_number_on_scan", true)) onSpeakHiveNumber(resolvedHive.number)
+                val alreadyOpen = selectedHiveOpen && selected?.id == resolvedHive.id
+                val alreadyInspectingThisHive = inspecting && selected?.id == resolvedHive.id
+                if (!alreadyInspectingThisHive) pendingAutoStartVoiceHiveId = resolvedHive.id
+                if (!alreadyOpen) {
+                    vm.openHive(resolvedHive.id)
+                    selectedHiveOpen = true
+                }
+                screen = Screen.HOME
+                if (selected?.id == resolvedHive.id) {
+                    inspecting = true
+                } else {
+                    pendingInspectionHiveId = resolvedHive.id
+                }
+                if (!alreadyOpen) scope.launch { snackbarHostState.showSnackbar("${hiveReferenceName(resolvedHive.number)} recognized • inspection ready") }
             }
-            if (!alreadyOpen) scope.launch { snackbarHostState.showSnackbar("${hiveReferenceName(resolvedHive.number)} recognized • inspection ready") }
         } else {
             // Even when a hive is open, an unassigned physical tag must go through
             // an explicit assignment choice. Never infer ownership from current screen.
@@ -1285,6 +1326,39 @@ fun BeeKeepApp(
         )
     }
 
+    if (lockedHivePromptVisible) {
+        AlertDialog(
+            onDismissRequest = {
+                lockedHivePromptVisible = false
+                lockedHivePromptName = null
+            },
+            shape = RoundedCornerShape(26.dp),
+            containerColor = Color(0xFFFFFBEB),
+            titleContentColor = Color(0xFF78350F),
+            textContentColor = Color(0xFF654321),
+            title = { Text("Hive Locked", fontWeight = FontWeight.ExtraBold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("${lockedHivePromptName ?: "This hive"} was added while BeeKeep Pro was active.")
+                    Text("The monthly Pro plan has ended. Renew Pro or purchase Ultimate to unlock this hive and its records.")
+                }
+            },
+            confirmButton = {
+                Button(onClick = { openLockedHiveUpgrade() }, shape = RoundedCornerShape(14.dp)) {
+                    Text("RENEW PRO / UPGRADE", fontWeight = FontWeight.ExtraBold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    lockedHivePromptVisible = false
+                    lockedHivePromptName = null
+                }) {
+                    Text("NOT NOW", color = Color(0xFF78350F))
+                }
+            }
+        )
+    }
+
     if (screen == Screen.PURCHASES) {
         PurchaseScreen(
             padding = PaddingValues(0.dp),
@@ -1292,18 +1366,32 @@ fun BeeKeepApp(
             onBack = { screen = purchaseBackScreen },
             onChoosePlan = { plan ->
                 if (BuildConfig.DEBUG) {
+                    val previousPlan = BeeKeepEntitlements.currentPlan(context)
+                    val hadLockedHives = lockedHiveIds.isNotEmpty()
                     BeeKeepEntitlements.setDebugPlan(context, plan)
                     purchasePlanName = plan.name
+                    lockedHiveIds = BeeKeepEntitlements.lockedHiveIds(context)
                     if (plan != BeeKeepPlan.FREE) {
                         screen = purchaseSuccessScreen
                         scope.launch {
                             snackbarHostState.showSnackbar(
-                                if (plan == BeeKeepPlan.PRO) "Debug test plan activated: BeeKeep Pro."
-                                else "Debug test plan activated: BeeKeep Ultimate."
+                                if (plan == BeeKeepPlan.PRO) {
+                                    if (previousPlan == BeeKeepPlan.FREE && hadLockedHives) {
+                                        "BeeKeep Pro renewed. Your previously locked hives are unlocked for another month."
+                                    } else {
+                                        "Debug test plan activated: BeeKeep Pro."
+                                    }
+                                } else {
+                                    "Debug test plan activated: BeeKeep Ultimate."
+                                }
                             )
                         }
                     } else {
-                        scope.launch { snackbarHostState.showSnackbar("Debug test plan reset to Free.") }
+                        scope.launch {
+                            snackbarHostState.showSnackbar(
+                                "Test plan reset to Free. Hives created during Pro are locked until Pro is renewed or Ultimate is activated."
+                            )
+                        }
                     }
                 }
             }
@@ -1601,6 +1689,22 @@ fun BeeKeepApp(
             }
             return
         }
+        if (hiveForDetail.id in lockedHiveIds) {
+            LockedHiveScreen(
+                hiveName = hiveDisplayName(hiveForDetail.number),
+                onBack = {
+                    selectedHiveOpen = false
+                    pendingAutoStartVoiceHiveId = null
+                    pendingInspectionHiveId = null
+                    pendingAutoTagWriteHiveId = null
+                    pendingAutoTagWriteIgnoredUid = null
+                    inspecting = false
+                    vm.clearHive()
+                },
+                onUpgrade = { openLockedHiveUpgrade() }
+            )
+            return
+        }
         val hivesInThisApiary = hives.filter {
             it.apiary.equals(hiveForDetail.apiary, ignoreCase = true) && !it.isDead
         }
@@ -1646,9 +1750,11 @@ fun BeeKeepApp(
             nextHiveNumber = nextHiveInApiary?.number,
             onNextHive = {
                 nextHiveInApiary?.let { nextHive ->
-                    lastHiveTagSuccessHiveId = null
-                    lastHiveTagSuccessUid = null
-                    vm.openHive(nextHive.id)
+                    if (requestHiveAccess(nextHive)) {
+                        lastHiveTagSuccessHiveId = null
+                        lastHiveTagSuccessUid = null
+                        vm.openHive(nextHive.id)
+                    }
                 }
             },
             inspections = inspections,
@@ -1830,16 +1936,19 @@ fun BeeKeepApp(
             apiaryName = apiaryName,
             hives = hives.filter { it.apiary.equals(apiaryName, ignoreCase = true) },
             compactHiveRows = compactHiveRows,
+            lockedHiveIds = lockedHiveIds,
             padding = androidx.compose.foundation.layout.PaddingValues(),
             onBack = { selectedApiaryName = null; screen = Screen.APIARIES },
             onAddHive = { addHive = true },
             onOpenHive = { hiveId ->
-                val targetHive = hives.firstOrNull { it.id == hiveId }
-                if (fastTagAssignmentMode && targetHive != null) {
-                    startFastTagAssignmentFromHive(targetHive)
-                } else {
-                    vm.openHive(hiveId)
-                    selectedHiveOpen = true
+                if (requestHiveAccess(hiveId)) {
+                    val targetHive = hives.firstOrNull { it.id == hiveId }
+                    if (fastTagAssignmentMode && targetHive != null) {
+                        startFastTagAssignmentFromHive(targetHive)
+                    } else {
+                        vm.openHive(hiveId)
+                        selectedHiveOpen = true
+                    }
                 }
             }
         )
@@ -1871,7 +1980,7 @@ fun BeeKeepApp(
                 apiaries = apiaries,
                 padding = padding,
                 nfcEnabled = nfcEnabledForIndicator,
-                premiumEnabled = purchasePlan != BeeKeepPlan.FREE,
+                currentPlan = purchasePlan,
                 onOpenApiaries = {
                     selectedApiaryName = null
                     screen = Screen.APIARIES
@@ -1880,16 +1989,19 @@ fun BeeKeepApp(
             Screen.HIVES -> AllHivesScreen(
                 hives = hives,
                 compactHiveRows = compactHiveRows,
+                lockedHiveIds = lockedHiveIds,
                 padding = padding,
                 onBack = { screen = Screen.HOME },
                 onAddHive = { selectedApiaryName = null; addHive = true },
                 onOpenHive = { hiveId ->
-                    val targetHive = hives.firstOrNull { it.id == hiveId }
-                    if (fastTagAssignmentMode && targetHive != null) {
-                        startFastTagAssignmentFromHive(targetHive)
-                    } else {
-                        vm.openHive(hiveId)
-                        selectedHiveOpen = true
+                    if (requestHiveAccess(hiveId)) {
+                        val targetHive = hives.firstOrNull { it.id == hiveId }
+                        if (fastTagAssignmentMode && targetHive != null) {
+                            startFastTagAssignmentFromHive(targetHive)
+                        } else {
+                            vm.openHive(hiveId)
+                            selectedHiveOpen = true
+                        }
                     }
                 }
             )
@@ -1996,14 +2108,28 @@ fun BeeKeepApp(
                 confirmBeforeTagRemoval = autoVoicePrefs.getBoolean("confirm_tag_removal", true),
                 onPendingUidConsumed = { pendingTagUid = null },
                 onBack = { screen = tagManagerReturnScreen },
-                onOpenHive = { vm.openHive(it); selectedHiveOpen = true; screen = Screen.HOME },
+                onOpenHive = { hiveId ->
+                    if (requestHiveAccess(hiveId)) {
+                        vm.openHive(hiveId)
+                        selectedHiveOpen = true
+                        screen = Screen.HOME
+                    }
+                },
                 onScanOpenHive = { hiveId ->
-                    if (autoVoicePrefs.getBoolean("speak_hive_number_on_scan", true)) onSpeakHiveNumber(hives.firstOrNull { it.id == hiveId }?.number.orEmpty())
-                    vm.openHive(hiveId)
-                    selectedHiveOpen = true
-                    screen = Screen.HOME
-                    pendingAutoStartVoiceHiveId = hiveId
-                    pendingInspectionHiveId = hiveId
+                    val targetHive = (hives + deadHives).firstOrNull { it.id == hiveId }
+                    if (targetHive != null && !requestHiveAccess(targetHive)) {
+                        screen = Screen.HOME
+                        pendingAutoStartVoiceHiveId = null
+                        pendingInspectionHiveId = null
+                        inspecting = false
+                    } else {
+                        if (autoVoicePrefs.getBoolean("speak_hive_number_on_scan", true)) onSpeakHiveNumber(targetHive?.number.orEmpty())
+                        vm.openHive(hiveId)
+                        selectedHiveOpen = true
+                        screen = Screen.HOME
+                        pendingAutoStartVoiceHiveId = hiveId
+                        pendingInspectionHiveId = hiveId
+                    }
                 },
                 onAssignTag = { hiveId, uid, reassign, onResult -> vm.assignTagToHive(hiveId, uid, reassign, onResult) },
                 onClearTag = { hiveId, onResult -> vm.clearTagForHive(hiveId, onResult) },
@@ -2018,9 +2144,15 @@ fun BeeKeepApp(
             Screen.PURCHASES -> Unit
             Screen.COLONY_HISTORY -> ColonyHistoryScreen(
                 deadHives = deadHives,
+                lockedHiveIds = lockedHiveIds,
                 padding = padding,
                 onBack = { screen = Screen.MORE },
-                onOpenHive = { vm.openHive(it); selectedHiveOpen = true }
+                onOpenHive = { hiveId ->
+                    if (requestHiveAccess(hiveId)) {
+                        vm.openHive(hiveId)
+                        selectedHiveOpen = true
+                    }
+                }
             )
             Screen.SCAN, Screen.APIARY_HIVES, Screen.PREMADE_SETUP -> Unit
         }
@@ -2114,6 +2246,7 @@ private fun androidx.compose.foundation.layout.RowScope.NavItem(label: String, i
 private fun AllHivesScreen(
     hives: List<Hive>,
     compactHiveRows: Boolean,
+    lockedHiveIds: Set<Long>,
     padding: PaddingValues,
     onBack: () -> Unit,
     onAddHive: () -> Unit,
@@ -2185,7 +2318,7 @@ private fun AllHivesScreen(
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     items(filtered, key = { it.id }) { hive ->
-                        HiveRow(hive, compact = compactHiveRows) { onOpenHive(hive.id) }
+                        HiveRow(hive, compact = compactHiveRows, locked = hive.id in lockedHiveIds) { onOpenHive(hive.id) }
                     }
                 }
             }
@@ -2198,6 +2331,7 @@ private fun ApiaryHivesScreen(
     apiaryName: String,
     hives: List<Hive>,
     compactHiveRows: Boolean,
+    lockedHiveIds: Set<Long>,
     padding: androidx.compose.foundation.layout.PaddingValues,
     onBack: () -> Unit,
     onAddHive: () -> Unit,
@@ -2249,7 +2383,7 @@ private fun ApiaryHivesScreen(
         } else {
             LazyColumn(contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 items(filtered, key = { it.id }) { hive ->
-                    HiveRow(hive, compact = compactHiveRows) { onOpenHive(hive.id) }
+                    HiveRow(hive, compact = compactHiveRows, locked = hive.id in lockedHiveIds) { onOpenHive(hive.id) }
                 }
             }
         }
