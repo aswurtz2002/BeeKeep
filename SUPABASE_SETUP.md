@@ -12,9 +12,9 @@ For a project that already has BeeKeep cloud sync running, keep its current `bee
 
 `supabase/migrations/20261017_beekeep_shared_workspaces.sql`
 
-This Stage 1 migration creates `beekeep_workspaces` and `beekeep_workspace_members`, creates a private default workspace and Owner membership for every existing account, and installs a trigger to do the same for new sign-ups. It backfills existing cloud documents with their owner's personal `workspace_id`.
+This Stage 1 migration creates `beekeep_workspaces` and `beekeep_workspace_members`, creates a private default workspace and Owner membership for every existing account, and installs a trigger to do the same for new sign-ups. It backfills a separate `beekeep_document_workspaces` mapping table for existing cloud records.
 
-**Compatibility/safety:** the existing document primary key and per-user Row Level Security policies are intentionally preserved in Stage 1. This does not share or expose data across accounts. Shared reads/writes are not enabled until the later shared-sync stage.
+**Compatibility/safety:** the `beekeep_documents` column list, primary key, and per-user Row Level Security policies are intentionally preserved in Stage 1. The separate mapping table avoids adding a field to responses older app versions deserialize. This does not share or expose data across accounts. Shared reads/writes are not enabled until the later shared-sync stage.
 
 The earlier cloud setup migration in this repository is `supabase/migrations/20261006_beekeep_cloud_v2.sql`. On a fresh Supabase project, ensure the existing base BeeKeep cloud schema is installed first, run that cloud-sync migration, and then run the Stage 1 workspace migration. Existing deployed projects that already have the v2 schema should run only the new Stage 1 migration.
 
