@@ -2033,7 +2033,6 @@ fun BeeKeepApp(
                             addApiary = true
                         },
                         modifier = Modifier.fillMaxWidth(),
-                        enabled = !apiaryLimitReached,
                         shape = RoundedCornerShape(14.dp)
                     ) { Text("Create Empty Apiary") }
                 }
