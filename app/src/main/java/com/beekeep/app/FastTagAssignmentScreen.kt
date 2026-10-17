@@ -77,6 +77,9 @@ internal fun FastTagAssignmentScreen(
     var failureSticky by remember(hive.id) { mutableStateOf(false) }
     var resumeGeneration by remember(hive.id) { mutableIntStateOf(0) }
     var skipInProgress by remember(hive.id) { mutableStateOf(false) }
+    // NFC adapter state is owned by Android, not Compose. Poll while this page is visible
+    // so the honeycomb indicator reacts immediately when NFC is toggled in system settings.
+    var nfcEnabled by remember(nfc) { mutableStateOf(nfc.isEnabled()) }
     val lifecycleOwner = LocalLifecycleOwner.current
     // NFC callbacks can outlive a recomposition. Keep the writer connected to the
     // latest hive list/assignment callbacks instead of an old captured snapshot.
@@ -101,6 +104,15 @@ internal fun FastTagAssignmentScreen(
     }
 
     BackHandler { onCancel() }
+
+    LaunchedEffect(nfc, lifecycleOwner) {
+        while (true) {
+            if (lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) {
+                nfcEnabled = nfc.isEnabled()
+            }
+            delay(250L)
+        }
+    }
 
     LaunchedEffect(hive.id, ignoredUid, retryCount, resumeGeneration) {
         // On resume, preserve failures long enough for the beekeeper to see them.
@@ -370,7 +382,7 @@ internal fun FastTagAssignmentScreen(
             ) {
                 if (isActive) {
                     HoneycombNfcIndicator(
-                        nfcEnabled = nfc.isEnabled(),
+                        nfcEnabled = nfcEnabled,
                         size = 112.dp
                     )
                 } else {
