@@ -47,10 +47,10 @@ jobs:
       - name: Apply Stage 2 workspace invitations and roles migration
         run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261018_beekeep_workspace_invitations.sql
       - name: Apply workspace role guard hardening
-        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261018_beekeep_workspace_role_guard_fix.sql
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261018000100_beekeep_workspace_role_guard_fix.sql
       - name: Apply invitation acceptance fix
-        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261018_beekeep_workspace_accept_invitation_fix.sql
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261018000200_beekeep_workspace_accept_invitation_fix.sql
       - name: Configure invitation token search paths
-        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261018_beekeep_workspace_crypto_search_path_fix.sql
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261018000300_beekeep_workspace_crypto_search_path_fix.sql
       - name: Verify invitation acceptance and manager permissions
         run: psql -v ON_ERROR_STOP=1 -f supabase/tests/workspace_invitation_security.sql
