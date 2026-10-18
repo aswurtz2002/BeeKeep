@@ -13,6 +13,7 @@ import io.github.jan.supabase.postgrest.Postgrest
 import io.github.jan.supabase.postgrest.from
 import io.github.jan.supabase.postgrest.postgrest
 import io.github.jan.supabase.postgrest.rpc
+import io.github.jan.supabase.postgrest.query.Order
 import io.github.jan.supabase.realtime.Realtime
 import io.github.jan.supabase.realtime.realtime
 import io.github.jan.supabase.realtime.channel
@@ -439,6 +440,26 @@ class SupabaseGateway(
     ): CloudResult {
         val supabase = client ?: return CloudResult.NotConfigured
         try {
+            suspend fun loadAllWorkspaceDocuments(): List<CloudWorkspaceDocumentRow> {
+                val pageSize = 500L
+                var offset = 0L
+                val documents = mutableListOf<CloudWorkspaceDocumentRow>()
+                while (true) {
+                    val page = supabase.from("beekeep_workspace_documents")
+                        .select {
+                            filter { eq("workspace_id", workspaceId) }
+                            order(column = "entity_type", order = Order.ASCENDING)
+                            order(column = "entity_id", order = Order.ASCENDING)
+                            range(offset..(offset + pageSize - 1L))
+                        }
+                        .decodeList<CloudWorkspaceDocumentRow>()
+                    documents += page.filter { it.workspace_id == workspaceId }
+                    if (page.size < pageSize) break
+                    offset += pageSize
+                }
+                return documents
+            }
+
             val workspace = supabase.postgrest.rpc("beekeep_list_workspaces")
                 .decodeList<BeeKeepWorkspace>()
                 .firstOrNull { it.id == workspaceId && !it.is_personal }
@@ -455,10 +476,7 @@ class SupabaseGateway(
             if (repository.activeWorkspaceReadOnly.value == isWritable) {
                 repository.switchWorkspace(workspaceId, readOnly = !isWritable)
             }
-            val remoteBefore = supabase.from("beekeep_workspace_documents")
-                .select { filter { eq("workspace_id", workspaceId) } }
-                .decodeList<CloudWorkspaceDocumentRow>()
-                .filter { it.workspace_id == workspaceId }
+            val remoteBefore = loadAllWorkspaceDocuments()
             val remoteByKey = remoteBefore.associateBy { "${it.entity_type}:${it.entity_id}" }
             val pending = repository.pendingSync(100)
             val uploadable = mutableListOf<CloudWorkspaceDocumentRow>()
@@ -495,10 +513,7 @@ class SupabaseGateway(
                 }
             }
 
-            val remote = supabase.from("beekeep_workspace_documents")
-                .select { filter { eq("workspace_id", workspaceId) } }
-                .decodeList<CloudWorkspaceDocumentRow>()
-                .filter { it.workspace_id == workspaceId }
+            val remote = loadAllWorkspaceDocuments()
             // Child history is ignored locally if its hive has not been inserted yet.
             // Apply parents first rather than relying on the database's unspecified row order.
             val applyPriority = mapOf(
