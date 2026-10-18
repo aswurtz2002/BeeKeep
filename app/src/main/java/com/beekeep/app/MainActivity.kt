@@ -534,6 +534,9 @@ fun BeeKeepApp(
 
     val hives by vm.hives.collectAsStateWithLifecycle()
     val deadHives by vm.deadHives.collectAsStateWithLifecycle()
+    val account by cloud.account.collectAsStateWithLifecycle()
+    val activeWorkspaceId by vm.activeWorkspaceId.collectAsStateWithLifecycle()
+    val activeWorkspaceReadOnly by vm.activeWorkspaceReadOnly.collectAsStateWithLifecycle()
     val apiaries by vm.apiaries.collectAsStateWithLifecycle()
     val selected by vm.selected.collectAsStateWithLifecycle()
     val inspections by vm.inspections.collectAsStateWithLifecycle()
@@ -3078,8 +3081,6 @@ private fun MoreScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val account by cloud.account.collectAsStateWithLifecycle()
-    val activeWorkspaceId by vm.activeWorkspaceId.collectAsStateWithLifecycle()
-    val activeWorkspaceReadOnly by vm.activeWorkspaceReadOnly.collectAsStateWithLifecycle()
     var email by rememberSaveable { mutableStateOf("") }
     var password by rememberSaveable { mutableStateOf("") }
     var authMessage by rememberSaveable { mutableStateOf("") }
