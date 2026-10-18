@@ -54,6 +54,23 @@ class BeeKeepViewModel(
             launch { repo.observeDeadHives().collect { _deadHives.value = it } }
             launch { repo.observeApiaries().collect { _apiaries.value = it } }
         }
+        // Clear any open detail pane when the active dataset changes; numeric local IDs
+        // can legitimately overlap between a personal DB and a team's DB.
+        launch {
+            var previousWorkspaceId = repo.activeWorkspaceId.value
+            repo.activeWorkspaceId.collect { workspaceId ->
+                if (workspaceId != previousWorkspaceId) {
+                    previousWorkspaceId = workspaceId
+                    detailJob?.cancel()
+                    _selected.value = null
+                    _inspections.value = emptyList()
+                    _feedings.value = emptyList()
+                    _treatments.value = emptyList()
+                    _harvests.value = emptyList()
+                    _events.value = emptyList()
+                }
+            }
+        }
     }
 
     fun openHive(id: Long) {
