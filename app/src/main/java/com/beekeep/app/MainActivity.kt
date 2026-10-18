@@ -2121,40 +2121,40 @@ fun BeeKeepApp(
     }
     Scaffold(
         snackbarHost = { androidx.compose.material3.SnackbarHost(snackbarHostState) },
-        topBar = {
-            if (account.signedIn && !activeWorkspaceId.isNullOrBlank()) {
-                Surface(
-                    color = MaterialTheme.colorScheme.secondaryContainer,
-                    contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
-                    tonalElevation = 1.dp
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically
+        topBar = {},
+        bottomBar = {
+            Column {
+                if (account.signedIn && !activeWorkspaceId.isNullOrBlank()) {
+                    Surface(
+                        color = MaterialTheme.colorScheme.secondaryContainer,
+                        contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                        tonalElevation = 1.dp
                     ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                "TEAM WORKSPACE ACTIVE",
-                                style = MaterialTheme.typography.labelLarge,
-                                fontWeight = FontWeight.Bold
-                            )
-                            Text(
-                                if (activeWorkspaceReadOnly) {
-                                    "Shared team data · View only"
-                                } else {
-                                    "Shared team data · Changes sync with your team"
-                                },
-                                style = MaterialTheme.typography.bodySmall
-                            )
-                        }
-                        TextButton(onClick = { screen = Screen.SETTINGS }) {
-                            Text("MANAGE")
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    "TEAM WORKSPACE ACTIVE",
+                                    style = MaterialTheme.typography.labelLarge,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    if (activeWorkspaceReadOnly) {
+                                        "Shared team data · View only"
+                                    } else {
+                                        "Shared team data · Changes sync with your team"
+                                    },
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                            }
+                            TextButton(onClick = { screen = Screen.MORE }) {
+                                Text("MANAGE")
+                            }
                         }
                     }
                 }
-            }
-        },
-        bottomBar = {
             NavigationBar(
                 modifier = Modifier.clip(RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp)),
                 containerColor = if (darkMode) NavBarDark else NavBarLight,
@@ -2169,6 +2169,7 @@ fun BeeKeepApp(
                     screen = Screen.MAP
                 }
                 NavItem("Settings", Icons.Rounded.Settings, screen == Screen.MORE || screen == Screen.SETTINGS) { screen = Screen.SETTINGS }
+            }
             }
         }
     ) { padding ->
@@ -3083,7 +3084,23 @@ private fun MoreScreen(
     val account by cloud.account.collectAsStateWithLifecycle()
     var email by rememberSaveable { mutableStateOf("") }
     var password by rememberSaveable { mutableStateOf("") }
+    var username by rememberSaveable { mutableStateOf("") }
+    var savedUsername by rememberSaveable { mutableStateOf("") }
+    var usernameRefreshKey by remember { mutableIntStateOf(0) }
     var authMessage by rememberSaveable { mutableStateOf("") }
+
+    androidx.compose.runtime.LaunchedEffect(account.signedIn) {
+        if (account.signedIn) {
+            val result = cloud.getUsername()
+            if (result.isSuccess) {
+                username = result.value.orEmpty()
+                savedUsername = username
+            }
+        } else {
+            username = ""
+            savedUsername = ""
+        }
+    }
 
     Column(Modifier.fillMaxSize().padding(padding).padding(18.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -3162,10 +3179,26 @@ private fun MoreScreen(
                 }
 
                 if (account.configured && !account.signedIn) {
+                    OutlinedTextField(
+                        value = username,
+                        onValueChange = { value ->
+                            username = value.filter { ch ->
+                                ch in 'a'..'z' || ch in 'A'..'Z' || ch in '0'..'9' || ch == '_'
+                            }.take(20)
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { Text("Username (new accounts)") },
+                        placeholder = { Text("e.g. NorthApiary") },
+                        supportingText = {
+                            Text("3–20 letters, numbers or underscores. Leave blank when signing in.")
+                        },
+                        singleLine = true
+                    )
                     OutlinedTextField(email, { email = it }, Modifier.fillMaxWidth(), label = { Text("Email") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email))
                     OutlinedTextField(password, { password = it }, Modifier.fillMaxWidth(), label = { Text("Password") }, singleLine = true, visualTransformation = PasswordVisualTransformation(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password))
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Button(
+                            enabled = email.contains("@") && password.isNotEmpty(),
                             onClick = {
                                 scope.launch {
                                     authMessage = ""
@@ -3180,10 +3213,12 @@ private fun MoreScreen(
                             modifier = Modifier.weight(1f)
                         ) { Text("SIGN IN") }
                         OutlinedButton(
+                            enabled = email.contains("@") && password.isNotEmpty() &&
+                                username.matches(Regex("^[A-Za-z0-9_]{3,20}$")),
                             onClick = {
                                 scope.launch {
                                     authMessage = ""
-                                    when (val result = cloud.signUp(email, password)) {
+                                    when (val result = cloud.signUp(email, password, username.trim())) {
                                         CloudResult.Success -> { authMessage = "Account created. Check your email if verification is required."; CloudSyncScheduler.runNow(context) }
                                         CloudResult.NotConfigured -> authMessage = "Cloud is not configured."
                                         CloudResult.NotSignedIn -> authMessage = "Account created but not signed in yet."
@@ -3195,6 +3230,39 @@ private fun MoreScreen(
                         ) { Text("CREATE") }
                     }
                 } else if (account.signedIn) {
+                    OutlinedTextField(
+                        value = username,
+                        onValueChange = { value ->
+                            username = value.filter { ch ->
+                                ch in 'a'..'z' || ch in 'A'..'Z' || ch in '0'..'9' || ch == '_'
+                            }.take(20)
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { Text("Team username") },
+                        placeholder = { Text("e.g. NorthApiary") },
+                        supportingText = {
+                            Text("Your teammates see this name in the team member list.")
+                        },
+                        singleLine = true
+                    )
+                    Button(
+                        enabled = username.matches(Regex("^[A-Za-z0-9_]{3,20}$")) &&
+                            username != savedUsername && !account.syncing,
+                        onClick = {
+                            scope.launch {
+                                val result = cloud.setUsername(username.trim())
+                                if (result.isSuccess && result.value != null) {
+                                    username = result.value
+                                    savedUsername = result.value
+                                    usernameRefreshKey++
+                                    authMessage = "Username saved. Your team roster will show it."
+                                } else {
+                                    authMessage = result.error ?: "Couldn't save your username."
+                                }
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text("SAVE USERNAME") }
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Button(
                             onClick = {
@@ -3235,7 +3303,11 @@ private fun MoreScreen(
             }
         }
 
-        WorkspaceManagementSection(cloud = cloud, activity = activity)
+        WorkspaceManagementSection(
+            cloud = cloud,
+            activity = activity,
+            usernameRefreshKey = usernameRefreshKey
+        )
 
         Card(shape = RoundedCornerShape(24.dp)) {
             Column(Modifier.padding(16.dp)) {
