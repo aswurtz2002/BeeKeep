@@ -9,6 +9,11 @@ import androidx.activity.ComponentActivity
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.weight
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Surface
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -128,38 +133,69 @@ fun WorkspaceManagementSection(cloud: SupabaseGateway, activity: ComponentActivi
         loading = false
     }
 
-    Card(
+    Column(
         modifier = Modifier.fillMaxWidth(),
-        shape = androidx.compose.foundation.shape.RoundedCornerShape(24.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+        verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        Column(
-            modifier = Modifier.fillMaxWidth().padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
+        WorkspacePanel(
+            title = "Team workspaces",
+            description = "Manage your shared apiaries, hive records, people, and invitations."
         ) {
-            Text("Team workspaces", style = MaterialTheme.typography.titleLarge, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
-            Text(
-                "Create a workspace for your beekeeping team, invite people by email, and control their roles.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-
             if (!account.signedIn) {
-                Text("Sign in under BeeKeep Cloud to manage team workspaces.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(
+                    "Sign in to BeeKeep Cloud to create or join a team workspace.",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             } else {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Button(onClick = { showCreateDialog = true }) { Text("CREATE WORKSPACE") }
-                    if (loading) Text("Loading…", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text(
+                            if (sharedWorkspaces.size == 1) "1 team workspace" else "\${sharedWorkspaces.size} team workspaces",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold
+                        )
+                        Text(
+                            "Choose one below to manage it.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Button(
+                        enabled = !loading,
+                        onClick = { showCreateDialog = true }
+                    ) { Text("CREATE") }
                 }
 
                 if (sharedWorkspaces.isEmpty()) {
-                    Text(
-                        "No team workspaces yet. Your existing personal workspace remains private.",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(16.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(14.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Text(
+                                "No team workspaces yet",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold
+                            )
+                            Text(
+                                "Create one for your crew, or join an existing team with an invitation code below. Your personal apiaries stay private.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
                 } else {
-                    Text("YOUR TEAM WORKSPACES", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
                     sharedWorkspaces.forEach { workspace ->
+                        val selected = selectedWorkspaceId == workspace.id
+                        val active = activeWorkspaceId == workspace.id
                         OutlinedButton(
                             onClick = {
                                 selectedWorkspaceId = workspace.id
@@ -168,26 +204,115 @@ fun WorkspaceManagementSection(cloud: SupabaseGateway, activity: ComponentActivi
                                 createdInvite = null
                                 message = ""
                             },
-                            modifier = Modifier.fillMaxWidth()
+                            modifier = Modifier.fillMaxWidth(),
+                            enabled = !loading || selected
                         ) {
-                            Text(
-                                (if (selectedWorkspaceId == workspace.id) "✓ " else "") +
-                                    workspace.name + "  ·  " + workspace.member_role.uppercase()
-                            )
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                Column(
+                                    modifier = Modifier.weight(1f),
+                                    verticalArrangement = Arrangement.spacedBy(3.dp),
+                                    horizontalAlignment = Alignment.Start
+                                ) {
+                                    Text(
+                                        workspace.name,
+                                        style = MaterialTheme.typography.titleSmall,
+                                        fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold
+                                    )
+                                    Text(
+                                        "Your role: \${workspace.member_role.replaceFirstChar { it.uppercase() }}",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                when {
+                                    active -> WorkspaceTag("ACTIVE", active = true)
+                                    selected -> WorkspaceTag("SELECTED")
+                                }
+                            }
                         }
                     }
                 }
+                if (loading) {
+                    Text(
+                        "Updating workspace details…",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        }
 
-                selectedWorkspace?.let { workspace ->
-                    Spacer(Modifier.width(2.dp))
-                    Text(workspace.name, style = MaterialTheme.typography.titleMedium, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
-                    if (activeWorkspaceId == workspace.id) {
-                        Text(
-                            "ACTIVE DATA WORKSPACE",
-                            style = MaterialTheme.typography.labelLarge,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                    } else {
+        if (account.signedIn) {
+            selectedWorkspace?.let { workspace ->
+                val isActiveWorkspace = activeWorkspaceId == workspace.id
+                WorkspacePanel(
+                    title = workspace.name,
+                    description = "Workspace overview"
+                ) {
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(16.dp),
+                        color = if (isActiveWorkspace) {
+                            MaterialTheme.colorScheme.primaryContainer
+                        } else {
+                            MaterialTheme.colorScheme.surfaceVariant
+                        }
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(14.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            Column(
+                                modifier = Modifier.weight(1f),
+                                verticalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Text(
+                                    if (isActiveWorkspace) "Team data is active" else "Team data is not active",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+                                    color = if (isActiveWorkspace) {
+                                        MaterialTheme.colorScheme.onPrimaryContainer
+                                    } else {
+                                        MaterialTheme.colorScheme.onSurface
+                                    }
+                                )
+                                Text(
+                                    if (isActiveWorkspace) {
+                                        if (workspace.member_role == "viewer") {
+                                            "You're viewing shared records in read-only mode."
+                                        } else {
+                                            "Apiary and hive changes sync with members of this team."
+                                        }
+                                    } else {
+                                        "Activate this workspace to load the team's apiaries and hives on this device."
+                                    },
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = if (isActiveWorkspace) {
+                                        MaterialTheme.colorScheme.onPrimaryContainer
+                                    } else {
+                                        MaterialTheme.colorScheme.onSurfaceVariant
+                                    }
+                                )
+                            }
+                            WorkspaceTag(if (isActiveWorkspace) "ACTIVE" else "INACTIVE", active = isActiveWorkspace)
+                        }
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text("Your access", style = MaterialTheme.typography.bodyMedium)
+                        WorkspaceTag(workspace.member_role.replaceFirstChar { it.uppercase() })
+                    }
+
+                    if (!isActiveWorkspace) {
                         Button(
                             enabled = !loading,
                             onClick = {
@@ -196,223 +321,308 @@ fun WorkspaceManagementSection(cloud: SupabaseGateway, activity: ComponentActivi
                                     val result = cloud.activateWorkspace(workspace.id)
                                     activeWorkspaceId = activity.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
                                         .getString("active_team_workspace_id", "").orEmpty()
-                                    message = result.error ?: "Now using ${workspace.name}. Team sync completed."
+                                    message = result.error ?: "Now using \${workspace.name}. Team data synced."
                                     loading = false
                                 }
                             },
                             modifier = Modifier.fillMaxWidth()
-                        ) { Text(if (workspace.member_role == "viewer") "VIEW THIS WORKSPACE" else "USE THIS WORKSPACE") }
+                        ) {
+                            Text(if (workspace.member_role == "viewer") "OPEN TEAM DATA" else "USE THIS WORKSPACE")
+                        }
                     }
-                    if (workspace.member_role in setOf("owner", "admin")) {
-                        OutlinedButton(
-                            enabled = !loading,
-                            onClick = { copyPersonalTarget = workspace },
-                            modifier = Modifier.fillMaxWidth()
-                        ) { Text("COPY PERSONAL DATA TO TEAM") }
+
+                    if (workspace.member_role == "viewer") {
                         Text(
-                            "Copies your cloud-synced personal apiaries, hives and history. Your original personal records remain private.",
+                            "Your role is view-only. You can see the team's records but can't upload edits.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
-                    Text(
-                        if (workspace.member_role == "viewer") {
-                            "Your role is view-only. Editing is disabled while this workspace is active."
-                        } else {
-                            "Hive, apiary and inspection records are kept separate from your personal workspace and sync for team members."
-                        },
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Text("MEMBERS", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-                    if (members.isEmpty()) {
-                        Text("No members loaded yet.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+
+                if (workspace.member_role in setOf("owner", "admin")) {
+                    WorkspacePanel(
+                        title = "Bring your existing data into this team",
+                        description = "Copy your personal apiaries and hives"
+                    ) {
+                        Text(
+                            "Copies your latest cloud-synced apiaries, hives, and history into this team. Your original personal records stay untouched. If any record IDs conflict with team data, the copy stops rather than overwriting anything.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        OutlinedButton(
+                            enabled = !loading,
+                            onClick = { copyPersonalTarget = workspace },
+                            modifier = Modifier.fillMaxWidth()
+                        ) { Text("COPY PERSONAL DATA INTO TEAM") }
+                        Text(
+                            "After copying, this device switches to the team workspace.",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
-                    members.forEach { member ->
-                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
+                }
+
+                WorkspacePanel(
+                    title = "People",
+                    description = "\${members.size} \${if (members.size == 1) "person" else "people"} in this workspace"
+                ) {
+                    if (members.isEmpty()) {
+                        Text(
+                            if (loading) "Loading members…" else "No member details are available yet.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    members.forEachIndexed { index, member ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(
+                                modifier = Modifier.weight(1f),
+                                verticalArrangement = Arrangement.spacedBy(3.dp)
                             ) {
-                                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                                    Text(
-                                        member.email.ifBlank { member.user_id.take(8) + "…" } +
-                                            if (member.is_current_user) " (You)" else "",
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold
-                                    )
-                                    Text(member.role.uppercase(), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                }
-                                if (canManage && !member.is_current_user && member.role != "owner") {
-                                    Box {
-                                        TextButton(onClick = { memberMenuId = member.user_id }) { Text("MANAGE") }
-                                        DropdownMenu(
-                                            expanded = memberMenuId == member.user_id,
-                                            onDismissRequest = { memberMenuId = null }
-                                        ) {
-                                            val roles = if (canAssignAdmin) listOf("admin", "member", "viewer") else listOf("member", "viewer")
-                                            roles.filter { it != member.role }.forEach { newRole ->
-                                                DropdownMenuItem(
-                                                    text = { Text("Make ${newRole.replaceFirstChar { it.uppercase() }}") },
-                                                    onClick = {
-                                                        memberMenuId = null
-                                                        scope.launch {
-                                                            val result = cloud.updateWorkspaceMemberRole(workspace.id, member.user_id, newRole)
-                                                            if (result.isSuccess) {
-                                                                message = "Member role updated."
-                                                                val reloaded = cloud.listWorkspaceMembers(workspace.id)
-                                                                members = reloaded.value.orEmpty()
-                                                            } else message = result.error ?: "Couldn't change the role."
-                                                        }
-                                                    }
-                                                )
-                                            }
+                                Text(
+                                    member.email.ifBlank { member.user_id.take(8) + "…" } +
+                                        if (member.is_current_user) " (You)" else "",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold
+                                )
+                                Text(
+                                    member.role.replaceFirstChar { it.uppercase() },
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            if (canManage && !member.is_current_user && member.role != "owner") {
+                                Box {
+                                    TextButton(onClick = { memberMenuId = member.user_id }) { Text("MANAGE") }
+                                    DropdownMenu(
+                                        expanded = memberMenuId == member.user_id,
+                                        onDismissRequest = { memberMenuId = null }
+                                    ) {
+                                        val roles = if (canAssignAdmin) {
+                                            listOf("admin", "member", "viewer")
+                                        } else {
+                                            listOf("member", "viewer")
+                                        }
+                                        roles.filter { it != member.role }.forEach { newRole ->
                                             DropdownMenuItem(
-                                                text = { Text("Remove member", color = MaterialTheme.colorScheme.error) },
+                                                text = { Text("Make \${newRole.replaceFirstChar { it.uppercase() }}") },
                                                 onClick = {
                                                     memberMenuId = null
                                                     scope.launch {
-                                                        val result = cloud.removeWorkspaceMember(workspace.id, member.user_id)
+                                                        val result = cloud.updateWorkspaceMemberRole(workspace.id, member.user_id, newRole)
                                                         if (result.isSuccess) {
-                                                            message = "Member removed from the workspace."
+                                                            message = "Member role updated."
                                                             members = cloud.listWorkspaceMembers(workspace.id).value.orEmpty()
-                                                        } else message = result.error ?: "Couldn't remove the member."
+                                                        } else {
+                                                            message = result.error ?: "Couldn't change the role."
+                                                        }
                                                     }
                                                 }
                                             )
                                         }
+                                        DropdownMenuItem(
+                                            text = { Text("Remove member", color = MaterialTheme.colorScheme.error) },
+                                            onClick = {
+                                                memberMenuId = null
+                                                scope.launch {
+                                                    val result = cloud.removeWorkspaceMember(workspace.id, member.user_id)
+                                                    if (result.isSuccess) {
+                                                        message = "Member removed from the workspace."
+                                                        members = cloud.listWorkspaceMembers(workspace.id).value.orEmpty()
+                                                    } else {
+                                                        message = result.error ?: "Couldn't remove the member."
+                                                    }
+                                                }
+                                            }
+                                        )
                                     }
                                 }
                             }
                         }
+                        if (index < members.lastIndex) {
+                            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                        }
                     }
+                }
 
-                    if (canManage) {
-                        Text("INVITE A BEEKEEPER", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                if (canManage) {
+                    WorkspacePanel(
+                        title = "Invite a beekeeper",
+                        description = "Send an invitation to someone with a BeeKeep account."
+                    ) {
                         OutlinedTextField(
                             value = inviteEmail,
                             onValueChange = { inviteEmail = it },
                             modifier = Modifier.fillMaxWidth(),
-                            label = { Text("Their BeeKeep account email") },
+                            label = { Text("BeeKeep account email") },
                             singleLine = true
                         )
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Box {
-                                OutlinedButton(onClick = { roleMenuExpanded = true }) {
-                                    Text("Role: ${inviteRole.replaceFirstChar { it.uppercase() }}")
-                                }
-                                DropdownMenu(
-                                    expanded = roleMenuExpanded,
-                                    onDismissRequest = { roleMenuExpanded = false }
-                                ) {
-                                    (if (canAssignAdmin) listOf("admin", "member", "viewer") else listOf("member", "viewer")).forEach { role ->
+                        Box(modifier = Modifier.fillMaxWidth()) {
+                            OutlinedButton(
+                                onClick = { roleMenuExpanded = true },
+                                modifier = Modifier.fillMaxWidth()
+                            ) { Text("Invitation role: \${inviteRole.replaceFirstChar { it.uppercase() }}") }
+                            DropdownMenu(
+                                expanded = roleMenuExpanded,
+                                onDismissRequest = { roleMenuExpanded = false }
+                            ) {
+                                (if (canAssignAdmin) listOf("admin", "member", "viewer") else listOf("member", "viewer"))
+                                    .forEach { role ->
                                         DropdownMenuItem(
                                             text = { Text(role.replaceFirstChar { it.uppercase() }) },
                                             onClick = { inviteRole = role; roleMenuExpanded = false }
                                         )
                                     }
-                                }
-                            }
-                            Button(
-                                enabled = inviteEmail.contains("@") && !loading,
-                                onClick = {
-                                    scope.launch {
-                                        val result = cloud.createWorkspaceInvitation(workspace.id, inviteEmail, inviteRole)
-                                        val invite = result.value
-                                        if (result.isSuccess && invite != null) {
-                                            createdInvite = invite
-                                            message = "Invitation created. Share the code with the invited person."
-                                            inviteEmail = ""
-                                            val list = cloud.listWorkspaceInvitations(workspace.id)
-                                            invitations = list.value.orEmpty()
-                                        } else message = result.error ?: "Couldn't create the invitation."
-                                    }
-                                }
-                            ) { Text("CREATE INVITE") }
-                        }
-                        createdInvite?.let { invite ->
-                            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
-                                Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    Text("Invite for ${invite.email}", fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
-                                    Text("One-time code. Expires in seven days. Share it privately; it will not be shown again after leaving this screen.")
-                                    Text(invite.invite_token, style = MaterialTheme.typography.bodySmall)
-                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                        OutlinedButton(onClick = {
-                                            val clipboard = activity.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                            clipboard.setPrimaryClip(ClipData.newPlainText("BeeKeep invitation", invite.invite_token))
-                                            Toast.makeText(activity, "Invitation code copied", Toast.LENGTH_SHORT).show()
-                                        }) { Text("COPY CODE") }
-                                        Button(onClick = {
-                                            val shareText = "You've been invited to the BeeKeep workspace ${workspace.name}.\n\nSign in to BeeKeep Cloud using ${invite.email}, then open More → Team workspaces → Accept invitation and enter this code:\n${invite.invite_token}\n\nThis invitation expires in seven days."
-                                            val sendIntent = Intent(Intent.ACTION_SEND).apply {
-                                                type = "text/plain"
-                                                putExtra(Intent.EXTRA_SUBJECT, "BeeKeep workspace invitation")
-                                                putExtra(Intent.EXTRA_TEXT, shareText)
-                                            }
-                                            activity.startActivity(Intent.createChooser(sendIntent, "Share BeeKeep invitation"))
-                                        }) { Text("SHARE INVITE") }
-                                    }
-                                }
                             }
                         }
+                        Button(
+                            enabled = inviteEmail.contains("@") && !loading,
+                            onClick = {
+                                scope.launch {
+                                    val result = cloud.createWorkspaceInvitation(workspace.id, inviteEmail, inviteRole)
+                                    val invite = result.value
+                                    if (result.isSuccess && invite != null) {
+                                        createdInvite = invite
+                                        message = "Invitation created. Share the code with the invited person."
+                                        inviteEmail = ""
+                                        invitations = cloud.listWorkspaceInvitations(workspace.id).value.orEmpty()
+                                    } else {
+                                        message = result.error ?: "Couldn't create the invitation."
+                                    }
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) { Text("CREATE INVITATION") }
 
-                        Text("PENDING INVITATIONS", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-                        if (invitations.isEmpty()) {
-                            Text("No pending invitations.", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                        invitations.forEach { invitation ->
-                            Row(
+                        createdInvite?.let { invite ->
+                            Surface(
                                 modifier = Modifier.fillMaxWidth(),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.SpaceBetween
+                                shape = RoundedCornerShape(16.dp),
+                                color = MaterialTheme.colorScheme.secondaryContainer
                             ) {
-                                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                                    Text(invitation.email, style = MaterialTheme.typography.bodyMedium)
-                                    Text("${invitation.role.uppercase()} · expires ${invitation.expires_at.take(10)}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                }
-                                TextButton(onClick = {
-                                    scope.launch {
-                                        val result = cloud.cancelWorkspaceInvitation(invitation.id)
-                                        if (result.isSuccess) {
-                                            invitations = cloud.listWorkspaceInvitations(workspace.id).value.orEmpty()
-                                            message = "Invitation cancelled."
-                                        } else message = result.error ?: "Couldn't cancel invitation."
+                                Column(
+                                    modifier = Modifier.padding(14.dp),
+                                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Text(
+                                        "Invitation ready",
+                                        style = MaterialTheme.typography.titleSmall,
+                                        fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
+                                    )
+                                    Text("For \${invite.email}", style = MaterialTheme.typography.bodySmall)
+                                    Text(
+                                        invite.invite_token,
+                                        style = MaterialTheme.typography.titleMedium,
+                                        fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.onSecondaryContainer
+                                    )
+                                    Text(
+                                        "This code expires in seven days. Copy or share it now; it won't be shown again after leaving this screen.",
+                                        style = MaterialTheme.typography.bodySmall
+                                    )
+                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        OutlinedButton(
+                                            onClick = {
+                                                val clipboard = activity.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                                clipboard.setPrimaryClip(ClipData.newPlainText("BeeKeep invitation", invite.invite_token))
+                                                Toast.makeText(activity, "Invitation code copied", Toast.LENGTH_SHORT).show()
+                                            },
+                                            modifier = Modifier.weight(1f)
+                                        ) { Text("COPY CODE") }
+                                        Button(
+                                            onClick = {
+                                                val shareText = "You've been invited to the BeeKeep workspace \${workspace.name}.\n\nSign in to BeeKeep Cloud using \${invite.email}, then open More → Team workspaces → Join a team and enter this code:\n\${invite.invite_token}\n\nThis invitation expires in seven days."
+                                                val sendIntent = Intent(Intent.ACTION_SEND).apply {
+                                                    type = "text/plain"
+                                                    putExtra(Intent.EXTRA_SUBJECT, "BeeKeep workspace invitation")
+                                                    putExtra(Intent.EXTRA_TEXT, shareText)
+                                                }
+                                                activity.startActivity(Intent.createChooser(sendIntent, "Share BeeKeep invitation"))
+                                            },
+                                            modifier = Modifier.weight(1f)
+                                        ) { Text("SHARE") }
                                     }
-                                }) { Text("CANCEL") }
+                                }
+                            }
+                        }
+                    }
+
+                    WorkspacePanel(
+                        title = "Pending invitations",
+                        description = "Invitations that haven't been accepted yet."
+                    ) {
+                        if (invitations.isEmpty()) {
+                            Text(
+                                "No pending invitations.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        } else {
+                            invitations.forEachIndexed { index, invitation ->
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Column(
+                                        modifier = Modifier.weight(1f),
+                                        verticalArrangement = Arrangement.spacedBy(3.dp)
+                                    ) {
+                                        Text(invitation.email, style = MaterialTheme.typography.bodyMedium)
+                                        Text(
+                                            "\${invitation.role.replaceFirstChar { it.uppercase() }} · expires \${invitation.expires_at.take(10)}",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                    TextButton(
+                                        enabled = !loading,
+                                        onClick = {
+                                            scope.launch {
+                                                val result = cloud.cancelWorkspaceInvitation(invitation.id)
+                                                if (result.isSuccess) {
+                                                    invitations = cloud.listWorkspaceInvitations(workspace.id).value.orEmpty()
+                                                    message = "Invitation cancelled."
+                                                } else {
+                                                    message = result.error ?: "Couldn't cancel the invitation."
+                                                }
+                                            }
+                                        }
+                                    ) { Text("CANCEL") }
+                                }
+                                if (index < invitations.lastIndex) {
+                                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                                }
                             }
                         }
                     }
                 }
+            }
 
-                if (activeWorkspaceId.isNotBlank()) {
-                    OutlinedButton(
-                        enabled = !loading,
-                        onClick = {
-                            scope.launch {
-                                loading = true
-                                val result = cloud.activateWorkspace(null)
-                                activeWorkspaceId = activity.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
-                                    .getString("active_team_workspace_id", "").orEmpty()
-                                message = result.error ?: "Switched back to your personal workspace."
-                                loading = false
-                            }
-                        },
-                        modifier = Modifier.fillMaxWidth()
-                    ) { Text("SWITCH TO PERSONAL WORKSPACE") }
-                }
-
-                Text("ACCEPT AN INVITATION", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-                Text("Use the same email address the invitation was created for. Codes expire after seven days.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            WorkspacePanel(
+                title = "Join a team",
+                description = "Have an invitation code? Enter it here to join a workspace."
+            ) {
+                Text(
+                    "New invitation codes are 8 characters. Older invitation codes will still work.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
                 OutlinedTextField(
                     value = acceptToken,
                     onValueChange = { value -> acceptToken = value.filter { it.isLetterOrDigit() }.uppercase().take(128) },
                     modifier = Modifier.fillMaxWidth(),
-                    label = { Text("Invitation code (8 characters)") },
+                    label = { Text("Invitation code") },
+                    placeholder = { Text("e.g. A1B2C3D4") },
                     singleLine = true
                 )
                 Button(
-                    enabled = !loading && (acceptToken.length == 8 || acceptToken.length in 32..128),
+                    enabled = account.signedIn && !loading && (acceptToken.length == 8 || acceptToken.length in 32..128),
                     onClick = {
                         scope.launch {
                             loading = true
@@ -426,29 +636,67 @@ fun WorkspaceManagementSection(cloud: SupabaseGateway, activity: ComponentActivi
                                 selectedWorkspaceId = joined.workspace_id
                                 activity.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE).edit()
                                     .putString("selected_team_workspace_id", joined.workspace_id).apply()
-                                // Accepting an invite should take the user straight to the shared
-                                // dataset, otherwise it looks like joining did not share any hives.
                                 val activation = cloud.activateWorkspace(joined.workspace_id)
                                 activeWorkspaceId = activity.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
                                     .getString("active_team_workspace_id", "").orEmpty()
                                 message = activation.error
-                                    ?: "Joined ${joined.workspace_name} as ${joined.workspace_role}. Team data is now active."
-                            } else message = result.error ?: "Couldn't accept this invitation."
+                                    ?: "Joined \${joined.workspace_name} as \${joined.workspace_role}. Team data is now active."
+                            } else {
+                                message = result.error ?: "Couldn't accept this invitation."
+                            }
                             loading = false
                         }
-                    }
-                ) { Text("ACCEPT INVITATION") }
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text("JOIN WORKSPACE") }
+            }
+
+            if (activeWorkspaceId.isNotBlank()) {
+                WorkspacePanel(
+                    title = "Your personal workspace",
+                    description = "Switching back won't delete personal or team records."
+                ) {
+                    Text(
+                        "Use this when you want to work on apiaries that are private to your account.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    OutlinedButton(
+                        enabled = !loading,
+                        onClick = {
+                            scope.launch {
+                                loading = true
+                                val result = cloud.activateWorkspace(null)
+                                activeWorkspaceId = activity.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
+                                    .getString("active_team_workspace_id", "").orEmpty()
+                                message = result.error ?: "Switched back to your personal workspace."
+                                loading = false
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text("SWITCH TO PERSONAL DATA") }
+                }
             }
 
             if (message.isNotBlank()) {
-                Text(
-                    message,
-                    color = if (message.contains("couldn't", ignoreCase = true) || message.contains("error", ignoreCase = true)) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
-                    style = MaterialTheme.typography.bodySmall
-                )
+                val messageIsError = listOf("couldn't", "could not", "failed", "error", "denied", "not configured")
+                    .any { message.contains(it, ignoreCase = true) }
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(14.dp),
+                    color = if (messageIsError) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.secondaryContainer
+                ) {
+                    Text(
+                        message,
+                        modifier = Modifier.padding(14.dp),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = if (messageIsError) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onSecondaryContainer
+                    )
+                }
             }
+
             Text(
-                "Personal records stay private. Team records use a separate local database and are shared only with members of the selected team workspace. Viewers can read records but cannot sync edits.",
+                "Personal records stay private unless you explicitly copy them into a team. Team workspaces have separate data and member permissions.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -536,6 +784,57 @@ fun WorkspaceManagementSection(cloud: SupabaseGateway, activity: ComponentActivi
             dismissButton = {
                 TextButton(onClick = { showCreateDialog = false }) { Text("CANCEL") }
             }
+        )
+    }
+}
+
+
+@Composable
+private fun WorkspacePanel(
+    title: String,
+    description: String? = null,
+    content: @Composable ColumnScope.() -> Unit
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(22.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Text(
+                    title,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
+                )
+                if (!description.isNullOrBlank()) {
+                    Text(
+                        description,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+            content()
+        }
+    }
+}
+
+@Composable
+private fun WorkspaceTag(label: String, active: Boolean = false) {
+    Surface(
+        shape = RoundedCornerShape(50),
+        color = if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant,
+        contentColor = if (active) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
+    ) {
+        Text(
+            label.uppercase(),
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
         )
     }
 }
