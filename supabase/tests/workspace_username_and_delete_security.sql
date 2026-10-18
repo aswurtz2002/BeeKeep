@@ -55,7 +55,7 @@ begin
     select count(*) into member_count from public.beekeep_list_workspace_members(workspace_value);
 
     if username_value <> 'BeeBoss_1' then
-        raise exception 'Workspace roster did not return the owner's selected username';
+        raise exception 'Workspace roster did not return the selected owner username';
     end if;
     if member_count <> 1 then
         raise exception 'Unexpected member count in a newly-created workspace: %', member_count;
@@ -148,7 +148,7 @@ begin
         where id = personal_id and is_personal = true
           and owner_user_id = '00000000-0000-0000-0000-000000000001'
     ) then
-        raise exception 'Deleting a team workspace affected the owner's personal workspace';
+        raise exception 'Deleting a team workspace affected the owner personal workspace';
     end if;
     if not exists (
         select 1 from public.beekeep_profiles
