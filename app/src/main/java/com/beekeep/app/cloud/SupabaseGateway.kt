@@ -67,6 +67,7 @@ class SupabaseGateway(
             scheme = BuildConfig.AUTH_REDIRECT_SCHEME
             host = BuildConfig.AUTH_REDIRECT_HOST
             autoLoadFromStorage = true
+            autoSaveToStorage = true
             alwaysAutoRefresh = true
         }
         install(Postgrest)
