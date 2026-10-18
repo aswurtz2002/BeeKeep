@@ -84,6 +84,7 @@ fun WorkspaceManagementSection(
     var memberMenuId by remember { mutableStateOf<String?>(null) }
     var copyPersonalTarget by remember { mutableStateOf<BeeKeepWorkspace?>(null) }
     var deleteWorkspaceTarget by remember { mutableStateOf<BeeKeepWorkspace?>(null) }
+    var removeMemberTarget by remember { mutableStateOf<BeeKeepWorkspaceMember?>(null) }
 
     val sharedWorkspaces = workspaces.filterNot { it.is_personal }
     val selectedWorkspace = sharedWorkspaces.firstOrNull { it.id == selectedWorkspaceId }
@@ -442,15 +443,7 @@ fun WorkspaceManagementSection(
                                             text = { Text("Remove member", color = MaterialTheme.colorScheme.error) },
                                             onClick = {
                                                 memberMenuId = null
-                                                scope.launch {
-                                                    val result = cloud.removeWorkspaceMember(workspace.id, member.user_id)
-                                                    if (result.isSuccess) {
-                                                        message = "Member removed from the workspace."
-                                                        members = cloud.listWorkspaceMembers(workspace.id).value.orEmpty()
-                                                    } else {
-                                                        message = result.error ?: "Couldn't remove the member."
-                                                    }
-                                                }
+                                                removeMemberTarget = member
                                             }
                                         )
                                     }
@@ -772,6 +765,47 @@ fun WorkspaceManagementSection(
                 TextButton(
                     enabled = !loading,
                     onClick = { copyPersonalTarget = null }
+                ) { Text("CANCEL") }
+            }
+        )
+    }
+
+    removeMemberTarget?.let { target ->
+        AlertDialog(
+            onDismissRequest = { if (!loading) removeMemberTarget = null },
+            title = { Text("Remove ${target.username.takeIf { it.isNotBlank() }?.let { "@$it" } ?: target.email}?") },
+            text = {
+                Text(
+                    "This removes the person from this team workspace, revoking access to its shared apiaries and hives. " +
+                        "Their account and personal workspace are not deleted."
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = !loading,
+                    onClick = {
+                        scope.launch {
+                            loading = true
+                            val result = cloud.removeWorkspaceMember(
+                                target.workspace_id,
+                                target.user_id
+                            )
+                            if (result.isSuccess) {
+                                message = "Member removed from the workspace."
+                                members = cloud.listWorkspaceMembers(target.workspace_id).value.orEmpty()
+                            } else {
+                                message = result.error ?: "Couldn't remove the member."
+                            }
+                            removeMemberTarget = null
+                            loading = false
+                        }
+                    }
+                ) { Text("REMOVE MEMBER", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = {
+                TextButton(
+                    enabled = !loading,
+                    onClick = { removeMemberTarget = null }
                 ) { Text("CANCEL") }
             }
         )
