@@ -160,7 +160,58 @@ class SupabaseGateway(
         val userId = session.user?.id ?: return@withLock CloudResult.NotSignedIn
         _account.value = _account.value.copy(syncing = true, error = null)
         try {
-            // RLS limits this query to the signed-in user's workspace.
+            val activeTeamWorkspaceId = appContext
+                .getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
+                .getString("active_team_workspace_id", "")
+                .orEmpty().trim()
+            if (activeTeamWorkspaceId.isNotEmpty()) {
+                val workspace = supabase.postgrest.rpc("beekeep_list_workspaces")
+                    .decodeList<BeeKeepWorkspace>()
+                    .firstOrNull { it.id == activeTeamWorkspaceId && !it.is_personal }
+                if (workspace == null) {
+                    val message = "You no longer have access to this team workspace."
+                    _account.value = _account.value.copy(syncing = false, error = message)
+                    return@withLock CloudResult.Failure(message)
+                }
+                if (workspace.member_role == "viewer") {
+                    val message = "This team workspace is view-only. Your data was not reset."
+                    _account.value = _account.value.copy(syncing = false, error = message)
+                    return@withLock CloudResult.Failure(message)
+                }
+                val remoteRows = supabase.from("beekeep_workspace_documents")
+                    .select { filter { eq("workspace_id", activeTeamWorkspaceId) } }
+                    .decodeList<CloudWorkspaceDocumentRow>()
+                    .filter { it.workspace_id == activeTeamWorkspaceId }
+                val resetAt = System.currentTimeMillis()
+                val tombstones = remoteRows.map { row ->
+                    val payload = JSONObject()
+                        .put("id", row.entity_id)
+                        .put("updated_at", resetAt)
+                        .put("deleted", true)
+                    row.copy(
+                        payload = payload.toString(),
+                        updated_at = resetAt,
+                        deleted = true,
+                        device_id = deviceId,
+                        updated_by = userId
+                    )
+                }
+                tombstones.chunked(100).forEach { batch ->
+                    supabase.from("beekeep_workspace_documents").upsert(batch) {
+                        onConflict = "workspace_id,entity_type,entity_id"
+                    }
+                }
+                _account.value = _account.value.copy(
+                    syncing = false,
+                    lastSyncAt = resetAt,
+                    error = null,
+                    signedIn = true,
+                    email = session.user?.email ?: ""
+                )
+                return@withLock CloudResult.Success
+            }
+
+            // RLS limits this query to the signed-in user's personal cloud documents.
             val remoteRows = supabase.from("beekeep_documents").select()
                 .decodeList<CloudDocumentRow>()
                 .filter { it.user_id == userId }
