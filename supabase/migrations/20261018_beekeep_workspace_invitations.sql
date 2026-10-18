@@ -200,7 +200,7 @@ begin
     if caller_role is null then
         raise exception 'Only members of a shared workspace can invite others';
     end if;
-    if caller_role not in ('owner', 'admin') then
+    if caller_role is null or caller_role not in ('owner', 'admin') then
         raise exception 'Only workspace owners and admins can invite others';
     end if;
     if caller_role = 'admin' and cleaned_role = 'admin' then
@@ -316,7 +316,7 @@ begin
 
     select m.role into caller_role from public.beekeep_workspace_members m
     where m.workspace_id = invite_row.workspace_id and m.user_id = auth.uid();
-    if caller_role not in ('owner', 'admin') then raise exception 'Only owners and admins can cancel invitations'; end if;
+    if caller_role is null or caller_role not in ('owner', 'admin') then raise exception 'Only owners and admins can cancel invitations'; end if;
     if invite_row.status <> 'pending' then raise exception 'Invitation is no longer pending'; end if;
     if caller_role = 'admin' and invite_row.role = 'admin' then
         raise exception 'Only the owner can cancel an admin invitation';
@@ -347,7 +347,7 @@ begin
     select m.role into caller_role from public.beekeep_workspace_members m
     join public.beekeep_workspaces w on w.id = m.workspace_id
     where m.workspace_id = target_workspace_id and m.user_id = auth.uid() and w.is_personal = false;
-    if caller_role not in ('owner', 'admin') then raise exception 'Only owners and admins can change member roles'; end if;
+    if caller_role is null or caller_role not in ('owner', 'admin') then raise exception 'Only owners and admins can change member roles'; end if;
 
     select role into target_role from public.beekeep_workspace_members
     where workspace_id = target_workspace_id and user_id = target_user_id;
@@ -382,7 +382,7 @@ begin
     select m.role into caller_role from public.beekeep_workspace_members m
     join public.beekeep_workspaces w on w.id = m.workspace_id
     where m.workspace_id = target_workspace_id and m.user_id = auth.uid() and w.is_personal = false;
-    if caller_role not in ('owner', 'admin') then raise exception 'Only owners and admins can remove members'; end if;
+    if caller_role is null or caller_role not in ('owner', 'admin') then raise exception 'Only owners and admins can remove members'; end if;
 
     select role into target_role from public.beekeep_workspace_members
     where workspace_id = target_workspace_id and user_id = target_user_id;
