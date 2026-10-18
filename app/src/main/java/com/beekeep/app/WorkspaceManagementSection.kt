@@ -333,7 +333,7 @@ fun WorkspaceManagementSection(cloud: SupabaseGateway, activity: ComponentActivi
                     singleLine = true
                 )
                 Button(
-                    enabled = acceptToken.length >= 32 && !loading,
+                    enabled = !loading && (acceptToken.length == 8 || acceptToken.length in 32..128),
                     onClick = {
                         scope.launch {
                             loading = true
