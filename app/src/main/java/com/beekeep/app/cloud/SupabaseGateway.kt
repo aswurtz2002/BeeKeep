@@ -128,6 +128,8 @@ class SupabaseGateway(
     suspend fun signOut(): CloudResult = try {
         val supabase = client ?: return CloudResult.NotConfigured
         stopRealtime()
+        // Never leave another account viewing the previously selected team's local cache.
+        repository.switchWorkspace(null)
         supabase.auth.signOut()
         refreshAccount()
         CloudResult.Success
@@ -606,6 +608,9 @@ class SupabaseGateway(
         if (!configured || client == null) return CloudResult.NotConfigured
         return try {
             client?.auth?.awaitInitialization()
+            // Authentication can replace the signed-in account. Return to private/local data
+            // before that transition so a cached team dataset is not displayed to the next account.
+            repository.switchWorkspace(null)
             block()
             refreshAccount()
             if (enableRealtime && _account.value.signedIn) startRealtime()
