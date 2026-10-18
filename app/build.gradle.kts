@@ -15,10 +15,14 @@ android {
         versionCode = 25
         versionName = "1.8.1"
         manifestPlaceholders["appLabel"] = "BeeKeep"
+        manifestPlaceholders["authScheme"] = "com.beekeep.app"
+        manifestPlaceholders["authHost"] = "auth-callback"
         val supabaseUrl = ((project.findProperty("supabaseUrl") as String?) ?: "").replace("\\", "\\\\").replace("\"", "\\\"")
         val supabaseKey = ((project.findProperty("supabaseKey") as String?) ?: "").replace("\\", "\\\\").replace("\"", "\\\"")
         buildConfigField("String", "SUPABASE_URL", "\"$supabaseUrl\"")
         buildConfigField("String", "SUPABASE_PUBLISHABLE_KEY", "\"$supabaseKey\"")
+        buildConfigField("String", "AUTH_REDIRECT_SCHEME", "\"com.beekeep.app\"")
+        buildConfigField("String", "AUTH_REDIRECT_HOST", "\"auth-callback\"")
     }
     buildTypes {
         release { isMinifyEnabled = false }
@@ -30,8 +34,11 @@ android {
             applicationIdSuffix = ".staging"
             versionNameSuffix = "-staging"
             manifestPlaceholders["appLabel"] = "BeeKeep Staging"
+            manifestPlaceholders["authScheme"] = "com.beekeep.app.staging"
+            manifestPlaceholders["authHost"] = "auth-callback"
             buildConfigField("String", "SUPABASE_URL", "\"https://nnmcwsdunpwdktexgivr.supabase.co\"")
             buildConfigField("String", "SUPABASE_PUBLISHABLE_KEY", "\"sb_publishable_74dplURrV6VbGnQHKGTbLw_lpX-pS20\"")
+            buildConfigField("String", "AUTH_REDIRECT_SCHEME", "\"com.beekeep.app.staging\"")
         }
     }
     compileOptions {
