@@ -1,10 +1,12 @@
 package com.beekeep.app.cloud
 
 import android.content.Context
+import android.content.Intent
 import com.beekeep.app.BuildConfig
 import com.beekeep.app.data.LocalHiveRepository
 import io.github.jan.supabase.auth.Auth
 import io.github.jan.supabase.auth.auth
+import io.github.jan.supabase.auth.handleDeeplinks
 import io.github.jan.supabase.auth.providers.builtin.Email
 import io.github.jan.supabase.createSupabaseClient
 import io.github.jan.supabase.postgrest.Postgrest
@@ -59,7 +61,12 @@ class SupabaseGateway(
         supabaseUrl = BuildConfig.SUPABASE_URL,
         supabaseKey = BuildConfig.SUPABASE_PUBLISHABLE_KEY
     ) {
-        install(Auth) { autoLoadFromStorage = true; alwaysAutoRefresh = true }
+        install(Auth) {
+            scheme = BuildConfig.AUTH_REDIRECT_SCHEME
+            host = BuildConfig.AUTH_REDIRECT_HOST
+            autoLoadFromStorage = true
+            alwaysAutoRefresh = true
+        }
         install(Postgrest)
         install(Realtime)
         install(Storage)
@@ -289,6 +296,28 @@ class SupabaseGateway(
         } catch (t: Throwable) {
             _account.value = _account.value.copy(syncing = false, error = t.message ?: "Sync failed")
             CloudResult.Failure(t.message ?: "Sync failed")
+        }
+    }
+
+
+    /**
+     * Accepts Supabase verification links returning to this build's app-specific URI scheme.
+     * Called from MainActivity for both cold starts and singleTask onNewIntent callbacks.
+     */
+    fun handleAuthDeepLink(intent: Intent?) {
+        val supabase = client ?: return
+        val uri = intent?.data ?: return
+        if (uri.scheme != BuildConfig.AUTH_REDIRECT_SCHEME ||
+            uri.host != BuildConfig.AUTH_REDIRECT_HOST
+        ) return
+
+        try {
+            supabase.handleDeeplinks(intent)
+            scope.launch { refreshAccount() }
+        } catch (t: Throwable) {
+            _account.value = _account.value.copy(
+                error = t.message ?: "Could not complete email verification"
+            )
         }
     }
 
