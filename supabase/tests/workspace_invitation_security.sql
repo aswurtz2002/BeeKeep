@@ -25,18 +25,18 @@ from public.beekeep_create_workspace_invitation(
 
 do $owner_assertions$
 declare
-    workspace_id uuid := (select value::uuid from stage2_workspace_test_context where key = 'workspace_id');
+    workspace_value uuid := (select value::uuid from stage2_workspace_test_context where key = 'workspace_id');
     invite_record text := (select value from stage2_workspace_test_context where key = 'invitation');
     invitation_id uuid := split_part(invite_record, '|', 1)::uuid;
     token_value text := split_part(invite_record, '|', 2);
 begin
-    if workspace_id is null or invitation_id is null or length(token_value) < 32 then
+    if workspace_value is null or invitation_id is null or length(token_value) < 32 then
         raise exception 'Workspace creation did not return an invitation code';
     end if;
 
     if not exists (
         select 1 from public.beekeep_workspace_invitations
-        where id = invitation_id and workspace_id = workspace_id
+        where id = invitation_id and workspace_id = workspace_value
           and lower(email) = 'owner-two@example.test' and status = 'pending'
           and token_hash <> token_value
     ) then
