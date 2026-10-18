@@ -117,8 +117,12 @@ begin
 end;
 $copy_conflict_assertions$;
 
+-- Remove the conflicting fixture as the database owner: authenticated clients must not
+-- receive direct delete permission on the private per-user documents table.
+reset role;
 delete from public.beekeep_documents
 where user_id = auth.uid() and entity_type = 'hive' and entity_id = 7001;
+set role authenticated;
 
 -- The owner can copy their private records once conflicting keys are removed.
 select * from public.beekeep_copy_personal_documents_to_workspace(
