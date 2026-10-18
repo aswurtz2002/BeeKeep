@@ -10,13 +10,13 @@ Use a dedicated Supabase project for development/staging. Do not point a staging
 
 For a project that already has BeeKeep cloud sync running, keep its current `beekeep_documents` schema and policies in place, then run:
 
-`supabase/migrations/20261017_beekeep_shared_workspaces.sql`
+`supabase/migrations/20261017224333_beekeep_shared_workspaces.sql`
 
 This Stage 1 migration creates `beekeep_workspaces` and `beekeep_workspace_members`, creates a private default workspace and Owner membership for every existing account, and installs a trigger to do the same for new sign-ups. It backfills a separate `beekeep_document_workspaces` mapping table for existing cloud records.
 
 **Compatibility/safety:** the `beekeep_documents` column list, primary key, and per-user Row Level Security policies are intentionally preserved in Stage 1. The separate mapping table avoids adding a field to responses older app versions deserialize. This does not share or expose data across accounts. Shared reads/writes are not enabled until the later shared-sync stage.
 
-The earlier cloud setup migration in this repository is `supabase/migrations/20261006_beekeep_cloud_v2.sql`. On a fresh Supabase project, ensure the existing base BeeKeep cloud schema is installed first, run that cloud-sync migration, then run the Stage 1 and Stage 2 workspace migrations in filename order. The two Stage 2 follow-up migrations are idempotent fixes for role checks and the invitation-acceptance conflict target. Existing deployed projects should apply every migration they have not already applied.
+The earlier cloud setup migration in this repository is `supabase/migrations/20261017224317_beekeep_cloud_v2.sql`. On a fresh Supabase project, ensure the existing base BeeKeep cloud schema is installed first, run that cloud-sync migration, then run the Stage 1 and Stage 2 workspace migrations in filename order. The two Stage 2 follow-up migrations are idempotent fixes for role checks and the invitation-acceptance conflict target. Existing deployed projects should apply every migration they have not already applied.
 
 ## 3. Build variants
 
