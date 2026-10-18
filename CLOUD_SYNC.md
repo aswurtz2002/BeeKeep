@@ -18,7 +18,7 @@ BeeKeep is offline-first. Local writes are committed to Room first, then queued 
 
 ## Database setup and verification
 
-The migrations are ordered under `supabase/migrations/`. Stage 3's shared-record storage migration is `20261018045154_beekeep_workspace_shared_documents.sql` and `20261018045300_beekeep_workspace_document_rls_performance.sql`. It must be applied to the intended Supabase project before team sync can work.
+The migrations are ordered under `supabase/migrations/`. Stage 3's shared-record storage migration is `20261018045154_beekeep_workspace_shared_documents.sql` and `20261018045419_beekeep_workspace_document_rls_performance.sql`. It must be applied to the intended Supabase project before team sync can work.
 
 The GitHub workflow `.github/workflows/shared-workspace-migration.yml` applies the base schema, workspace/membership/invitation migrations and both Stage 3 shared-record migrations to a disposable PostgreSQL service. It then runs:
 - `supabase/tests/shared_workspace_foundation.sql`
