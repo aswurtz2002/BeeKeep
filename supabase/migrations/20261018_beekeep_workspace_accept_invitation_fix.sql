@@ -3,7 +3,7 @@
 
 create or replace function public.beekeep_accept_workspace_invitation(invite_token text)
 returns table (workspace_id uuid, workspace_name text, workspace_role text)
-language plpgsql security definer set search_path = public, pg_temp
+language plpgsql security definer set search_path = public, extensions, pg_temp
 as $function$
 declare
     caller_id uuid := auth.uid();
