@@ -54,7 +54,12 @@ as $function$
     select coalesce(
         p.username,
         case
-            when u.raw_user_meta_data ->> 'username' ~ '^[A-Za-z0-9_]{3,20}
+            when u.raw_user_meta_data ->> 'username' ~ '^[A-Za-z0-9_]{3,20}$'
+            then u.raw_user_meta_data ->> 'username'
+            else null
+        end,
+        ''
+    ) as username
     from auth.users u
     left join public.beekeep_profiles p on p.user_id = u.id
     where u.id = auth.uid();
