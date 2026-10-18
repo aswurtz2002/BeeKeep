@@ -1,20 +1,21 @@
 package com.beekeep.app.data
 
-import java.util.concurrent.atomic.AtomicLong
+import java.security.SecureRandom
 
 /**
- * Generates collision-resistant local IDs while keeping IDs compatible with Room's Long keys.
- * The millisecond component makes IDs naturally ordered; the sequence prevents same-millisecond collisions.
+ * Creates positive, high-entropy Long IDs suitable for records created on multiple devices.
+ *
+ * Time-and-counter IDs are unique only within a device/process. Team members can create records
+ * offline at the same time, so shared data needs IDs that are unlikely to collide across devices.
  */
 object IdGenerator {
-    private val next = AtomicLong(System.currentTimeMillis() * 1_000L)
+    private val random = SecureRandom()
 
+    @Synchronized
     fun nextLong(): Long {
         while (true) {
-            val current = next.get()
-            val timeBasedFloor = System.currentTimeMillis() * 1_000L
-            val candidate = maxOf(current + 1L, timeBasedFloor)
-            if (next.compareAndSet(current, candidate)) return candidate
+            val candidate = random.nextLong() and Long.MAX_VALUE
+            if (candidate != 0L) return candidate
         }
     }
 }
