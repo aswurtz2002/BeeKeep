@@ -286,7 +286,7 @@ begin
 
     insert into public.beekeep_workspace_members (workspace_id, user_id, role, invited_by)
     values (invite_row.workspace_id, caller_id, invite_row.role, invite_row.created_by)
-    on conflict (workspace_id, user_id) do nothing;
+    on conflict on constraint beekeep_workspace_members_pkey do nothing;
 
     update public.beekeep_workspace_invitations
     set status = 'accepted', accepted_by = caller_id
