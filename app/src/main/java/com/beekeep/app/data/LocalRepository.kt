@@ -42,9 +42,10 @@ class LocalHiveRepository(context: Context) {
      * Moves the live repository to a distinct database for a team. Personal/offline records
      * remain in beekeep_room.db and are never merged into a team's local dataset.
      */
-    suspend fun switchWorkspace(workspaceId: String?, readOnly: Boolean = false) = withContext(Dispatchers.IO) {
+    suspend fun switchWorkspace(workspaceId: String?, readOnly: Boolean? = null) = withContext(Dispatchers.IO) {
         val cleanId = workspaceId?.trim()?.takeIf { it.isNotEmpty() }
-        val cleanReadOnly = cleanId != null && readOnly
+        val cleanReadOnly = cleanId != null && (readOnly
+            ?: prefs.getBoolean("active_team_workspace_read_only", false))
         if (_activeWorkspaceId.value == cleanId && _activeWorkspaceReadOnly.value == cleanReadOnly) return@withContext
         val nextDatabase = BeeKeepRoomDb.getForWorkspace(appContext, cleanId)
         check(prefs.edit()
