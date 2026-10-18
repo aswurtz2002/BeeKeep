@@ -61,3 +61,7 @@ jobs:
         run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261018035833_beekeep_short_workspace_invitation_codes.sql
       - name: Verify invitation acceptance, short codes, and manager permissions
         run: psql -v ON_ERROR_STOP=1 -f supabase/tests/workspace_invitation_security.sql
+      - name: Apply workspace-scoped shared record migration
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261018042000_beekeep_workspace_shared_documents.sql
+      - name: Verify shared-record membership isolation and write permissions
+        run: psql -v ON_ERROR_STOP=1 -f supabase/tests/shared_workspace_document_security.sql
