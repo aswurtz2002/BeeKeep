@@ -79,6 +79,9 @@ fun WorkspaceManagementSection(
     var showDangerZone by rememberSaveable { mutableStateOf(false) }
     var showJoinAnotherTeam by rememberSaveable { mutableStateOf(false) }
     var showPendingInvitations by rememberSaveable { mutableStateOf(false) }
+    var showPeople by rememberSaveable { mutableStateOf(false) }
+    var showInvitePanel by rememberSaveable { mutableStateOf(false) }
+    var workspaceMenuExpanded by remember { mutableStateOf(false) }
     var invitations by remember { mutableStateOf<List<BeeKeepWorkspaceInvitation>>(emptyList()) }
     var loading by remember { mutableStateOf(false) }
     var message by rememberSaveable { mutableStateOf("") }
@@ -244,19 +247,11 @@ fun WorkspaceManagementSection(
                         }
                     }
                 } else {
-                    sharedWorkspaces.forEach { workspace ->
-                        val selected = selectedWorkspaceId == workspace.id
-                        val active = activeWorkspaceId == workspace.id
+                    Box(modifier = Modifier.fillMaxWidth()) {
                         OutlinedButton(
-                            onClick = {
-                                selectedWorkspaceId = workspace.id
-                                activity.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE).edit()
-                                    .putString("selected_team_workspace_id", workspace.id).apply()
-                                createdInvite = null
-                                message = ""
-                            },
-                            modifier = Modifier.fillMaxWidth(),
-                            enabled = !loading || selected
+                            onClick = { workspaceMenuExpanded = true },
+                            enabled = !loading,
+                            modifier = Modifier.fillMaxWidth()
                         ) {
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
@@ -265,24 +260,60 @@ fun WorkspaceManagementSection(
                             ) {
                                 Column(
                                     modifier = Modifier.weight(1f),
-                                    verticalArrangement = Arrangement.spacedBy(3.dp),
-                                    horizontalAlignment = Alignment.Start
+                                    horizontalAlignment = Alignment.Start,
+                                    verticalArrangement = Arrangement.spacedBy(3.dp)
                                 ) {
                                     Text(
-                                        workspace.name,
+                                        selectedWorkspace?.name ?: "Choose a team workspace",
                                         style = MaterialTheme.typography.titleSmall,
                                         fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold
                                     )
                                     Text(
-                                        "Your role: ${workspace.member_role.replaceFirstChar { it.uppercase() }}",
+                                        selectedWorkspace?.let {
+                                            "Your role: ${it.member_role.replaceFirstChar { role -> role.uppercase() }}"
+                                        } ?: "Select a workspace to manage",
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
                                 }
-                                when {
-                                    active -> WorkspaceTag("ACTIVE", active = true)
-                                    selected -> WorkspaceTag("SELECTED")
-                                }
+                                Text("CHANGE ▾", style = MaterialTheme.typography.labelMedium)
+                            }
+                        }
+                        DropdownMenu(
+                            expanded = workspaceMenuExpanded,
+                            onDismissRequest = { workspaceMenuExpanded = false }
+                        ) {
+                            sharedWorkspaces.forEach { workspace ->
+                                DropdownMenuItem(
+                                    text = {
+                                        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                            Text(
+                                                workspace.name,
+                                                fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold
+                                            )
+                                            Text(
+                                                "Role: ${workspace.member_role.replaceFirstChar { it.uppercase() }}",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                    },
+                                    trailingIcon = {
+                                        if (activeWorkspaceId == workspace.id) {
+                                            WorkspaceTag("ACTIVE", active = true)
+                                        } else if (selectedWorkspaceId == workspace.id) {
+                                            WorkspaceTag("SELECTED")
+                                        }
+                                    },
+                                    onClick = {
+                                        selectedWorkspaceId = workspace.id
+                                        activity.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE).edit()
+                                            .putString("selected_team_workspace_id", workspace.id).apply()
+                                        createdInvite = null
+                                        message = ""
+                                        workspaceMenuExpanded = false
+                                    }
+                                )
                             }
                         }
                     }
@@ -440,7 +471,10 @@ fun WorkspaceManagementSection(
                         membersLoadedWorkspaceId != workspace.id && memberLoadError != null -> "Couldn't load people"
                         membersLoadedWorkspaceId != workspace.id -> "Loading people…"
                         else -> "${members.size} ${if (members.size == 1) "person" else "people"} in this workspace"
-                    }
+                    },
+                    collapsible = true,
+                    expanded = showPeople,
+                    onToggle = { showPeople = !showPeople }
                 ) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -597,7 +631,14 @@ fun WorkspaceManagementSection(
                 if (canManage) {
                     WorkspacePanel(
                         title = "Invite a beekeeper",
-                        description = "Send an invitation to someone with a BeeKeep account."
+                        description = if (invitations.isEmpty()) {
+                            "Create an invitation code for a teammate."
+                        } else {
+                            "${invitations.size} pending ${if (invitations.size == 1) "invitation" else "invitations"} · create or manage codes"
+                        },
+                        collapsible = true,
+                        expanded = showInvitePanel,
+                        onToggle = { showInvitePanel = !showInvitePanel }
                     ) {
                         OutlinedTextField(
                             value = inviteEmail,
