@@ -1345,6 +1345,9 @@ class LocalHiveRepository(context: Context) {
     }
 
     private suspend fun enqueue(type: String, entityId: Long, operation: String, payload: String) {
+        // Remote hydration for a viewer may adjust local caches. Never turn that into
+        // a pending client write for a read-only role.
+        if (_activeWorkspaceReadOnly.value) return
         db.outbox().deletePendingForEntity(type, entityId)
         db.outbox().enqueue(SyncOutboxEntity(IdGenerator.nextLong(), type, entityId, operation, payload))
     }
