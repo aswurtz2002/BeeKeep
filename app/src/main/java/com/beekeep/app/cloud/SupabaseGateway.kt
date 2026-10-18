@@ -391,6 +391,113 @@ class SupabaseGateway(
 
 
     /**
+     * Explicitly copies the signed-in user's latest private cloud records into an owner/admin's
+     * team workspace. Private sync must finish first. The server copy is atomic and refuses key
+     * collisions, so an existing team record can never be silently overwritten.
+     */
+    suspend fun copyPersonalRecordsToWorkspace(workspaceId: String): WorkspaceOperationResult<Int> {
+        val supabase = client
+        if (!configured || supabase == null) {
+            return WorkspaceOperationResult(error = "BeeKeep Cloud is not configured.")
+        }
+        val cleanId = workspaceId.trim()
+        if (cleanId.isBlank()) return WorkspaceOperationResult(error = "Choose a team workspace first.")
+
+        val prefs = appContext.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
+        val previousWorkspaceId = prefs.getString("active_team_workspace_id", "")
+            .orEmpty().trim().ifBlank { null }
+        val previousReadOnly = prefs.getBoolean("active_team_workspace_read_only", false)
+        var copyCompleted = false
+        var copiedCount: Int? = null
+
+        try {
+            supabase.auth.awaitInitialization()
+            val session = supabase.auth.currentSessionOrNull()
+                ?: return WorkspaceOperationResult(error = "Sign in before copying personal records.")
+            val available = supabase.postgrest.rpc("beekeep_list_workspaces")
+                .decodeList<BeeKeepWorkspace>()
+            val target = available.firstOrNull { it.id == cleanId && !it.is_personal }
+                ?: return WorkspaceOperationResult(error = "You no longer have access to that team workspace.")
+            if (target.member_role !in setOf("owner", "admin")) {
+                return WorkspaceOperationResult(error = "Only a workspace owner or admin can copy personal records into a team.")
+            }
+
+            val previousRole = previousWorkspaceId?.let { oldId ->
+                available.firstOrNull { it.id == oldId && !it.is_personal }?.member_role
+            }
+            suspend fun restorePreviousWorkspace() {
+                repository.switchWorkspace(
+                    previousWorkspaceId,
+                    readOnly = previousRole == "viewer" || (previousRole == null && previousReadOnly)
+                )
+            }
+
+            // Flush private/offline edits before asking the server to copy the private cloud rows.
+            repository.switchWorkspace(null)
+            when (val privateSync = syncNow()) {
+                CloudResult.Success -> Unit
+                is CloudResult.Failure -> {
+                    restorePreviousWorkspace()
+                    return WorkspaceOperationResult(
+                        error = "Personal records were not copied because private sync failed: ${privateSync.message}"
+                    )
+                }
+                CloudResult.NotConfigured -> {
+                    restorePreviousWorkspace()
+                    return WorkspaceOperationResult(error = "BeeKeep Cloud is not configured.")
+                }
+                CloudResult.NotSignedIn -> {
+                    restorePreviousWorkspace()
+                    return WorkspaceOperationResult(error = "Sign in before copying personal records.")
+                }
+            }
+
+            val copy = supabase.postgrest.rpc(
+                "beekeep_copy_personal_documents_to_workspace",
+                WorkspaceIdParams(cleanId)
+            ).decodeList<WorkspacePersonalCopyResult>().firstOrNull()
+                ?: error("The server did not confirm the personal-data copy.")
+            copiedCount = copy.copied_count
+            copyCompleted = true
+
+            // Make the imported team dataset the active local dataset and pull the server's result.
+            repository.switchWorkspace(cleanId, readOnly = false)
+            val teamSync = syncNow()
+            return when (teamSync) {
+                CloudResult.Success -> WorkspaceOperationResult(value = copy.copied_count)
+                is CloudResult.Failure -> WorkspaceOperationResult(
+                    value = copy.copied_count,
+                    error = "Copied ${copy.copied_count} records to the team, but the first download failed: ${teamSync.message}. Use Sync Now to retry."
+                )
+                CloudResult.NotConfigured -> WorkspaceOperationResult(
+                    value = copy.copied_count,
+                    error = "Copied ${copy.copied_count} records, but BeeKeep Cloud is no longer configured."
+                )
+                CloudResult.NotSignedIn -> WorkspaceOperationResult(
+                    value = copy.copied_count,
+                    error = "Copied ${copy.copied_count} records, but the session expired before the team download. Sign in and sync again."
+                )
+            }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Throwable) {
+            if (!copyCompleted) {
+                runCatching {
+                    repository.switchWorkspace(
+                        previousWorkspaceId,
+                        readOnly = previousReadOnly
+                    )
+                }
+            }
+            WorkspaceOperationResult(
+                value = copiedCount,
+                error = error.message?.takeIf { it.isNotBlank() }
+                    ?: if (copyCompleted) "Records were copied, but team setup did not finish." else "Could not copy personal records to the team."
+            )
+        }
+    }
+
+    /**
      * Switches the app's active dataset to a team workspace or back to the user's personal data.
      * The repository stores team data in a separate Room file before the first team pull.
      */
