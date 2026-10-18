@@ -137,7 +137,12 @@ begin
         coalesce(
             p.username,
             case
-                when u.raw_user_meta_data ->> 'username' ~ '^[A-Za-z0-9_]{3,20}
+                when u.raw_user_meta_data ->> 'username' ~ '^[A-Za-z0-9_]{3,20}$'
+                then u.raw_user_meta_data ->> 'username'
+                else null
+            end,
+            ''
+        ) as username,
         m.role,
         m.joined_at,
         (m.user_id = auth.uid())
