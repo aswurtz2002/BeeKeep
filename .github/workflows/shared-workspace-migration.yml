@@ -44,3 +44,9 @@ jobs:
         run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261017_beekeep_shared_workspaces.sql
       - name: Verify backfill, sign-up trigger, row security, and write restrictions
         run: psql -v ON_ERROR_STOP=1 -f supabase/tests/shared_workspace_foundation.sql
+      - name: Apply Stage 2 workspace invitations and roles migration
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261018_beekeep_workspace_invitations.sql
+      - name: Apply workspace role guard hardening
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261018_beekeep_workspace_role_guard_fix.sql
+      - name: Verify invitation acceptance and manager permissions
+        run: psql -v ON_ERROR_STOP=1 -f supabase/tests/workspace_invitation_security.sql
