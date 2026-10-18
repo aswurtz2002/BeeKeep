@@ -9,21 +9,53 @@ import android.content.Context
 import androidx.room.withTransaction
 import com.beekeep.app.cloud.CloudDocumentRow
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import org.json.JSONArray
 import kotlin.math.roundToInt
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class LocalHiveRepository(context: Context) {
     private val appContext = context.applicationContext
-    private val db = BeeKeepRoomDb.get(appContext)
+    private val prefs = appContext.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
+    private val initialTeamWorkspaceId = prefs.getString("active_team_workspace_id", null)
+        ?.trim()?.takeIf { it.isNotEmpty() }
+    private val _activeWorkspaceId = MutableStateFlow(initialTeamWorkspaceId)
+    val activeWorkspaceId: StateFlow<String?> = _activeWorkspaceId.asStateFlow()
+    private val _database = MutableStateFlow(
+        BeeKeepRoomDb.getForWorkspace(appContext, initialTeamWorkspaceId)
+    )
+    private val db: BeeKeepRoomDb get() = _database.value
+
+    /**
+     * Moves the live repository to a distinct database for a team. Personal/offline records
+     * remain in beekeep_room.db and are never merged into a team's local dataset.
+     */
+    suspend fun switchWorkspace(workspaceId: String?) = withContext(Dispatchers.IO) {
+        val cleanId = workspaceId?.trim()?.takeIf { it.isNotEmpty() }
+        if (_activeWorkspaceId.value == cleanId) return@withContext
+        val nextDatabase = BeeKeepRoomDb.getForWorkspace(appContext, cleanId)
+        check(prefs.edit().putString("active_team_workspace_id", cleanId.orEmpty()).commit()) {
+            "Could not save the active workspace selection."
+        }
+        _database.value = nextDatabase
+        _activeWorkspaceId.value = cleanId
+        if (cleanId == null) {
+            // Import any legacy data only into the personal/offline database.
+            LegacyImporter.importIfNeeded(appContext, nextDatabase)
+        }
+    }
 
     suspend fun initialize() {
-        // Keep real records imported from older BeeKeep versions. Never inject
-        // demo hives into an empty production database; an empty apiary is valid.
-        LegacyImporter.importIfNeeded(appContext, db)
+        // Team databases must never import private legacy data. An empty apiary is valid.
+        if (_activeWorkspaceId.value == null) LegacyImporter.importIfNeeded(appContext, db)
     }
 
     /**
@@ -88,18 +120,18 @@ class LocalHiveRepository(context: Context) {
 
     }
 
-    fun observeHives(): Flow<List<Hive>> = db.hives().observeAll().map { it.map(::toHive) }
-    fun observeDeadHives(): Flow<List<Hive>> = db.hives().observeDead().map { it.map(::toHive) }
-    fun observeApiaries(): Flow<List<Apiary>> = db.apiaries().observeAll().map { it.map(::toApiary) }
-    fun observeInspections(hiveId: Long): Flow<List<Inspection>> = db.inspections().observeForHive(hiveId).map { it.map(::toInspection) }
-    fun observeAllInspections(): Flow<List<Inspection>> = db.inspections().observeAll().map { it.map(::toInspection) }
-    fun observeFeedings(hiveId: Long): Flow<List<Feeding>> = db.feedings().observeForHive(hiveId).map { it.map(::toFeeding) }
-    fun observeTreatments(hiveId: Long): Flow<List<Treatment>> = db.treatments().observeForHive(hiveId).map { it.map(::toTreatment) }
-    fun observeHarvests(hiveId: Long): Flow<List<Harvest>> = db.harvests().observeForHive(hiveId).map { it.map(::toHarvest) }
-    fun observeEvents(hiveId: Long): Flow<List<ActivityEvent>> = db.events().observeForHive(hiveId).map { it.map(::toEvent) }
-    fun observeAllFeedings(): Flow<List<Feeding>> = db.feedings().observeAll().map { it.map(::toFeeding) }
-    fun observeAllTreatments(): Flow<List<Treatment>> = db.treatments().observeAll().map { it.map(::toTreatment) }
-    fun observeAllHarvests(): Flow<List<Harvest>> = db.harvests().observeAll().map { it.map(::toHarvest) }
+    fun observeHives(): Flow<List<Hive>> = _database.flatMapLatest { it.hives().observeAll() }.map { it.map(::toHive) }
+    fun observeDeadHives(): Flow<List<Hive>> = _database.flatMapLatest { it.hives().observeDead() }.map { it.map(::toHive) }
+    fun observeApiaries(): Flow<List<Apiary>> = _database.flatMapLatest { it.apiaries().observeAll() }.map { it.map(::toApiary) }
+    fun observeInspections(hiveId: Long): Flow<List<Inspection>> = _database.flatMapLatest { it.inspections().observeForHive(hiveId) }.map { it.map(::toInspection) }
+    fun observeAllInspections(): Flow<List<Inspection>> = _database.flatMapLatest { it.inspections().observeAll() }.map { it.map(::toInspection) }
+    fun observeFeedings(hiveId: Long): Flow<List<Feeding>> = _database.flatMapLatest { it.feedings().observeForHive(hiveId) }.map { it.map(::toFeeding) }
+    fun observeTreatments(hiveId: Long): Flow<List<Treatment>> = _database.flatMapLatest { it.treatments().observeForHive(hiveId) }.map { it.map(::toTreatment) }
+    fun observeHarvests(hiveId: Long): Flow<List<Harvest>> = _database.flatMapLatest { it.harvests().observeForHive(hiveId) }.map { it.map(::toHarvest) }
+    fun observeEvents(hiveId: Long): Flow<List<ActivityEvent>> = _database.flatMapLatest { it.events().observeForHive(hiveId) }.map { it.map(::toEvent) }
+    fun observeAllFeedings(): Flow<List<Feeding>> = _database.flatMapLatest { it.feedings().observeAll() }.map { it.map(::toFeeding) }
+    fun observeAllTreatments(): Flow<List<Treatment>> = _database.flatMapLatest { it.treatments().observeAll() }.map { it.map(::toTreatment) }
+    fun observeAllHarvests(): Flow<List<Harvest>> = _database.flatMapLatest { it.harvests().observeAll() }.map { it.map(::toHarvest) }
 
     suspend fun getHive(id: Long): Hive? = withContext(Dispatchers.IO) { db.hives().get(id)?.let(::toHive) }
     suspend fun getAllKnownNfcTagAssignments(): List<Pair<String?, Long>> = withContext(Dispatchers.IO) {
