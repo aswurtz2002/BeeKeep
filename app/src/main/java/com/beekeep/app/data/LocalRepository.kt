@@ -29,6 +29,10 @@ class LocalHiveRepository(context: Context) {
         ?.trim()?.takeIf { it.isNotEmpty() }
     private val _activeWorkspaceId = MutableStateFlow(initialTeamWorkspaceId)
     val activeWorkspaceId: StateFlow<String?> = _activeWorkspaceId.asStateFlow()
+    private val _activeWorkspaceReadOnly = MutableStateFlow(
+        prefs.getBoolean("active_team_workspace_read_only", false)
+    )
+    val activeWorkspaceReadOnly: StateFlow<Boolean> = _activeWorkspaceReadOnly.asStateFlow()
     private val _database = MutableStateFlow(
         BeeKeepRoomDb.getForWorkspace(appContext, initialTeamWorkspaceId)
     )
@@ -38,15 +42,20 @@ class LocalHiveRepository(context: Context) {
      * Moves the live repository to a distinct database for a team. Personal/offline records
      * remain in beekeep_room.db and are never merged into a team's local dataset.
      */
-    suspend fun switchWorkspace(workspaceId: String?) = withContext(Dispatchers.IO) {
+    suspend fun switchWorkspace(workspaceId: String?, readOnly: Boolean = false) = withContext(Dispatchers.IO) {
         val cleanId = workspaceId?.trim()?.takeIf { it.isNotEmpty() }
-        if (_activeWorkspaceId.value == cleanId) return@withContext
+        val cleanReadOnly = cleanId != null && readOnly
+        if (_activeWorkspaceId.value == cleanId && _activeWorkspaceReadOnly.value == cleanReadOnly) return@withContext
         val nextDatabase = BeeKeepRoomDb.getForWorkspace(appContext, cleanId)
-        check(prefs.edit().putString("active_team_workspace_id", cleanId.orEmpty()).commit()) {
+        check(prefs.edit()
+            .putString("active_team_workspace_id", cleanId.orEmpty())
+            .putBoolean("active_team_workspace_read_only", cleanReadOnly)
+            .commit()) {
             "Could not save the active workspace selection."
         }
         _database.value = nextDatabase
         _activeWorkspaceId.value = cleanId
+        _activeWorkspaceReadOnly.value = cleanReadOnly
         if (cleanId == null) {
             // Import any legacy data only into the personal/offline database.
             LegacyImporter.importIfNeeded(appContext, nextDatabase)
@@ -63,6 +72,7 @@ class LocalHiveRepository(context: Context) {
      * prevent data from returning on a later sync, and this runs as one Room transaction.
      */
     suspend fun resetAllData() = withContext(Dispatchers.IO) {
+        checkWritable()
         db.withTransaction {
             val apiaries = db.apiaries().allForBackup()
             val hives = db.hives().allForBackup()
@@ -194,6 +204,7 @@ class LocalHiveRepository(context: Context) {
         hiveNumbersByApiary: List<List<String>>,
         allowExistingWorkspace: Boolean = false
     ): List<Long> = withContext(Dispatchers.IO) {
+        checkWritable()
         require(apiaryNames.isNotEmpty()) { "Create at least one apiary." }
         require(apiaryNames.size == hiveNumbersByApiary.size) { "Each apiary needs a hive-name list." }
 
@@ -292,6 +303,7 @@ class LocalHiveRepository(context: Context) {
     }
 
     suspend fun saveHive(h: Hive) = withContext(Dispatchers.IO) {
+        checkWritable()
         require(h.number.trim().isNotBlank()) { "Hive number cannot be blank" }
         require(h.mitePercent.isFinite() && h.mitePercent >= 0.0) { "Mite percentage must be a valid non-negative number." }
         requireValidCoordinates(h.latitude, h.longitude, "Hive")
@@ -349,6 +361,7 @@ class LocalHiveRepository(context: Context) {
     }
 
     suspend fun updateHiveLocation(hiveId: Long, latitude: Double, longitude: Double) = withContext(Dispatchers.IO) {
+        checkWritable()
         require(latitude.isFinite() && latitude in -90.0..90.0) { "Latitude is outside the valid range." }
         require(longitude.isFinite() && longitude in -180.0..180.0) { "Longitude is outside the valid range." }
         db.withTransaction {
@@ -364,6 +377,7 @@ class LocalHiveRepository(context: Context) {
     }
 
     suspend fun markHiveDead(hiveId: Long) = withContext(Dispatchers.IO) {
+        checkWritable()
         db.withTransaction {
             val hive = db.hives().get(hiveId) ?: throw IllegalArgumentException("Hive not found.")
             if (hive.status == HiveStatus.DEAD) return@withTransaction
@@ -385,6 +399,7 @@ class LocalHiveRepository(context: Context) {
     }
 
     suspend fun restoreHive(hiveId: Long) = withContext(Dispatchers.IO) {
+        checkWritable()
         db.withTransaction {
             val hive = db.hives().get(hiveId) ?: throw IllegalArgumentException("Hive not found.")
             if (hive.status == HiveStatus.ACTIVE) return@withTransaction
@@ -399,6 +414,7 @@ class LocalHiveRepository(context: Context) {
     }
 
     suspend fun deleteHivePermanently(hiveId: Long) = withContext(Dispatchers.IO) {
+        checkWritable()
         db.withTransaction {
             db.hives().get(hiveId) ?: throw IllegalArgumentException("Hive not found.")
             val deletionTime = System.currentTimeMillis()
@@ -447,6 +463,7 @@ class LocalHiveRepository(context: Context) {
     }
 
     suspend fun deleteApiaryPermanently(apiaryId: Long) = withContext(Dispatchers.IO) {
+        checkWritable()
         db.withTransaction {
             val apiary = db.apiaries().get(apiaryId)
                 ?: throw IllegalArgumentException("Apiary not found.")
@@ -474,6 +491,7 @@ class LocalHiveRepository(context: Context) {
     }
 
     suspend fun assignNfcTag(hiveId: Long, uid: String, reassign: Boolean = false) = withContext(Dispatchers.IO) {
+        checkWritable()
         val normalized = NfcUid.normalize(uid)
             ?: throw IllegalArgumentException("The NFC tag has no valid readable UID.")
         db.withTransaction {
@@ -581,6 +599,7 @@ class LocalHiveRepository(context: Context) {
     }
 
     suspend fun unassignNfcTag(hiveId: Long): Boolean = withContext(Dispatchers.IO) {
+        checkWritable()
         db.withTransaction {
             val hive = db.hives().get(hiveId)
                 ?: throw IllegalArgumentException("Hive not found.")
@@ -649,6 +668,7 @@ class LocalHiveRepository(context: Context) {
         newFrames: Double,
         changedAt: Long
     ) = withContext(Dispatchers.IO) {
+        checkWritable()
         require(previousFrames.isFinite() && newFrames.isFinite()) { "Bee frame values must be valid numbers." }
         require(previousFrames in 0.5..10.0 && newFrames in 0.5..10.0) { "Bee frame values must be between 0.5 and 10." }
         require(previousFrames != newFrames) { "Bee frame count did not change." }
@@ -668,6 +688,7 @@ class LocalHiveRepository(context: Context) {
     }
 
     suspend fun saveInspection(i: Inspection) = withContext(Dispatchers.IO) {
+        checkWritable()
         requireValidCoordinates(i.latitude, i.longitude, "Inspection")
         db.withTransaction {
             val safeSample = i.sampleSize.coerceAtLeast(1)
@@ -707,6 +728,7 @@ class LocalHiveRepository(context: Context) {
     }
 
     suspend fun saveFeeding(f: Feeding) = withContext(Dispatchers.IO) {
+        checkWritable()
         require(f.feedType.trim().isNotBlank()) { "Feed type cannot be blank" }
         require(f.amount.isFinite() && f.amount >= 0.0) { "Feeding amount must be a valid non-negative number" }
         require(f.unit.trim().isNotBlank()) { "Feeding unit cannot be blank" }
@@ -721,6 +743,7 @@ class LocalHiveRepository(context: Context) {
     }
 
     suspend fun saveTreatment(t: Treatment) = withContext(Dispatchers.IO) {
+        checkWritable()
         require(t.treatmentType.trim().isNotBlank()) { "Treatment type cannot be blank" }
         require(t.product.trim().isNotBlank()) { "Product cannot be blank" }
         db.withTransaction {
@@ -734,6 +757,7 @@ class LocalHiveRepository(context: Context) {
     }
 
     suspend fun saveHarvest(h: Harvest) = withContext(Dispatchers.IO) {
+        checkWritable()
         require(h.weightUnit.trim().isNotBlank()) { "Harvest weight unit cannot be blank" }
         listOf(h.wetHoneyWeight, h.dryHoneyWeight, h.waxWeight, h.propolisWeight).forEach { value -> require(value.isFinite() && value >= 0.0) { "Harvest values must be valid non-negative numbers" } }
         db.withTransaction {
@@ -747,6 +771,7 @@ class LocalHiveRepository(context: Context) {
     }
 
     suspend fun saveApiary(a: Apiary) = withContext(Dispatchers.IO) {
+        checkWritable()
         val cleanName = a.name.trim()
         require(cleanName.isNotBlank()) { "Apiary name cannot be blank" }
         requireValidCoordinates(a.latitude, a.longitude, "Apiary")
@@ -1015,6 +1040,7 @@ class LocalHiveRepository(context: Context) {
      * ordinary records. Newer local records win and no local-only row is deleted.
      */
     suspend fun restoreDataBackupJson(raw: String): DataBackupRestoreResult = withContext(Dispatchers.IO) {
+        checkWritable()
         previewDataBackup(raw)
         val root = JSONObject(raw)
         val records = root.getJSONArray("records")
@@ -1308,6 +1334,12 @@ class LocalHiveRepository(context: Context) {
                     }
                 }
             }
+        }
+    }
+
+    private fun checkWritable() {
+        check(!_activeWorkspaceReadOnly.value) {
+            "This team workspace is view-only. Ask a workspace owner to change your role before editing."
         }
     }
 
