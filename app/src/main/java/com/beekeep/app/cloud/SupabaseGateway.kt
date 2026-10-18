@@ -67,6 +67,7 @@ class SupabaseGateway(
             scheme = BuildConfig.AUTH_REDIRECT_SCHEME
             host = BuildConfig.AUTH_REDIRECT_HOST
             autoLoadFromStorage = true
+            autoSaveToStorage = true
             alwaysAutoRefresh = true
         }
         install(Postgrest)
@@ -91,6 +92,8 @@ class SupabaseGateway(
             return
         }
         try {
+            // Wait until stored credentials have been restored before showing signed-out UI.
+            supabase.auth.awaitInitialization()
             val session = supabase.auth.currentSessionOrNull()
             _account.value = CloudAccountState(
                 configured = true,
@@ -140,6 +143,13 @@ class SupabaseGateway(
      */
     suspend fun resetWorkspace(): CloudResult = syncMutex.withLock {
         val supabase = client ?: return@withLock CloudResult.NotConfigured
+        try {
+            supabase.auth.awaitInitialization()
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Throwable) {
+            return@withLock CloudResult.Failure(error.message ?: "Could not restore your cloud session")
+        }
         val session = supabase.auth.currentSessionOrNull() ?: run {
             refreshAccount()
             return@withLock CloudResult.NotSignedIn
@@ -236,6 +246,14 @@ class SupabaseGateway(
 
     suspend fun syncNow(): CloudResult = syncMutex.withLock {
         if (!configured || client == null) return@withLock CloudResult.NotConfigured
+        try {
+            client.auth.awaitInitialization()
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Throwable) {
+            _account.value = _account.value.copy(syncing = false, error = error.message ?: "Could not restore your cloud session")
+            return@withLock CloudResult.Failure(error.message ?: "Could not restore your cloud session")
+        }
         val session = client.auth.currentSessionOrNull() ?: run {
             refreshAccount()
             return@withLock CloudResult.NotSignedIn
@@ -432,6 +450,7 @@ class SupabaseGateway(
     private suspend fun authCall(block: suspend () -> Unit): CloudResult {
         if (!configured || client == null) return CloudResult.NotConfigured
         return try {
+            client?.auth?.awaitInitialization()
             block()
             refreshAccount()
             if (enableRealtime && _account.value.signedIn) startRealtime()

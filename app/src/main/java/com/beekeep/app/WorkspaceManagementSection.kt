@@ -49,7 +49,12 @@ fun WorkspaceManagementSection(cloud: SupabaseGateway, activity: ComponentActivi
     val account by cloud.account.collectAsState()
     val scope = rememberCoroutineScope()
     var workspaces by remember { mutableStateOf<List<BeeKeepWorkspace>>(emptyList()) }
-    var selectedWorkspaceId by rememberSaveable { mutableStateOf("") }
+    var selectedWorkspaceId by rememberSaveable {
+        mutableStateOf(
+            activity.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
+                .getString("selected_team_workspace_id", "").orEmpty()
+        )
+    }
     var members by remember { mutableStateOf<List<BeeKeepWorkspaceMember>>(emptyList()) }
     var invitations by remember { mutableStateOf<List<BeeKeepWorkspaceInvitation>>(emptyList()) }
     var loading by remember { mutableStateOf(false) }
@@ -71,7 +76,6 @@ fun WorkspaceManagementSection(cloud: SupabaseGateway, activity: ComponentActivi
     LaunchedEffect(account.signedIn) {
         if (!account.signedIn) {
             workspaces = emptyList()
-            selectedWorkspaceId = ""
             members = emptyList()
             invitations = emptyList()
             createdInvite = null
@@ -84,6 +88,8 @@ fun WorkspaceManagementSection(cloud: SupabaseGateway, activity: ComponentActivi
             val available = workspaces.filterNot { it.is_personal }
             selectedWorkspaceId = selectedWorkspaceId.takeIf { id -> available.any { it.id == id } }
                 ?: available.firstOrNull()?.id.orEmpty()
+            activity.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE).edit()
+                .putString("selected_team_workspace_id", selectedWorkspaceId).apply()
             message = ""
         } else {
             message = result.error ?: "Couldn't load workspaces."
@@ -146,6 +152,8 @@ fun WorkspaceManagementSection(cloud: SupabaseGateway, activity: ComponentActivi
                         OutlinedButton(
                             onClick = {
                                 selectedWorkspaceId = workspace.id
+                                activity.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE).edit()
+                                    .putString("selected_team_workspace_id", workspace.id).apply()
                                 createdInvite = null
                                 message = ""
                             },
@@ -327,13 +335,13 @@ fun WorkspaceManagementSection(cloud: SupabaseGateway, activity: ComponentActivi
                 Text("Use the same email address the invitation was created for. Codes expire after seven days.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 OutlinedTextField(
                     value = acceptToken,
-                    onValueChange = { acceptToken = it.trim() },
+                    onValueChange = { value -> acceptToken = value.filter { it.isLetterOrDigit() }.uppercase().take(128) },
                     modifier = Modifier.fillMaxWidth(),
-                    label = { Text("Invitation code") },
+                    label = { Text("Invitation code (8 characters)") },
                     singleLine = true
                 )
                 Button(
-                    enabled = acceptToken.length >= 32 && !loading,
+                    enabled = !loading && (acceptToken.length == 8 || acceptToken.length in 32..128),
                     onClick = {
                         scope.launch {
                             loading = true
@@ -347,6 +355,8 @@ fun WorkspaceManagementSection(cloud: SupabaseGateway, activity: ComponentActivi
                                 if (refreshed.isSuccess) {
                                     workspaces = refreshed.value.orEmpty()
                                     selectedWorkspaceId = joined.workspace_id
+                                    activity.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE).edit()
+                                        .putString("selected_team_workspace_id", joined.workspace_id).apply()
                                 }
                             } else message = result.error ?: "Couldn't accept this invitation."
                             loading = false
@@ -397,6 +407,8 @@ fun WorkspaceManagementSection(cloud: SupabaseGateway, activity: ComponentActivi
                                 val refreshed = cloud.listWorkspaces()
                                 if (refreshed.isSuccess) workspaces = refreshed.value.orEmpty()
                                 selectedWorkspaceId = workspace.id
+                                activity.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE).edit()
+                                    .putString("selected_team_workspace_id", workspace.id).apply()
                                 message = "Workspace created. Invite team members when ready."
                             } else {
                                 message = result.error ?: "Couldn't create workspace."

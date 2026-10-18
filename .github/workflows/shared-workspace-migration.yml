@@ -57,5 +57,7 @@ jobs:
         run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261018025508_beekeep_workspace_accept_invitation_fix.sql
       - name: Configure invitation token search paths
         run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261018025716_beekeep_workspace_crypto_search_path_fix.sql
-      - name: Verify invitation acceptance and manager permissions
+      - name: Apply short workspace invitation code migration
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261018035833_beekeep_short_workspace_invitation_codes.sql
+      - name: Verify invitation acceptance, short codes, and manager permissions
         run: psql -v ON_ERROR_STOP=1 -f supabase/tests/workspace_invitation_security.sql
