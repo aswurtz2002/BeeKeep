@@ -477,7 +477,7 @@ class SupabaseGateway(
                 repository.switchWorkspace(workspaceId, readOnly = !isWritable)
             }
             val remoteBefore = loadAllWorkspaceDocuments()
-            val remoteByKey = remoteBefore.associateBy { "${it.entity_type}:${it.entity_id}" }
+            val remoteByKey = remoteBefore.associateBy { "${it.entity_type}:${it.entity_id}" }.toMutableMap()
             val pending = repository.pendingSync(100)
             val uploadable = mutableListOf<CloudWorkspaceDocumentRow>()
             val uploadableIds = mutableSetOf<Long>()
@@ -510,10 +510,15 @@ class SupabaseGateway(
                         onConflict = "workspace_id,entity_type,entity_id"
                     }
                     pending.filter { it.id in uploadableIds }.forEach { repository.markSyncDone(it.id) }
+                    // Reuse the pulled snapshot and overlay successful writes instead of
+                    // issuing a second full paginated download on every sync.
+                    uploadable.forEach { row ->
+                        remoteByKey["${row.entity_type}:${row.entity_id}"] = row
+                    }
                 }
             }
 
-            val remote = loadAllWorkspaceDocuments()
+            val remote = remoteByKey.values.toList()
             // Child history is ignored locally if its hive has not been inserted yet.
             // Apply parents first rather than relying on the database's unspecified row order.
             val applyPriority = mapOf(
