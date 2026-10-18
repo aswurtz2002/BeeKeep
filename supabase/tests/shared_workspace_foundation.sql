@@ -1,4 +1,4 @@
--- Assertions for supabase/migrations/20261017_beekeep_shared_workspaces.sql.
+-- Assertions for supabase/migrations/20261017224333_beekeep_shared_workspaces.sql.
 -- Runs only against the disposable PostgreSQL service in the GitHub Actions workflow.
 
 do $assertions$
