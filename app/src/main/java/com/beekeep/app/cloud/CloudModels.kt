@@ -22,7 +22,7 @@ data class CloudWorkspaceDocumentRow(
     val updated_at: Long,
     val deleted: Boolean = false,
     val device_id: String = "android",
-    val updated_by: String
+    val updated_by: String?
 )
 
 data class CloudAccountState(
