@@ -75,6 +75,10 @@ fun WorkspaceManagementSection(
     var membersLoadedWorkspaceId by remember { mutableStateOf<String?>(null) }
     var memberLoadError by remember { mutableStateOf<String?>(null) }
     var refreshingPeople by remember { mutableStateOf(false) }
+    var showCopyPersonalData by rememberSaveable { mutableStateOf(false) }
+    var showDangerZone by rememberSaveable { mutableStateOf(false) }
+    var showJoinAnotherTeam by rememberSaveable { mutableStateOf(false) }
+    var showPendingInvitations by rememberSaveable { mutableStateOf(false) }
     var invitations by remember { mutableStateOf<List<BeeKeepWorkspaceInvitation>>(emptyList()) }
     var loading by remember { mutableStateOf(false) }
     var message by rememberSaveable { mutableStateOf("") }
@@ -380,17 +384,37 @@ fun WorkspaceManagementSection(
 
                     if (workspace.member_role == "viewer") {
                         Text(
-                            "Your role is view-only. You can see the team's records but can't upload edits.",
+                            "View-only access",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
+                    }
+
+                    if (activeWorkspaceId.isNotBlank()) {
+                        OutlinedButton(
+                            enabled = !loading,
+                            onClick = {
+                                scope.launch {
+                                    loading = true
+                                    val result = cloud.activateWorkspace(null)
+                                    activeWorkspaceId = activity.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
+                                        .getString("active_team_workspace_id", "").orEmpty()
+                                    message = result.error ?: "Switched back to your personal workspace."
+                                    loading = false
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) { Text("SWITCH TO PERSONAL WORKSPACE") }
                     }
                 }
 
                 if (workspace.member_role in setOf("owner", "admin")) {
                     WorkspacePanel(
-                        title = "Bring your existing data into this team",
-                        description = "Copy your personal apiaries and hives"
+                        title = "Copy personal data",
+                        description = "Optional · Import your private apiaries and hives",
+                        collapsible = true,
+                        expanded = showCopyPersonalData,
+                        onToggle = { showCopyPersonalData = !showCopyPersonalData }
                     ) {
                         Text(
                             "Copies your latest cloud-synced apiaries, hives, and history into this team. Your original personal records stay untouched. If any record IDs conflict with team data, the copy stops rather than overwriting anything.",
@@ -420,22 +444,8 @@ fun WorkspaceManagementSection(
                 ) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        horizontalArrangement = Arrangement.End
                     ) {
-                        Text(
-                            if (memberLoadError != null && membersLoadedWorkspaceId == workspace.id) {
-                                "Couldn't refresh the roster. Showing the last loaded list."
-                            } else if (membersLoadedWorkspaceId != workspace.id && memberLoadError != null) {
-                                "The member list couldn't be loaded."
-                            } else {
-                                "Updates automatically while this screen is open."
-                            },
-                            modifier = Modifier.weight(1f),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = if (memberLoadError != null) MaterialTheme.colorScheme.error
-                                else MaterialTheme.colorScheme.onSurfaceVariant
-                        )
                         TextButton(
                             enabled = !refreshingPeople && !loading,
                             onClick = {
@@ -452,6 +462,17 @@ fun WorkspaceManagementSection(
                         ) {
                             Text(if (refreshingPeople) "REFRESHING…" else "REFRESH")
                         }
+                    }
+                    if (memberLoadError != null) {
+                        Text(
+                            if (membersLoadedWorkspaceId == workspace.id) {
+                                "Couldn't refresh the roster. Showing the last loaded list."
+                            } else {
+                                "The member list couldn't be loaded."
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error
+                        )
                     }
                     if (membersLoadedWorkspaceId != workspace.id && memberLoadError == null) {
                         Text(
@@ -552,7 +573,10 @@ fun WorkspaceManagementSection(
                 if (workspace.member_role == "owner") {
                     WorkspacePanel(
                         title = "Delete team workspace",
-                        description = "Permanent action • Owner only"
+                        description = "Permanent action · Owner only",
+                        collapsible = true,
+                        expanded = showDangerZone,
+                        onToggle = { showDangerZone = !showDangerZone }
                     ) {
                         Text(
                             "This removes the team workspace, its shared hive and apiary records, invitations, and member access. Your personal workspace and personal records are not deleted.",
@@ -611,6 +635,7 @@ fun WorkspaceManagementSection(
                                         message = "Invitation created. Share the code with the invited person."
                                         inviteEmail = ""
                                         invitations = cloud.listWorkspaceInvitations(workspace.id).value.orEmpty()
+                                        showPendingInvitations = invitations.isNotEmpty()
                                     } else {
                                         message = result.error ?: "Couldn't create the invitation."
                                     }
@@ -672,9 +697,12 @@ fun WorkspaceManagementSection(
                         }
                     }
 
-                    WorkspacePanel(
-                        title = "Pending invitations",
-                        description = "Invitations that haven't been accepted yet."
+                    if (invitations.isNotEmpty()) WorkspacePanel(
+                        title = "Pending invitations (${invitations.size})",
+                        description = "Review or cancel outstanding invitations.",
+                        collapsible = true,
+                        expanded = showPendingInvitations,
+                        onToggle = { showPendingInvitations = !showPendingInvitations }
                     ) {
                         if (invitations.isEmpty()) {
                             Text(
@@ -725,14 +753,16 @@ fun WorkspaceManagementSection(
             }
 
             WorkspacePanel(
-                title = "Join a team",
-                description = "Have an invitation code? Enter it here to join a workspace."
+                title = if (sharedWorkspaces.isEmpty()) "Join a team" else "Join another team",
+                description = if (sharedWorkspaces.isEmpty()) {
+                    "Enter the invitation code you received."
+                } else {
+                    "Have an invitation code for another team?"
+                },
+                collapsible = sharedWorkspaces.isNotEmpty(),
+                expanded = showJoinAnotherTeam || sharedWorkspaces.isEmpty(),
+                onToggle = { showJoinAnotherTeam = !showJoinAnotherTeam }
             ) {
-                Text(
-                    "New invitation codes are 8 characters. Older invitation codes will still work.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
                 OutlinedTextField(
                     value = acceptToken,
                     onValueChange = { value -> acceptToken = value.filter { it.isLetterOrDigit() }.uppercase().take(128) },
@@ -769,33 +799,6 @@ fun WorkspaceManagementSection(
                     },
                     modifier = Modifier.fillMaxWidth()
                 ) { Text("JOIN WORKSPACE") }
-            }
-
-            if (activeWorkspaceId.isNotBlank()) {
-                WorkspacePanel(
-                    title = "Your personal workspace",
-                    description = "Switching back won't delete personal or team records."
-                ) {
-                    Text(
-                        "Use this when you want to work on apiaries that are private to your account.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    OutlinedButton(
-                        enabled = !loading,
-                        onClick = {
-                            scope.launch {
-                                loading = true
-                                val result = cloud.activateWorkspace(null)
-                                activeWorkspaceId = activity.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
-                                    .getString("active_team_workspace_id", "").orEmpty()
-                                message = result.error ?: "Switched back to your personal workspace."
-                                loading = false
-                            }
-                        },
-                        modifier = Modifier.fillMaxWidth()
-                    ) { Text("SWITCH TO PERSONAL DATA") }
-                }
             }
 
             if (message.isNotBlank()) {
@@ -1019,6 +1022,9 @@ fun WorkspaceManagementSection(
 private fun WorkspacePanel(
     title: String,
     description: String? = null,
+    collapsible: Boolean = false,
+    expanded: Boolean = true,
+    onToggle: (() -> Unit)? = null,
     content: @Composable ColumnScope.() -> Unit
 ) {
     Card(
@@ -1028,23 +1034,37 @@ private fun WorkspacePanel(
     ) {
         Column(
             modifier = Modifier.fillMaxWidth().padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+            verticalArrangement = Arrangement.spacedBy(if (!collapsible || expanded) 12.dp else 0.dp)
         ) {
-            Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                Text(
-                    title,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
-                )
-                if (!description.isNullOrBlank()) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(3.dp)
+                ) {
                     Text(
-                        description,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        title,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
                     )
+                    if (!description.isNullOrBlank()) {
+                        Text(
+                            description,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+                if (collapsible) {
+                    TextButton(onClick = { onToggle?.invoke() }) {
+                        Text(if (expanded) "HIDE" else "SHOW")
+                    }
                 }
             }
-            content()
+            if (!collapsible || expanded) content()
         }
     }
 }
