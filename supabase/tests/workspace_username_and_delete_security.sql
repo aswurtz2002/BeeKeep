@@ -155,7 +155,7 @@ begin
         where user_id = '00000000-0000-0000-0000-000000000001'
           and username = 'BeeBoss_1'
     ) then
-        raise exception 'Workspace deletion unexpectedly removed the owner's profile';
+        raise exception 'Workspace deletion unexpectedly removed the owner profile';
     end if;
 end;
 $deletion_assertions$;
