@@ -56,7 +56,7 @@ class BeeKeepViewModel(
         }
         // Clear any open detail pane when the active dataset changes; numeric local IDs
         // can legitimately overlap between a personal DB and a team's DB.
-        launch {
+        viewModelScope.launch {
             var previousWorkspaceId = repo.activeWorkspaceId.value
             repo.activeWorkspaceId.collect { workspaceId ->
                 if (workspaceId != previousWorkspaceId) {
