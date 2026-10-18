@@ -48,6 +48,7 @@ import com.beekeep.app.cloud.BeeKeepWorkspaceInvitationCreated
 import com.beekeep.app.cloud.BeeKeepWorkspaceMember
 import com.beekeep.app.cloud.SupabaseGateway
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
 
 @Composable
 fun WorkspaceManagementSection(
@@ -71,6 +72,9 @@ fun WorkspaceManagementSection(
         )
     }
     var members by remember { mutableStateOf<List<BeeKeepWorkspaceMember>>(emptyList()) }
+    var membersLoadedWorkspaceId by remember { mutableStateOf<String?>(null) }
+    var memberLoadError by remember { mutableStateOf<String?>(null) }
+    var refreshingPeople by remember { mutableStateOf(false) }
     var invitations by remember { mutableStateOf<List<BeeKeepWorkspaceInvitation>>(emptyList()) }
     var loading by remember { mutableStateOf(false) }
     var message by rememberSaveable { mutableStateOf("") }
@@ -91,12 +95,39 @@ fun WorkspaceManagementSection(
     val canManage = selectedWorkspace?.member_role == "owner" || selectedWorkspace?.member_role == "admin"
     val canAssignAdmin = selectedWorkspace?.member_role == "owner"
 
+    suspend fun refreshWorkspacePeople(workspaceId: String) {
+        val result = cloud.listWorkspaceMembers(workspaceId)
+        if (result.isSuccess) {
+            members = result.value.orEmpty()
+            membersLoadedWorkspaceId = workspaceId
+            memberLoadError = null
+        } else {
+            // Do not turn a failed roster request into a misleading "0 people" count.
+            memberLoadError = result.error ?: "Couldn't load workspace members."
+        }
+    }
+
+    suspend fun refreshWorkspaceInvitations(workspace: BeeKeepWorkspace) {
+        if (workspace.member_role == "owner" || workspace.member_role == "admin") {
+            val result = cloud.listWorkspaceInvitations(workspace.id)
+            if (result.isSuccess) {
+                invitations = result.value.orEmpty()
+            } else {
+                message = result.error ?: "Couldn't load invitations."
+            }
+        } else {
+            invitations = emptyList()
+        }
+    }
+
     LaunchedEffect(account.signedIn) {
         if (!account.signedIn) {
             activeWorkspaceId = activity.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
                 .getString("active_team_workspace_id", "").orEmpty()
             workspaces = emptyList()
             members = emptyList()
+            membersLoadedWorkspaceId = null
+            memberLoadError = null
             invitations = emptyList()
             createdInvite = null
             return@LaunchedEffect
@@ -122,21 +153,31 @@ fun WorkspaceManagementSection(
     LaunchedEffect(selectedWorkspaceId, account.signedIn, selectedWorkspace?.member_role, usernameRefreshKey) {
         if (!account.signedIn || selectedWorkspaceId.isBlank() || selectedWorkspace == null) {
             members = emptyList()
+            membersLoadedWorkspaceId = null
+            memberLoadError = null
             invitations = emptyList()
+            loading = false
             return@LaunchedEffect
         }
+
+        // Never show the previous workspace's roster under the newly selected workspace.
+        members = emptyList()
+        membersLoadedWorkspaceId = null
+        memberLoadError = null
         loading = true
-        val memberResult = cloud.listWorkspaceMembers(selectedWorkspaceId)
-        members = memberResult.value.orEmpty()
-        if (!memberResult.isSuccess) message = memberResult.error ?: "Couldn't load workspace members."
-        if (selectedWorkspace.member_role == "owner" || selectedWorkspace.member_role == "admin") {
-            val inviteResult = cloud.listWorkspaceInvitations(selectedWorkspaceId)
-            invitations = inviteResult.value.orEmpty()
-            if (!inviteResult.isSuccess) message = inviteResult.error ?: "Couldn't load invitations."
-        } else {
-            invitations = emptyList()
+        var firstLoad = true
+
+        // Membership changes can happen on another phone and do not trigger document sync.
+        // Refresh the roster while this screen is open so the People count doesn't stay stale.
+        while (true) {
+            refreshWorkspacePeople(selectedWorkspaceId)
+            if (firstLoad) {
+                refreshWorkspaceInvitations(selectedWorkspace)
+                loading = false
+                firstLoad = false
+            }
+            delay(15_000)
         }
-        loading = false
     }
 
     Column(
@@ -371,11 +412,63 @@ fun WorkspaceManagementSection(
 
                 WorkspacePanel(
                     title = "People",
-                    description = "${members.size} ${if (members.size == 1) "person" else "people"} in this workspace"
+                    description = when {
+                        membersLoadedWorkspaceId != workspace.id && memberLoadError != null -> "Couldn't load people"
+                        membersLoadedWorkspaceId != workspace.id -> "Loading people…"
+                        else -> "${members.size} ${if (members.size == 1) "person" else "people"} in this workspace"
+                    }
                 ) {
-                    if (members.isEmpty()) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
                         Text(
-                            if (loading) "Loading members…" else "No member details are available yet.",
+                            if (memberLoadError != null && membersLoadedWorkspaceId == workspace.id) {
+                                "Couldn't refresh the roster. Showing the last loaded list."
+                            } else if (membersLoadedWorkspaceId != workspace.id && memberLoadError != null) {
+                                "The member list couldn't be loaded."
+                            } else {
+                                "Updates automatically while this screen is open."
+                            },
+                            modifier = Modifier.weight(1f),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (memberLoadError != null) MaterialTheme.colorScheme.error
+                                else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        TextButton(
+                            enabled = !refreshingPeople && !loading,
+                            onClick = {
+                                scope.launch {
+                                    refreshingPeople = true
+                                    try {
+                                        refreshWorkspacePeople(workspace.id)
+                                        refreshWorkspaceInvitations(workspace)
+                                    } finally {
+                                        refreshingPeople = false
+                                    }
+                                }
+                            }
+                        ) {
+                            Text(if (refreshingPeople) "REFRESHING…" else "REFRESH")
+                        }
+                    }
+                    if (membersLoadedWorkspaceId != workspace.id && memberLoadError == null) {
+                        Text(
+                            "Loading members…",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    } else if (membersLoadedWorkspaceId != workspace.id && memberLoadError != null) {
+                        Text(
+                            "Use REFRESH to try loading the member list again.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    } else if (members.isEmpty()) {
+                        Text(
+                            if (memberLoadError != null) "The member list is empty, but the latest refresh failed."
+                            else "No member details are available yet.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -431,7 +524,7 @@ fun WorkspaceManagementSection(
                                                         val result = cloud.updateWorkspaceMemberRole(workspace.id, member.user_id, newRole)
                                                         if (result.isSuccess) {
                                                             message = "Member role updated."
-                                                            members = cloud.listWorkspaceMembers(workspace.id).value.orEmpty()
+                                                            refreshWorkspacePeople(workspace.id)
                                                         } else {
                                                             message = result.error ?: "Couldn't change the role."
                                                         }
@@ -792,7 +885,7 @@ fun WorkspaceManagementSection(
                             )
                             if (result.isSuccess) {
                                 message = "Member removed from the workspace."
-                                members = cloud.listWorkspaceMembers(target.workspace_id).value.orEmpty()
+                                refreshWorkspacePeople(target.workspace_id)
                             } else {
                                 message = result.error ?: "Couldn't remove the member."
                             }
