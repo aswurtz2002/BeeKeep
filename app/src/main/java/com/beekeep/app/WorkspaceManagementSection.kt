@@ -329,7 +329,7 @@ fun WorkspaceManagementSection(cloud: SupabaseGateway, activity: ComponentActivi
                     value = acceptToken,
                     onValueChange = { acceptToken = it.trim() },
                     modifier = Modifier.fillMaxWidth(),
-                    label = { Text("Invitation code") },
+                    label = { Text("Invitation code (8 characters)") },
                     singleLine = true
                 )
                 Button(
