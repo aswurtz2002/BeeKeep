@@ -38,6 +38,8 @@ class BeeKeepViewModel(
     val events: StateFlow<List<ActivityEvent>> = _events
     private val _ready = MutableStateFlow(false)
     val ready: StateFlow<Boolean> = _ready
+    val activeWorkspaceId: StateFlow<String?> = repo.activeWorkspaceId
+    val activeWorkspaceReadOnly: StateFlow<Boolean> = repo.activeWorkspaceReadOnly
 
     private var detailJob: Job? = null
     private var selectionRequestGeneration = 0L
