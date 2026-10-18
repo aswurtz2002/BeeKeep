@@ -69,3 +69,7 @@ jobs:
         run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261018050700_beekeep_copy_personal_documents_to_workspace.sql
       - name: Verify shared-record membership isolation and write permissions
         run: psql -v ON_ERROR_STOP=1 -f supabase/tests/shared_workspace_document_security.sql
+      - name: Apply username and workspace deletion migration
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261018162900_beekeep_usernames_and_workspace_delete.sql
+      - name: Verify usernames and owner-only workspace deletion
+        run: psql -v ON_ERROR_STOP=1 -f supabase/tests/workspace_username_and_delete_security.sql

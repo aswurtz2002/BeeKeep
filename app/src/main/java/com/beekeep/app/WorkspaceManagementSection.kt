@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenu
@@ -49,7 +50,11 @@ import com.beekeep.app.cloud.SupabaseGateway
 import kotlinx.coroutines.launch
 
 @Composable
-fun WorkspaceManagementSection(cloud: SupabaseGateway, activity: ComponentActivity) {
+fun WorkspaceManagementSection(
+    cloud: SupabaseGateway,
+    activity: ComponentActivity,
+    usernameRefreshKey: Int = 0
+) {
     val account by cloud.account.collectAsState()
     val scope = rememberCoroutineScope()
     var workspaces by remember { mutableStateOf<List<BeeKeepWorkspace>>(emptyList()) }
@@ -78,6 +83,8 @@ fun WorkspaceManagementSection(cloud: SupabaseGateway, activity: ComponentActivi
     var createdInvite by remember { mutableStateOf<BeeKeepWorkspaceInvitationCreated?>(null) }
     var memberMenuId by remember { mutableStateOf<String?>(null) }
     var copyPersonalTarget by remember { mutableStateOf<BeeKeepWorkspace?>(null) }
+    var deleteWorkspaceTarget by remember { mutableStateOf<BeeKeepWorkspace?>(null) }
+    var removeMemberTarget by remember { mutableStateOf<BeeKeepWorkspaceMember?>(null) }
 
     val sharedWorkspaces = workspaces.filterNot { it.is_personal }
     val selectedWorkspace = sharedWorkspaces.firstOrNull { it.id == selectedWorkspaceId }
@@ -112,7 +119,7 @@ fun WorkspaceManagementSection(cloud: SupabaseGateway, activity: ComponentActivi
         loading = false
     }
 
-    LaunchedEffect(selectedWorkspaceId, account.signedIn, selectedWorkspace?.member_role) {
+    LaunchedEffect(selectedWorkspaceId, account.signedIn, selectedWorkspace?.member_role, usernameRefreshKey) {
         if (!account.signedIn || selectedWorkspaceId.isBlank() || selectedWorkspace == null) {
             members = emptyList()
             invitations = emptyList()
@@ -384,13 +391,21 @@ fun WorkspaceManagementSection(cloud: SupabaseGateway, activity: ComponentActivi
                                 verticalArrangement = Arrangement.spacedBy(3.dp)
                             ) {
                                 Text(
-                                    member.email.ifBlank { member.user_id.take(8) + "…" } +
+                                    (member.username.takeIf { it.isNotBlank() }?.let { "@$it" }
+                                        ?: member.email.ifBlank { member.user_id.take(8) + "…" }) +
                                         if (member.is_current_user) " (You)" else "",
                                     style = MaterialTheme.typography.bodyMedium,
                                     fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold
                                 )
+                                if (member.username.isNotBlank() && member.email.isNotBlank()) {
+                                    Text(
+                                        member.email,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
                                 Text(
-                                    member.role.replaceFirstChar { it.uppercase() },
+                                    "Role: ${member.role.replaceFirstChar { it.uppercase() }}",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -428,15 +443,7 @@ fun WorkspaceManagementSection(cloud: SupabaseGateway, activity: ComponentActivi
                                             text = { Text("Remove member", color = MaterialTheme.colorScheme.error) },
                                             onClick = {
                                                 memberMenuId = null
-                                                scope.launch {
-                                                    val result = cloud.removeWorkspaceMember(workspace.id, member.user_id)
-                                                    if (result.isSuccess) {
-                                                        message = "Member removed from the workspace."
-                                                        members = cloud.listWorkspaceMembers(workspace.id).value.orEmpty()
-                                                    } else {
-                                                        message = result.error ?: "Couldn't remove the member."
-                                                    }
-                                                }
+                                                removeMemberTarget = member
                                             }
                                         )
                                     }
@@ -446,6 +453,27 @@ fun WorkspaceManagementSection(cloud: SupabaseGateway, activity: ComponentActivi
                         if (index < members.lastIndex) {
                             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                         }
+                    }
+                }
+
+                if (workspace.member_role == "owner") {
+                    WorkspacePanel(
+                        title = "Delete team workspace",
+                        description = "Permanent action • Owner only"
+                    ) {
+                        Text(
+                            "This removes the team workspace, its shared hive and apiary records, invitations, and member access. Your personal workspace and personal records are not deleted.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Button(
+                            enabled = !loading,
+                            onClick = { deleteWorkspaceTarget = workspace },
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MaterialTheme.colorScheme.error
+                            )
+                        ) { Text("DELETE TEAM WORKSPACE") }
                     }
                 }
 
@@ -737,6 +765,112 @@ fun WorkspaceManagementSection(cloud: SupabaseGateway, activity: ComponentActivi
                 TextButton(
                     enabled = !loading,
                     onClick = { copyPersonalTarget = null }
+                ) { Text("CANCEL") }
+            }
+        )
+    }
+
+    removeMemberTarget?.let { target ->
+        AlertDialog(
+            onDismissRequest = { if (!loading) removeMemberTarget = null },
+            title = { Text("Remove ${target.username.takeIf { it.isNotBlank() }?.let { "@$it" } ?: target.email}?") },
+            text = {
+                Text(
+                    "This removes the person from this team workspace, revoking access to its shared apiaries and hives. " +
+                        "Their account and personal workspace are not deleted."
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = !loading,
+                    onClick = {
+                        scope.launch {
+                            loading = true
+                            val result = cloud.removeWorkspaceMember(
+                                target.workspace_id,
+                                target.user_id
+                            )
+                            if (result.isSuccess) {
+                                message = "Member removed from the workspace."
+                                members = cloud.listWorkspaceMembers(target.workspace_id).value.orEmpty()
+                            } else {
+                                message = result.error ?: "Couldn't remove the member."
+                            }
+                            removeMemberTarget = null
+                            loading = false
+                        }
+                    }
+                ) { Text("REMOVE MEMBER", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = {
+                TextButton(
+                    enabled = !loading,
+                    onClick = { removeMemberTarget = null }
+                ) { Text("CANCEL") }
+            }
+        )
+    }
+
+    deleteWorkspaceTarget?.let { target ->
+        AlertDialog(
+            onDismissRequest = { if (!loading) deleteWorkspaceTarget = null },
+            title = { Text("Delete ${target.name}?") },
+            text = {
+                Text(
+                    "This permanently deletes this team workspace, its shared records, invitations, and member access. " +
+                        "It does not delete your personal workspace or personal records. This action cannot be undone."
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = !loading,
+                    onClick = {
+                        scope.launch {
+                            loading = true
+                            val prefs = activity.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
+                            var canDelete = true
+                            if (activeWorkspaceId == target.id) {
+                                val switchResult = cloud.activateWorkspace(null)
+                                activeWorkspaceId = prefs.getString("active_team_workspace_id", "").orEmpty()
+                                if (!switchResult.isSuccess) {
+                                    message = switchResult.error ?: "Switch to personal data before deleting this workspace."
+                                    canDelete = false
+                                }
+                            }
+
+                            if (canDelete) {
+                                val result = cloud.deleteWorkspace(target.id)
+                                if (result.isSuccess) {
+                                    val refreshed = cloud.listWorkspaces()
+                                    val remainingWorkspaces = if (refreshed.isSuccess) {
+                                        refreshed.value.orEmpty()
+                                    } else {
+                                        workspaces.filterNot { it.id == target.id }
+                                    }
+                                    workspaces = remainingWorkspaces
+                                    val remainingTeams = remainingWorkspaces.filterNot { it.is_personal }
+                                    selectedWorkspaceId = remainingTeams.firstOrNull()?.id.orEmpty()
+                                    prefs.edit()
+                                        .putString("selected_team_workspace_id", selectedWorkspaceId)
+                                        .apply()
+                                    invitations = emptyList()
+                                    members = emptyList()
+                                    createdInvite = null
+                                    message = "Deleted ${target.name}. Your personal records are untouched."
+                                } else {
+                                    message = result.error ?: "Couldn't delete the workspace."
+                                }
+                            }
+                            deleteWorkspaceTarget = null
+                            loading = false
+                        }
+                    }
+                ) { Text("DELETE PERMANENTLY") }
+            },
+            dismissButton = {
+                TextButton(
+                    enabled = !loading,
+                    onClick = { deleteWorkspaceTarget = null }
                 ) { Text("CANCEL") }
             }
         )

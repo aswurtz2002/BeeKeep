@@ -18,6 +18,7 @@ data class BeeKeepWorkspaceMember(
     val workspace_id: String,
     val user_id: String,
     val email: String = "",
+    val username: String = "",
     val role: String,
     val joined_at: String = "",
     val is_current_user: Boolean = false
@@ -73,6 +74,12 @@ data class WorkspaceInvitationTokenParams(val invite_token: String)
 
 @Serializable
 data class WorkspaceInvitationIdParams(val target_invitation_id: String)
+
+@Serializable
+data class BeeKeepUsername(val username: String)
+
+@Serializable
+data class WorkspaceUsernameParams(val target_username: String)
 
 @Serializable
 data class WorkspaceMemberRoleParams(

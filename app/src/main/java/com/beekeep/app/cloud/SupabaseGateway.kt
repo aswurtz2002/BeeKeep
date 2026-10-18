@@ -37,6 +37,8 @@ import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.launch
 import java.util.UUID
 import org.json.JSONObject
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 
 sealed interface CloudResult {
     data object Success : CloudResult
@@ -118,11 +120,14 @@ class SupabaseGateway(
         }
     }
 
-    suspend fun signUp(email: String, password: String): CloudResult = authCall {
+    suspend fun signUp(email: String, password: String, username: String = ""): CloudResult = authCall {
         val supabase = client ?: return@authCall
         supabase.auth.signUpWith(Email) {
             this.email = email.trim()
             this.password = password
+            data = buildJsonObject {
+                if (username.isNotBlank()) put("username", username.trim())
+            }
         }
     }
 
@@ -712,6 +717,30 @@ class SupabaseGateway(
             client!!.postgrest.rpc("beekeep_create_workspace", WorkspaceNameParams(name.trim()))
                 .decodeList<BeeKeepWorkspace>().firstOrNull()
                 ?: error("Workspace was not returned after creation")
+        }
+
+    suspend fun getUsername(): WorkspaceOperationResult<String> =
+        workspaceOperation {
+            client!!.postgrest.rpc("beekeep_get_username")
+                .decodeList<BeeKeepUsername>().firstOrNull()?.username.orEmpty()
+        }
+
+    suspend fun setUsername(username: String): WorkspaceOperationResult<String> =
+        workspaceOperation {
+            client!!.postgrest.rpc(
+                "beekeep_set_username",
+                WorkspaceUsernameParams(username.trim())
+            ).decodeList<BeeKeepUsername>().firstOrNull()?.username
+                ?: error("Username was not returned after saving")
+        }
+
+    suspend fun deleteWorkspace(workspaceId: String): WorkspaceOperationResult<Unit> =
+        workspaceOperation {
+            client!!.postgrest.rpc(
+                "beekeep_delete_workspace",
+                WorkspaceIdParams(workspaceId)
+            )
+            Unit
         }
 
     suspend fun listWorkspaceMembers(workspaceId: String): WorkspaceOperationResult<List<BeeKeepWorkspaceMember>> =
