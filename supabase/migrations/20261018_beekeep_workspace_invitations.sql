@@ -42,7 +42,7 @@ returns table (
     name text,
     owner_user_id uuid,
     is_personal boolean,
-    current_role text,
+    member_role text,
     created_at timestamptz,
     updated_at timestamptz
 )
@@ -64,7 +64,7 @@ returns table (
     name text,
     owner_user_id uuid,
     is_personal boolean,
-    current_role text,
+    member_role text,
     created_at timestamptz,
     updated_at timestamptz
 )
