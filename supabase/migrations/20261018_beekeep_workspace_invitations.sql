@@ -4,6 +4,8 @@
 
 begin;
 
+create extension if not exists pgcrypto;
+
 create table if not exists public.beekeep_workspace_invitations (
     id uuid primary key default gen_random_uuid(),
     workspace_id uuid not null references public.beekeep_workspaces(id) on delete cascade,
