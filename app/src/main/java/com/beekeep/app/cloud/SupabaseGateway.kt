@@ -32,6 +32,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.launch
 import java.util.UUID
 import org.json.JSONObject
@@ -211,14 +212,17 @@ class SupabaseGateway(
                     if (supabase.auth.currentSessionOrNull() == null) return@launch
                     val channel = supabase.channel("beekeep-doc-sync")
                     try {
-                        val changes = channel.postgresChangeFlow<PostgresAction>(schema = "public") {
+                        val privateChanges = channel.postgresChangeFlow<PostgresAction>(schema = "public") {
                             table = "beekeep_documents"
+                        }
+                        val teamChanges = channel.postgresChangeFlow<PostgresAction>(schema = "public") {
+                            table = "beekeep_workspace_documents"
                         }
                         supabase.realtime.connect()
                         channel.subscribe()
                         _account.value = _account.value.copy(error = null)
                         backoffMs = 1_000L
-                        changes.debounce(500).collect {
+                        merge(privateChanges, teamChanges).debounce(500).collect {
                             syncNow()
                         }
                     } finally {
@@ -263,6 +267,13 @@ class SupabaseGateway(
             return@withLock CloudResult.NotSignedIn
         }
         _account.value = _account.value.copy(syncing = true, error = null)
+        val activeTeamWorkspaceId = appContext
+            .getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
+            .getString("active_team_workspace_id", "")
+            .orEmpty().trim()
+        if (activeTeamWorkspaceId.isNotEmpty()) {
+            return@withLock syncSharedWorkspace(activeTeamWorkspaceId, userId, session.user?.email.orEmpty())
+        }
         try {
 
             // Pull first. This prevents an older offline outbox entry from overwriting a newer cloud record.
@@ -319,6 +330,150 @@ class SupabaseGateway(
         }
     }
 
+
+    /**
+     * Switches the app's active dataset to a team workspace or back to the user's personal data.
+     * The repository stores team data in a separate Room file before the first team pull.
+     */
+    suspend fun activateWorkspace(workspaceId: String?): WorkspaceOperationResult<Unit> {
+        val supabase = client
+        if (!configured || supabase == null) {
+            return WorkspaceOperationResult(error = "BeeKeep Cloud is not configured.")
+        }
+        return try {
+            supabase.auth.awaitInitialization()
+            if (supabase.auth.currentSessionOrNull() == null) {
+                refreshAccount()
+                return WorkspaceOperationResult(error = "Sign in before switching workspaces.")
+            }
+            val cleanId = workspaceId?.trim()?.takeIf { it.isNotEmpty() }
+            val workspace = if (cleanId == null) null else {
+                supabase.postgrest.rpc("beekeep_list_workspaces")
+                    .decodeList<BeeKeepWorkspace>()
+                    .firstOrNull { it.id == cleanId && !it.is_personal }
+                    ?: error("You no longer have access to that team workspace.")
+            }
+            repository.switchWorkspace(
+                workspaceId = cleanId,
+                readOnly = workspace?.member_role == "viewer"
+            )
+            val syncResult = syncNow()
+            if (syncResult is CloudResult.Failure) {
+                WorkspaceOperationResult(
+                    value = Unit,
+                    error = "Workspace selected, but the first sync failed: ${syncResult.message}"
+                )
+            } else {
+                WorkspaceOperationResult(value = Unit)
+            }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Throwable) {
+            WorkspaceOperationResult(error = error.message?.takeIf { it.isNotBlank() }
+                ?: "Could not switch workspace.")
+        }
+    }
+
+    private suspend fun syncSharedWorkspace(
+        workspaceId: String,
+        userId: String,
+        userEmail: String
+    ): CloudResult {
+        val supabase = client ?: return CloudResult.NotConfigured
+        try {
+            val workspace = supabase.postgrest.rpc("beekeep_list_workspaces")
+                .decodeList<BeeKeepWorkspace>()
+                .firstOrNull { it.id == workspaceId && !it.is_personal }
+            if (workspace == null) {
+                // The membership was revoked or the selected workspace was deleted.
+                // Keep the cached team database intact, but stop displaying it as the active dataset.
+                repository.switchWorkspace(null)
+                val message = "You no longer have access to this team workspace. Switched back to your personal workspace."
+                _account.value = _account.value.copy(syncing = false, signedIn = true, email = userEmail, error = message)
+                return CloudResult.Failure(message)
+            }
+
+            val isWritable = workspace.member_role in setOf("owner", "admin", "member")
+            val remoteBefore = supabase.from("beekeep_workspace_documents")
+                .select { filter { eq("workspace_id", workspaceId) } }
+                .decodeList<CloudWorkspaceDocumentRow>()
+                .filter { it.workspace_id == workspaceId }
+            val remoteByKey = remoteBefore.associateBy { "${it.entity_type}:${it.entity_id}" }
+            val pending = repository.pendingSync(100)
+            val uploadable = mutableListOf<CloudWorkspaceDocumentRow>()
+            val uploadableIds = mutableSetOf<Long>()
+
+            if (isWritable) {
+                for (item in pending) {
+                    val payloadTimestamp = runCatching {
+                        JSONObject(item.payload).optLong("updated_at", item.createdAt)
+                    }.getOrDefault(item.createdAt)
+                    val remote = remoteByKey["${item.entityType}:${item.entityId}"]
+                    if (remote != null && remote.updated_at > payloadTimestamp) {
+                        repository.markSyncDone(item.id)
+                        continue
+                    }
+                    uploadable += CloudWorkspaceDocumentRow(
+                        workspace_id = workspaceId,
+                        entity_type = item.entityType,
+                        entity_id = item.entityId,
+                        payload = item.payload,
+                        updated_at = payloadTimestamp,
+                        deleted = item.operation == "delete",
+                        device_id = deviceId,
+                        updated_by = userId
+                    )
+                    uploadableIds += item.id
+                }
+
+                if (uploadable.isNotEmpty()) {
+                    supabase.from("beekeep_workspace_documents").upsert(uploadable) {
+                        onConflict = "workspace_id,entity_type,entity_id"
+                    }
+                    pending.filter { it.id in uploadableIds }.forEach { repository.markSyncDone(it.id) }
+                }
+            }
+
+            val remote = supabase.from("beekeep_workspace_documents")
+                .select { filter { eq("workspace_id", workspaceId) } }
+                .decodeList<CloudWorkspaceDocumentRow>()
+                .filter { it.workspace_id == workspaceId }
+            remote.forEach { document ->
+                repository.applyCloudDocument(
+                    CloudDocumentRow(
+                        user_id = userId,
+                        entity_type = document.entity_type,
+                        entity_id = document.entity_id,
+                        payload = document.payload,
+                        updated_at = document.updated_at,
+                        deleted = document.deleted,
+                        device_id = document.device_id
+                    )
+                )
+            }
+
+            repository.pruneSync()
+            val now = System.currentTimeMillis()
+            val warning = if (!isWritable && pending.isNotEmpty()) {
+                "This workspace is view-only. Pending local edits were not uploaded."
+            } else null
+            _account.value = _account.value.copy(
+                syncing = false,
+                lastSyncAt = now,
+                error = warning,
+                signedIn = true,
+                email = userEmail
+            )
+            return if (warning == null) CloudResult.Success else CloudResult.Failure(warning)
+        } catch (cancelled: CancellationException) {
+            _account.value = _account.value.copy(syncing = false)
+            throw cancelled
+        } catch (error: Throwable) {
+            val message = error.message ?: "Team workspace sync failed"
+            _account.value = _account.value.copy(syncing = false, error = message)
+            return CloudResult.Failure(message)
+        }
+    }
 
     /**
      * Accepts Supabase verification links returning to this build's app-specific URI scheme.
