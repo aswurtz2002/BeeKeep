@@ -73,6 +73,7 @@ fun WorkspaceManagementSection(cloud: SupabaseGateway, activity: ComponentActivi
     var acceptToken by rememberSaveable { mutableStateOf("") }
     var createdInvite by remember { mutableStateOf<BeeKeepWorkspaceInvitationCreated?>(null) }
     var memberMenuId by remember { mutableStateOf<String?>(null) }
+    var copyPersonalTarget by remember { mutableStateOf<BeeKeepWorkspace?>(null) }
 
     val sharedWorkspaces = workspaces.filterNot { it.is_personal }
     val selectedWorkspace = sharedWorkspaces.firstOrNull { it.id == selectedWorkspaceId }
@@ -201,6 +202,18 @@ fun WorkspaceManagementSection(cloud: SupabaseGateway, activity: ComponentActivi
                             },
                             modifier = Modifier.fillMaxWidth()
                         ) { Text(if (workspace.member_role == "viewer") "VIEW THIS WORKSPACE" else "USE THIS WORKSPACE") }
+                    }
+                    if (workspace.member_role in setOf("owner", "admin")) {
+                        OutlinedButton(
+                            enabled = !loading,
+                            onClick = { copyPersonalTarget = workspace },
+                            modifier = Modifier.fillMaxWidth()
+                        ) { Text("COPY PERSONAL DATA TO TEAM") }
+                        Text(
+                            "Copies your cloud-synced personal apiaries, hives and history. Your original personal records remain private.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
                     Text(
                         if (workspace.member_role == "viewer") {
@@ -440,6 +453,46 @@ fun WorkspaceManagementSection(cloud: SupabaseGateway, activity: ComponentActivi
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
+    }
+
+    copyPersonalTarget?.let { target ->
+        AlertDialog(
+            onDismissRequest = { if (!loading) copyPersonalTarget = null },
+            title = { Text("Copy personal records to ${target.name}?") },
+            text = {
+                Text(
+                    "This copies your latest cloud-synced apiaries, hives and related history into this team workspace so its members can see them. " +
+                        "Your original personal records remain private. If any record IDs conflict with existing team records, the copy is stopped without overwriting anything."
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = !loading,
+                    onClick = {
+                        scope.launch {
+                            loading = true
+                            val result = cloud.copyPersonalRecordsToWorkspace(target.id)
+                            activeWorkspaceId = activity.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
+                                .getString("active_team_workspace_id", "").orEmpty()
+                            message = when {
+                                result.value != null && result.error != null ->
+                                    "Copied ${result.value} records. ${result.error}"
+                                result.error != null -> result.error
+                                else -> "Copied ${result.value ?: 0} personal records to ${target.name}. Team data is now active."
+                            }
+                            copyPersonalTarget = null
+                            loading = false
+                        }
+                    }
+                ) { Text("COPY RECORDS") }
+            },
+            dismissButton = {
+                TextButton(
+                    enabled = !loading,
+                    onClick = { copyPersonalTarget = null }
+                ) { Text("CANCEL") }
+            }
+        )
     }
 
     if (showCreateDialog) {
