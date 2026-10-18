@@ -489,7 +489,7 @@ class SupabaseGateway(
                     )
                 }
             }
-            WorkspaceOperationResult(
+            return WorkspaceOperationResult(
                 value = copiedCount,
                 error = error.message?.takeIf { it.isNotBlank() }
                     ?: if (copyCompleted) "Records were copied, but team setup did not finish." else "Could not copy personal records to the team."
