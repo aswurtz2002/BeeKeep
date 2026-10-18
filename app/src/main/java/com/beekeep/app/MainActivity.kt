@@ -3199,6 +3199,8 @@ private fun MoreScreen(
             }
         }
 
+        WorkspaceManagementSection(cloud = cloud, activity = activity)
+
         Card(shape = RoundedCornerShape(24.dp)) {
             Column(Modifier.padding(16.dp)) {
                 Text("Native Android • Kotlin + Compose", fontWeight = FontWeight.Bold)
