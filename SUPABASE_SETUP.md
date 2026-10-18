@@ -16,7 +16,7 @@ This Stage 1 migration creates `beekeep_workspaces` and `beekeep_workspace_membe
 
 **Compatibility/safety:** the `beekeep_documents` column list, primary key, and per-user Row Level Security policies are intentionally preserved in Stage 1. The separate mapping table avoids adding a field to responses older app versions deserialize. This does not share or expose data across accounts. Shared reads/writes are not enabled until the later shared-sync stage.
 
-The earlier cloud setup migration in this repository is `supabase/migrations/20261006_beekeep_cloud_v2.sql`. On a fresh Supabase project, ensure the existing base BeeKeep cloud schema is installed first, run that cloud-sync migration, and then run the Stage 1 workspace migration. Existing deployed projects that already have the v2 schema should run only the new Stage 1 migration.
+The earlier cloud setup migration in this repository is `supabase/migrations/20261006_beekeep_cloud_v2.sql`. On a fresh Supabase project, ensure the existing base BeeKeep cloud schema is installed first, run that cloud-sync migration, then run the Stage 1 and Stage 2 workspace migrations in filename order. The two Stage 2 follow-up migrations are idempotent fixes for role checks and the invitation-acceptance conflict target. Existing deployed projects should apply every migration they have not already applied.
 
 ## 3. Build variants
 
@@ -56,6 +56,12 @@ This is intentionally not dependent on realtime connectivity. Realtime can be ad
 
 ## 6. Shared workspace rollout status
 
-Stage 1 only installs the workspace/membership foundation and associates each account's current cloud documents with that account's private workspace. It does not yet allow invitations, workspace switching, cross-user synchronization, or shared NFC assignment. Membership write policies are intentionally closed to mobile clients; future invite/role operations must go through trusted, role-checked server functions.
+### Stage 1: workspace foundation
+Stage 1 creates a private personal workspace for each account and maps existing cloud documents to it. The `beekeep_documents` table and its per-user row-level security policies remain compatible with older builds.
 
-Before Stage 3 enables shared sync, test with multiple staging accounts and verify each account can still only see its own records. Keep a database backup before applying schema migrations to production.
+### Stage 2: invitations and membership roles
+Stage 2 creates a team workspace through a role-checked database function and supports one-time, seven-day invitation codes. A workspace owner/admin enters the invitee's account email, chooses a permitted role, then shares the generated code privately through Android's share sheet. The invitee must sign in to BeeKeep using that exact email and accept the code in **More → Team workspaces**. The database stores only a SHA-256 hash of the code; the raw code is displayed once. Owners can manage all non-owner member roles. Admins can manage members/viewers but cannot assign or manage admin roles. Mobile clients cannot directly insert/update membership or invitation rows.
+
+**Important boundary:** Stage 2 manages workspace membership only. Hive/apiary records still sync privately per user, even when users belong to a team workspace. Shared-record sync and active workspace selection need a separately tested data model and are not enabled yet; the UI states this explicitly.
+
+Before Stage 3 enables shared sync, test with multiple staging accounts and verify that each account can only see authorized records. Keep a database backup before applying schema migrations to production.
