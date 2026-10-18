@@ -499,7 +499,22 @@ class SupabaseGateway(
                 .select { filter { eq("workspace_id", workspaceId) } }
                 .decodeList<CloudWorkspaceDocumentRow>()
                 .filter { it.workspace_id == workspaceId }
-            remote.forEach { document ->
+            // Child history is ignored locally if its hive has not been inserted yet.
+            // Apply parents first rather than relying on the database's unspecified row order.
+            val applyPriority = mapOf(
+                "apiary" to 0,
+                "hive" to 1,
+                "nfc_assignment" to 2,
+                "inspection" to 3,
+                "feeding" to 3,
+                "treatment" to 3,
+                "harvest" to 3,
+                "event" to 3
+            )
+            remote.sortedWith(
+                compareBy<CloudWorkspaceDocumentRow> { applyPriority[it.entity_type] ?: 4 }
+                    .thenBy { it.entity_id }
+            ).forEach { document ->
                 repository.applyCloudDocument(
                     CloudDocumentRow(
                         user_id = userId,
