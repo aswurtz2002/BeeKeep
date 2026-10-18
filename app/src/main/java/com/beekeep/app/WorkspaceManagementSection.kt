@@ -408,14 +408,18 @@ fun WorkspaceManagementSection(cloud: SupabaseGateway, activity: ComponentActivi
                                 val joined = result.value!!
                                 acceptToken = ""
                                 createdInvite = null
-                                message = "Joined ${joined.workspace_name} as ${joined.workspace_role}."
                                 val refreshed = cloud.listWorkspaces()
-                                if (refreshed.isSuccess) {
-                                    workspaces = refreshed.value.orEmpty()
-                                    selectedWorkspaceId = joined.workspace_id
-                                    activity.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE).edit()
-                                        .putString("selected_team_workspace_id", joined.workspace_id).apply()
-                                }
+                                if (refreshed.isSuccess) workspaces = refreshed.value.orEmpty()
+                                selectedWorkspaceId = joined.workspace_id
+                                activity.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE).edit()
+                                    .putString("selected_team_workspace_id", joined.workspace_id).apply()
+                                // Accepting an invite should take the user straight to the shared
+                                // dataset, otherwise it looks like joining did not share any hives.
+                                val activation = cloud.activateWorkspace(joined.workspace_id)
+                                activeWorkspaceId = activity.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
+                                    .getString("active_team_workspace_id", "").orEmpty()
+                                message = activation.error
+                                    ?: "Joined ${joined.workspace_name} as ${joined.workspace_role}. Team data is now active."
                             } else message = result.error ?: "Couldn't accept this invitation."
                             loading = false
                         }
