@@ -3141,6 +3141,12 @@ private fun MoreScreen(
             }
         }
 
+        WorkspaceManagementSection(
+            cloud = cloud,
+            activity = activity,
+            usernameRefreshKey = usernameRefreshKey
+        )
+
         Card(onClick = onTagManager, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(24.dp)) {
             Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
@@ -3302,12 +3308,6 @@ private fun MoreScreen(
                 }
             }
         }
-
-        WorkspaceManagementSection(
-            cloud = cloud,
-            activity = activity,
-            usernameRefreshKey = usernameRefreshKey
-        )
 
         Card(shape = RoundedCornerShape(24.dp)) {
             Column(Modifier.padding(16.dp)) {
