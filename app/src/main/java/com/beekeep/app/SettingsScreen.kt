@@ -256,6 +256,16 @@ internal fun SettingsScreen(
                 Text("Settings", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.ExtraBold)
 }
 
+            Card(onClick = onOpenMore, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(20.dp)) {
+                Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                        Text("More", fontWeight = FontWeight.ExtraBold, style = MaterialTheme.typography.titleMedium)
+
+                    }
+                    Icon(Icons.Rounded.ChevronRight, contentDescription = "Open More", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(26.dp))
+                }
+            }
+
             SettingsSection("NFC & Voice behaviour", Icons.Rounded.Nfc) {
                 // Tag-management controls come first.
                 SettingsSwitchRow(
@@ -571,15 +581,6 @@ if (backupMessage.isNotBlank()) Text(backupMessage, color = if (backupMessage.st
                 }
             }
 
-            Card(onClick = onOpenMore, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(20.dp)) {
-                Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                        Text("More", fontWeight = FontWeight.ExtraBold, style = MaterialTheme.typography.titleMedium)
-
-                    }
-                    Icon(Icons.Rounded.ChevronRight, contentDescription = "Open More", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(26.dp))
-                }
-            }
             Spacer(Modifier.height(8.dp))
         }
     }
