@@ -218,6 +218,7 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
         }
         val cloud = SupabaseGateway(applicationContext, repository)
         cloudGateway = cloud
+        cloud.handleAuthDeepLink(intent)
         CloudSyncScheduler.schedule(applicationContext)
         val vm = ViewModelProvider(this, BeeKeepViewModel.Factory(repository, applicationContext))[BeeKeepViewModel::class.java]
         lifecycleScope.launch { cloud.syncNow() }
@@ -329,6 +330,7 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        if (::cloudGateway.isInitialized) cloudGateway.handleAuthDeepLink(intent)
         handleNfcIntent(intent)
     }
 
