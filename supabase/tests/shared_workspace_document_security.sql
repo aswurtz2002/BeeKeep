@@ -165,4 +165,21 @@ end;
 $personal_isolation_assertions$;
 
 reset role;
+
+-- Removing an account that last edited a shared record must not delete the team's record.
+delete from auth.users where id = '00000000-0000-0000-0000-000000000002';
+
+do $deleted_member_assertions$
+begin
+    if not exists (
+        select 1 from public.beekeep_workspace_documents
+        where workspace_id = (select value::uuid from stage3_workspace_document_context where key = 'workspace_id')
+          and entity_type = 'hive' and entity_id = 7001
+          and updated_by is null
+    ) then
+        raise exception 'Deleting a member account removed the shared record or retained a dangling editor reference';
+    end if;
+end;
+$deleted_member_assertions$;
+
 select 'Stage 3A shared-record access control tests passed' as result;
