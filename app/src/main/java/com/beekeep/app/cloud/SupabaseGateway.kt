@@ -143,6 +143,13 @@ class SupabaseGateway(
      */
     suspend fun resetWorkspace(): CloudResult = syncMutex.withLock {
         val supabase = client ?: return@withLock CloudResult.NotConfigured
+        try {
+            supabase.auth.awaitInitialization()
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Throwable) {
+            return@withLock CloudResult.Failure(error.message ?: "Could not restore your cloud session")
+        }
         val session = supabase.auth.currentSessionOrNull() ?: run {
             refreshAccount()
             return@withLock CloudResult.NotSignedIn
@@ -239,6 +246,14 @@ class SupabaseGateway(
 
     suspend fun syncNow(): CloudResult = syncMutex.withLock {
         if (!configured || client == null) return@withLock CloudResult.NotConfigured
+        try {
+            client.auth.awaitInitialization()
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Throwable) {
+            _account.value = _account.value.copy(syncing = false, error = error.message ?: "Could not restore your cloud session")
+            return@withLock CloudResult.Failure(error.message ?: "Could not restore your cloud session")
+        }
         val session = client.auth.currentSessionOrNull() ?: run {
             refreshAccount()
             return@withLock CloudResult.NotSignedIn
