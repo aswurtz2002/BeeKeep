@@ -71,5 +71,7 @@ jobs:
         run: psql -v ON_ERROR_STOP=1 -f supabase/tests/shared_workspace_document_security.sql
       - name: Apply username and workspace deletion migration
         run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261018162900_beekeep_usernames_and_workspace_delete.sql
-      - name: Verify usernames and owner-only workspace deletion
+      - name: Fix workspace roster RPC return types
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261018214324_beekeep_workspace_member_roster_type_fix.sql
+      - name: Verify usernames, member roster, and owner-only workspace deletion
         run: psql -v ON_ERROR_STOP=1 -f supabase/tests/workspace_username_and_delete_security.sql
