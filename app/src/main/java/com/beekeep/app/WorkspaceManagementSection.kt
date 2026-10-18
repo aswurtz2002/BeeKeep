@@ -327,7 +327,7 @@ fun WorkspaceManagementSection(cloud: SupabaseGateway, activity: ComponentActivi
                 Text("Use the same email address the invitation was created for. Codes expire after seven days.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 OutlinedTextField(
                     value = acceptToken,
-                    onValueChange = { acceptToken = it.trim() },
+                    onValueChange = { value -> acceptToken = value.filter { it.isLetterOrDigit() }.uppercase().take(128) },
                     modifier = Modifier.fillMaxWidth(),
                     label = { Text("Invitation code (8 characters)") },
                     singleLine = true
