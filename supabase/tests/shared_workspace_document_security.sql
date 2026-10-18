@@ -71,7 +71,75 @@ select public.beekeep_update_workspace_member_role(
     'viewer'
 );
 
--- Viewers can read but cannot insert or update shared records.
+-- Seed private cloud records with one key that collides with an existing team hive.
+insert into public.beekeep_documents (
+    user_id, entity_type, entity_id, payload, updated_at, deleted, device_id
+)
+values
+    ('00000000-0000-0000-0000-000000000001', 'apiary', 7500,
+     '{"id":7500,"name":"Personal apiary to copy"}', 5000, false, 'owner-device'),
+    ('00000000-0000-0000-0000-000000000001', 'hive', 7501,
+     '{"id":7501,"number":"Personal hive to copy","apiary":"Personal apiary to copy"}', 5000, false, 'owner-device'),
+    ('00000000-0000-0000-0000-000000000001', 'event', 7502,
+     '{"id":7502,"hiveId":7501,"title":"Personal event to copy"}', 5000, false, 'owner-device'),
+    ('00000000-0000-0000-0000-000000000001', 'hive', 7001,
+     '{"id":7001,"number":"Conflicting private hive"}', 5000, false, 'owner-device');
+
+-- A key collision must abort the whole copy and must not overwrite the existing team hive.
+do $copy_conflict_assertions$
+declare denied boolean := false; team_payload text;
+begin
+    begin
+        perform * from public.beekeep_copy_personal_documents_to_workspace(
+            (select value::uuid from stage3_workspace_document_context where key = 'workspace_id')
+        );
+    exception when unique_violation then
+        denied := true;
+    end;
+    if not denied then
+        raise exception 'Personal data copy should refuse duplicate record keys';
+    end if;
+
+    if exists (
+        select 1 from public.beekeep_workspace_documents
+        where workspace_id = (select value::uuid from stage3_workspace_document_context where key = 'workspace_id')
+          and entity_type in ('apiary', 'event') and entity_id in (7500, 7502)
+    ) then
+        raise exception 'Failed personal-data copy partially inserted records';
+    end if;
+
+    select payload into team_payload from public.beekeep_workspace_documents
+    where workspace_id = (select value::uuid from stage3_workspace_document_context where key = 'workspace_id')
+      and entity_type = 'hive' and entity_id = 7001;
+    if team_payload <> '{"id":7001,"number":"Edited by team member"}' then
+        raise exception 'Personal-data copy overwrote an existing team record';
+    end if;
+end;
+$copy_conflict_assertions$;
+
+delete from public.beekeep_documents
+where user_id = auth.uid() and entity_type = 'hive' and entity_id = 7001;
+
+-- The owner can copy their private records once conflicting keys are removed.
+select * from public.beekeep_copy_personal_documents_to_workspace(
+    (select value::uuid from stage3_workspace_document_context where key = 'workspace_id')
+);
+
+do $copy_success_assertions$
+declare copied_rows integer;
+begin
+    select count(*) into copied_rows
+    from public.beekeep_workspace_documents
+    where workspace_id = (select value::uuid from stage3_workspace_document_context where key = 'workspace_id')
+      and (entity_type, entity_id) in (('apiary', 7500), ('hive', 7501), ('event', 7502))
+      and updated_by = auth.uid();
+    if copied_rows <> 3 then
+        raise exception 'Expected 3 private records to be copied atomically, got %', copied_rows;
+    end if;
+end;
+$copy_success_assertions$;
+
+-- Viewers can read but cannot insert, update, or import personal records into the team.
 select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-000000000002', false);
 do $viewer_assertions$
 declare visible_count integer; affected integer; denied boolean := false;
@@ -107,6 +175,18 @@ begin
     end;
     if not denied then
         raise exception 'Viewer unexpectedly inserted a shared record';
+    end if;
+
+    denied := false;
+    begin
+        perform * from public.beekeep_copy_personal_documents_to_workspace(
+            (select value::uuid from stage3_workspace_document_context where key = 'workspace_id')
+        );
+    exception when insufficient_privilege then
+        denied := true;
+    end;
+    if not denied then
+        raise exception 'Viewer unexpectedly copied personal records into a team workspace';
     end if;
 end;
 $viewer_assertions$;
