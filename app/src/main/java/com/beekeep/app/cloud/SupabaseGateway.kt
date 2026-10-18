@@ -268,11 +268,16 @@ class SupabaseGateway(
             _account.value = _account.value.copy(syncing = false, signedIn = false, error = "Your cloud session has no user ID. Sign in again.")
             return@withLock CloudResult.NotSignedIn
         }
-        _account.value = _account.value.copy(syncing = true, error = null)
         val activeTeamWorkspaceId = appContext
             .getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
             .getString("active_team_workspace_id", "")
             .orEmpty().trim()
+        // WorkManager and the foreground app each own a repository instance; align this
+        // instance with the latest scope preference before touching its local outbox.
+        if (repository.activeWorkspaceId.value.orEmpty() != activeTeamWorkspaceId) {
+            repository.switchWorkspace(activeTeamWorkspaceId.ifBlank { null })
+        }
+        _account.value = _account.value.copy(syncing = true, error = null)
         if (activeTeamWorkspaceId.isNotEmpty()) {
             return@withLock syncSharedWorkspace(activeTeamWorkspaceId, userId, session.user?.email.orEmpty())
         }
@@ -396,6 +401,9 @@ class SupabaseGateway(
             }
 
             val isWritable = workspace.member_role in setOf("owner", "admin", "member")
+            if (repository.activeWorkspaceReadOnly.value == isWritable) {
+                repository.switchWorkspace(workspaceId, readOnly = !isWritable)
+            }
             val remoteBefore = supabase.from("beekeep_workspace_documents")
                 .select { filter { eq("workspace_id", workspaceId) } }
                 .decodeList<CloudWorkspaceDocumentRow>()
