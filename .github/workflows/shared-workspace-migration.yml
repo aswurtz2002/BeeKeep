@@ -64,6 +64,6 @@ jobs:
       - name: Apply workspace-scoped shared record migration
         run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261018045154_beekeep_workspace_shared_documents.sql
       - name: Apply workspace document index and policy tuning
-        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261018045300_beekeep_workspace_document_rls_performance.sql
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261018045419_beekeep_workspace_document_rls_performance.sql
       - name: Verify shared-record membership isolation and write permissions
         run: psql -v ON_ERROR_STOP=1 -f supabase/tests/shared_workspace_document_security.sql
