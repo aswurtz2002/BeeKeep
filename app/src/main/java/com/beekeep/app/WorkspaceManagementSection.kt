@@ -154,7 +154,7 @@ fun WorkspaceManagementSection(cloud: SupabaseGateway, activity: ComponentActivi
                 ) {
                     Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                         Text(
-                            if (sharedWorkspaces.size == 1) "1 team workspace" else "\${sharedWorkspaces.size} team workspaces",
+                            if (sharedWorkspaces.size == 1) "1 team workspace" else "${sharedWorkspaces.size} team workspaces",
                             style = MaterialTheme.typography.titleSmall,
                             fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold
                         )
@@ -223,7 +223,7 @@ fun WorkspaceManagementSection(cloud: SupabaseGateway, activity: ComponentActivi
                                         fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold
                                     )
                                     Text(
-                                        "Your role: \${workspace.member_role.replaceFirstChar { it.uppercase() }}",
+                                        "Your role: ${workspace.member_role.replaceFirstChar { it.uppercase() }}",
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
@@ -321,7 +321,7 @@ fun WorkspaceManagementSection(cloud: SupabaseGateway, activity: ComponentActivi
                                     val result = cloud.activateWorkspace(workspace.id)
                                     activeWorkspaceId = activity.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
                                         .getString("active_team_workspace_id", "").orEmpty()
-                                    message = result.error ?: "Now using \${workspace.name}. Team data synced."
+                                    message = result.error ?: "Now using ${workspace.name}. Team data synced."
                                     loading = false
                                 }
                             },
@@ -365,7 +365,7 @@ fun WorkspaceManagementSection(cloud: SupabaseGateway, activity: ComponentActivi
 
                 WorkspacePanel(
                     title = "People",
-                    description = "\${members.size} \${if (members.size == 1) "person" else "people"} in this workspace"
+                    description = "${members.size} ${if (members.size == 1) "person" else "people"} in this workspace"
                 ) {
                     if (members.isEmpty()) {
                         Text(
@@ -410,7 +410,7 @@ fun WorkspaceManagementSection(cloud: SupabaseGateway, activity: ComponentActivi
                                         }
                                         roles.filter { it != member.role }.forEach { newRole ->
                                             DropdownMenuItem(
-                                                text = { Text("Make \${newRole.replaceFirstChar { it.uppercase() }}") },
+                                                text = { Text("Make ${newRole.replaceFirstChar { it.uppercase() }}") },
                                                 onClick = {
                                                     memberMenuId = null
                                                     scope.launch {
@@ -466,7 +466,7 @@ fun WorkspaceManagementSection(cloud: SupabaseGateway, activity: ComponentActivi
                             OutlinedButton(
                                 onClick = { roleMenuExpanded = true },
                                 modifier = Modifier.fillMaxWidth()
-                            ) { Text("Invitation role: \${inviteRole.replaceFirstChar { it.uppercase() }}") }
+                            ) { Text("Invitation role: ${inviteRole.replaceFirstChar { it.uppercase() }}") }
                             DropdownMenu(
                                 expanded = roleMenuExpanded,
                                 onDismissRequest = { roleMenuExpanded = false }
@@ -514,7 +514,7 @@ fun WorkspaceManagementSection(cloud: SupabaseGateway, activity: ComponentActivi
                                         style = MaterialTheme.typography.titleSmall,
                                         fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
                                     )
-                                    Text("For \${invite.email}", style = MaterialTheme.typography.bodySmall)
+                                    Text("For ${invite.email}", style = MaterialTheme.typography.bodySmall)
                                     Text(
                                         invite.invite_token,
                                         style = MaterialTheme.typography.titleMedium,
@@ -536,7 +536,7 @@ fun WorkspaceManagementSection(cloud: SupabaseGateway, activity: ComponentActivi
                                         ) { Text("COPY CODE") }
                                         Button(
                                             onClick = {
-                                                val shareText = "You've been invited to the BeeKeep workspace \${workspace.name}.\n\nSign in to BeeKeep Cloud using \${invite.email}, then open More → Team workspaces → Join a team and enter this code:\n\${invite.invite_token}\n\nThis invitation expires in seven days."
+                                                val shareText = "You've been invited to the BeeKeep workspace ${workspace.name}.\n\nSign in to BeeKeep Cloud using ${invite.email}, then open More → Team workspaces → Join a team and enter this code:\n${invite.invite_token}\n\nThis invitation expires in seven days."
                                                 val sendIntent = Intent(Intent.ACTION_SEND).apply {
                                                     type = "text/plain"
                                                     putExtra(Intent.EXTRA_SUBJECT, "BeeKeep workspace invitation")
@@ -575,7 +575,7 @@ fun WorkspaceManagementSection(cloud: SupabaseGateway, activity: ComponentActivi
                                     ) {
                                         Text(invitation.email, style = MaterialTheme.typography.bodyMedium)
                                         Text(
-                                            "\${invitation.role.replaceFirstChar { it.uppercase() }} · expires \${invitation.expires_at.take(10)}",
+                                            "${invitation.role.replaceFirstChar { it.uppercase() }} · expires ${invitation.expires_at.take(10)}",
                                             style = MaterialTheme.typography.bodySmall,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant
                                         )
@@ -640,7 +640,7 @@ fun WorkspaceManagementSection(cloud: SupabaseGateway, activity: ComponentActivi
                                 activeWorkspaceId = activity.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
                                     .getString("active_team_workspace_id", "").orEmpty()
                                 message = activation.error
-                                    ?: "Joined \${joined.workspace_name} as \${joined.workspace_role}. Team data is now active."
+                                    ?: "Joined ${joined.workspace_name} as ${joined.workspace_role}. Team data is now active."
                             } else {
                                 message = result.error ?: "Couldn't accept this invitation."
                             }
