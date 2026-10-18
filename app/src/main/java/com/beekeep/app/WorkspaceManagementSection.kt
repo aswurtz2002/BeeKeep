@@ -55,6 +55,12 @@ fun WorkspaceManagementSection(cloud: SupabaseGateway, activity: ComponentActivi
                 .getString("selected_team_workspace_id", "").orEmpty()
         )
     }
+    var activeWorkspaceId by rememberSaveable {
+        mutableStateOf(
+            activity.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
+                .getString("active_team_workspace_id", "").orEmpty()
+        )
+    }
     var members by remember { mutableStateOf<List<BeeKeepWorkspaceMember>>(emptyList()) }
     var invitations by remember { mutableStateOf<List<BeeKeepWorkspaceInvitation>>(emptyList()) }
     var loading by remember { mutableStateOf(false) }
@@ -67,6 +73,7 @@ fun WorkspaceManagementSection(cloud: SupabaseGateway, activity: ComponentActivi
     var acceptToken by rememberSaveable { mutableStateOf("") }
     var createdInvite by remember { mutableStateOf<BeeKeepWorkspaceInvitationCreated?>(null) }
     var memberMenuId by remember { mutableStateOf<String?>(null) }
+    var copyPersonalTarget by remember { mutableStateOf<BeeKeepWorkspace?>(null) }
 
     val sharedWorkspaces = workspaces.filterNot { it.is_personal }
     val selectedWorkspace = sharedWorkspaces.firstOrNull { it.id == selectedWorkspaceId }
@@ -75,12 +82,16 @@ fun WorkspaceManagementSection(cloud: SupabaseGateway, activity: ComponentActivi
 
     LaunchedEffect(account.signedIn) {
         if (!account.signedIn) {
+            activeWorkspaceId = activity.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
+                .getString("active_team_workspace_id", "").orEmpty()
             workspaces = emptyList()
             members = emptyList()
             invitations = emptyList()
             createdInvite = null
             return@LaunchedEffect
         }
+        activeWorkspaceId = activity.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
+            .getString("active_team_workspace_id", "").orEmpty()
         loading = true
         val result = cloud.listWorkspaces()
         if (result.isSuccess) {
@@ -170,6 +181,49 @@ fun WorkspaceManagementSection(cloud: SupabaseGateway, activity: ComponentActivi
                 selectedWorkspace?.let { workspace ->
                     Spacer(Modifier.width(2.dp))
                     Text(workspace.name, style = MaterialTheme.typography.titleMedium, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
+                    if (activeWorkspaceId == workspace.id) {
+                        Text(
+                            "ACTIVE DATA WORKSPACE",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    } else {
+                        Button(
+                            enabled = !loading,
+                            onClick = {
+                                scope.launch {
+                                    loading = true
+                                    val result = cloud.activateWorkspace(workspace.id)
+                                    activeWorkspaceId = activity.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
+                                        .getString("active_team_workspace_id", "").orEmpty()
+                                    message = result.error ?: "Now using ${workspace.name}. Team sync completed."
+                                    loading = false
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) { Text(if (workspace.member_role == "viewer") "VIEW THIS WORKSPACE" else "USE THIS WORKSPACE") }
+                    }
+                    if (workspace.member_role in setOf("owner", "admin")) {
+                        OutlinedButton(
+                            enabled = !loading,
+                            onClick = { copyPersonalTarget = workspace },
+                            modifier = Modifier.fillMaxWidth()
+                        ) { Text("COPY PERSONAL DATA TO TEAM") }
+                        Text(
+                            "Copies your cloud-synced personal apiaries, hives and history. Your original personal records remain private.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Text(
+                        if (workspace.member_role == "viewer") {
+                            "Your role is view-only. Editing is disabled while this workspace is active."
+                        } else {
+                            "Hive, apiary and inspection records are kept separate from your personal workspace and sync for team members."
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                     Text("MEMBERS", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
                     if (members.isEmpty()) {
                         Text("No members loaded yet.", color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -331,6 +385,23 @@ fun WorkspaceManagementSection(cloud: SupabaseGateway, activity: ComponentActivi
                     }
                 }
 
+                if (activeWorkspaceId.isNotBlank()) {
+                    OutlinedButton(
+                        enabled = !loading,
+                        onClick = {
+                            scope.launch {
+                                loading = true
+                                val result = cloud.activateWorkspace(null)
+                                activeWorkspaceId = activity.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
+                                    .getString("active_team_workspace_id", "").orEmpty()
+                                message = result.error ?: "Switched back to your personal workspace."
+                                loading = false
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text("SWITCH TO PERSONAL WORKSPACE") }
+                }
+
                 Text("ACCEPT AN INVITATION", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
                 Text("Use the same email address the invitation was created for. Codes expire after seven days.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 OutlinedTextField(
@@ -350,14 +421,18 @@ fun WorkspaceManagementSection(cloud: SupabaseGateway, activity: ComponentActivi
                                 val joined = result.value!!
                                 acceptToken = ""
                                 createdInvite = null
-                                message = "Joined ${joined.workspace_name} as ${joined.workspace_role}."
                                 val refreshed = cloud.listWorkspaces()
-                                if (refreshed.isSuccess) {
-                                    workspaces = refreshed.value.orEmpty()
-                                    selectedWorkspaceId = joined.workspace_id
-                                    activity.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE).edit()
-                                        .putString("selected_team_workspace_id", joined.workspace_id).apply()
-                                }
+                                if (refreshed.isSuccess) workspaces = refreshed.value.orEmpty()
+                                selectedWorkspaceId = joined.workspace_id
+                                activity.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE).edit()
+                                    .putString("selected_team_workspace_id", joined.workspace_id).apply()
+                                // Accepting an invite should take the user straight to the shared
+                                // dataset, otherwise it looks like joining did not share any hives.
+                                val activation = cloud.activateWorkspace(joined.workspace_id)
+                                activeWorkspaceId = activity.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
+                                    .getString("active_team_workspace_id", "").orEmpty()
+                                message = activation.error
+                                    ?: "Joined ${joined.workspace_name} as ${joined.workspace_role}. Team data is now active."
                             } else message = result.error ?: "Couldn't accept this invitation."
                             loading = false
                         }
@@ -373,11 +448,51 @@ fun WorkspaceManagementSection(cloud: SupabaseGateway, activity: ComponentActivi
                 )
             }
             Text(
-                "Stage 2 sets up workspace access and roles. Hive and apiary records still sync privately to each account until shared-record sync is added and tested in the next stage.",
+                "Personal records stay private. Team records use a separate local database and are shared only with members of the selected team workspace. Viewers can read records but cannot sync edits.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
+    }
+
+    copyPersonalTarget?.let { target ->
+        AlertDialog(
+            onDismissRequest = { if (!loading) copyPersonalTarget = null },
+            title = { Text("Copy personal records to ${target.name}?") },
+            text = {
+                Text(
+                    "This copies your latest cloud-synced apiaries, hives and related history into this team workspace so its members can see them. " +
+                        "Your original personal records remain private. If any record IDs conflict with existing team records, the copy is stopped without overwriting anything."
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = !loading,
+                    onClick = {
+                        scope.launch {
+                            loading = true
+                            val result = cloud.copyPersonalRecordsToWorkspace(target.id)
+                            activeWorkspaceId = activity.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
+                                .getString("active_team_workspace_id", "").orEmpty()
+                            message = when {
+                                result.value != null && result.error != null ->
+                                    "Copied ${result.value} records. ${result.error}"
+                                result.error != null -> result.error
+                                else -> "Copied ${result.value ?: 0} personal records to ${target.name}. Team data is now active."
+                            }
+                            copyPersonalTarget = null
+                            loading = false
+                        }
+                    }
+                ) { Text("COPY RECORDS") }
+            },
+            dismissButton = {
+                TextButton(
+                    enabled = !loading,
+                    onClick = { copyPersonalTarget = null }
+                ) { Text("CANCEL") }
+            }
+        )
     }
 
     if (showCreateDialog) {

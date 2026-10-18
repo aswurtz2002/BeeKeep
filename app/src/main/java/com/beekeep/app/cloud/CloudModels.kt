@@ -13,6 +13,18 @@ data class CloudDocumentRow(
     val device_id: String = "android"
 )
 
+@Serializable
+data class CloudWorkspaceDocumentRow(
+    val workspace_id: String,
+    val entity_type: String,
+    val entity_id: Long,
+    val payload: String,
+    val updated_at: Long,
+    val deleted: Boolean = false,
+    val device_id: String = "android",
+    val updated_by: String?
+)
+
 data class CloudAccountState(
     val configured: Boolean,
     val signedIn: Boolean,

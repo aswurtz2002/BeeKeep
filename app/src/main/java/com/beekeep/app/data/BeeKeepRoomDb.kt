@@ -292,13 +292,35 @@ abstract class BeeKeepRoomDb : RoomDatabase() {
             }
         }
 
-        @Volatile private var INSTANCE: BeeKeepRoomDb? = null
-        fun get(context: Context): BeeKeepRoomDb = INSTANCE ?: synchronized(this) {
-            INSTANCE ?: Room.databaseBuilder(context.applicationContext, BeeKeepRoomDb::class.java, "beekeep_room.db")
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12)
-                .setJournalMode(RoomDatabase.JournalMode.WRITE_AHEAD_LOGGING)
-                .build()
-                .also { INSTANCE = it }
+        private val instances = mutableMapOf<String, BeeKeepRoomDb>()
+
+        fun get(context: Context): BeeKeepRoomDb = getNamed(context, "beekeep_room.db")
+
+        /**
+         * Team workspaces use a separate local Room file. The legacy database remains the
+         * personal/offline database, so changing teams never merges personal rows into a team.
+         */
+        fun getForWorkspace(context: Context, workspaceId: String?): BeeKeepRoomDb {
+            val cleanId = workspaceId?.trim()?.takeIf { it.isNotEmpty() } ?: return get(context)
+            require(cleanId.matches(Regex("[A-Za-z0-9-]{1,80}"))) { "Invalid workspace identifier" }
+            return getNamed(context, "beekeep_room_team_${cleanId}.db")
         }
+
+        private fun getNamed(context: Context, databaseName: String): BeeKeepRoomDb =
+            synchronized(instances) {
+                instances[databaseName] ?: Room.databaseBuilder(
+                    context.applicationContext,
+                    BeeKeepRoomDb::class.java,
+                    databaseName
+                )
+                    .addMigrations(
+                        MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5,
+                        MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9,
+                        MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12
+                    )
+                    .setJournalMode(RoomDatabase.JournalMode.WRITE_AHEAD_LOGGING)
+                    .build()
+                    .also { instances[databaseName] = it }
+            }
     }
 }

@@ -53,6 +53,9 @@ data class BeeKeepWorkspaceJoinResult(
 )
 
 @Serializable
+data class WorkspacePersonalCopyResult(val copied_count: Int)
+
+@Serializable
 data class WorkspaceNameParams(val workspace_name: String)
 
 @Serializable
