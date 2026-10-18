@@ -11,7 +11,7 @@ create table if not exists public.beekeep_workspace_documents (
     updated_at bigint not null,
     deleted boolean not null default false,
     device_id text not null default 'android',
-    updated_by uuid not null references auth.users(id) on delete cascade,
+    updated_by uuid references auth.users(id) on delete set null,
     primary key (workspace_id, entity_type, entity_id)
 );
 
