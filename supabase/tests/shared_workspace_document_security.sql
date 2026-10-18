@@ -1,6 +1,11 @@
 -- Stage 3A shared-record access control assertions.
 -- Requires the Stage 1/2 schema, invitation functions, and Stage 3A migration.
 
+-- Non-member test account, created as the database owner before switching to authenticated.
+insert into auth.users (id, email, raw_user_meta_data)
+values ('00000000-0000-0000-0000-000000000003', 'non-member@example.test', '{}'::jsonb)
+on conflict (id) do nothing;
+
 create temporary table stage3_workspace_document_context (
     key text primary key,
     value text
@@ -57,6 +62,54 @@ set payload = '{"id":7001,"number":"Edited by team member"}',
     updated_by = '00000000-0000-0000-0000-000000000002'
 where workspace_id = (select value::uuid from stage3_workspace_document_context where key = 'workspace_id')
   and entity_type = 'hive' and entity_id = 7001;
+
+-- Workspace owner changes the invited user's role to viewer.
+select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-000000000001', false);
+select public.beekeep_update_workspace_member_role(
+    (select value::uuid from stage3_workspace_document_context where key = 'workspace_id'),
+    '00000000-0000-0000-0000-000000000002',
+    'viewer'
+);
+
+-- Viewers can read but cannot insert or update shared records.
+select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-000000000002', false);
+do $viewer_assertions$
+declare visible_count integer; affected integer; denied boolean := false;
+begin
+    select count(*) into visible_count from public.beekeep_workspace_documents
+    where workspace_id = (select value::uuid from stage3_workspace_document_context where key = 'workspace_id')
+      and entity_type = 'hive' and entity_id = 7001;
+    if visible_count <> 1 then
+        raise exception 'Viewer could not read shared record';
+    end if;
+
+    update public.beekeep_workspace_documents
+    set payload = '{"id":7001,"number":"Viewer must not edit"}',
+        updated_at = 3000,
+        updated_by = '00000000-0000-0000-0000-000000000002'
+    where workspace_id = (select value::uuid from stage3_workspace_document_context where key = 'workspace_id')
+      and entity_type = 'hive' and entity_id = 7001;
+    get diagnostics affected = row_count;
+    if affected <> 0 then
+        raise exception 'Viewer unexpectedly updated a shared record';
+    end if;
+
+    begin
+        insert into public.beekeep_workspace_documents (
+            workspace_id, entity_type, entity_id, payload, updated_at, deleted, device_id, updated_by
+        ) values (
+            (select value::uuid from stage3_workspace_document_context where key = 'workspace_id'),
+            'hive', 7004, '{"id":7004}', 3000, false, 'viewer-device',
+            '00000000-0000-0000-0000-000000000002'
+        );
+    exception when insufficient_privilege then
+        denied := true;
+    end;
+    if not denied then
+        raise exception 'Viewer unexpectedly inserted a shared record';
+    end if;
+end;
+$viewer_assertions$;
 
 -- A non-member cannot read the workspace's records or insert a record.
 select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-000000000003', false);
