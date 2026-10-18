@@ -1,14 +1,18 @@
 package com.beekeep.app.cloud
 
 import android.content.Context
+import android.content.Intent
 import com.beekeep.app.BuildConfig
 import com.beekeep.app.data.LocalHiveRepository
 import io.github.jan.supabase.auth.Auth
 import io.github.jan.supabase.auth.auth
+import io.github.jan.supabase.auth.handleDeeplinks
 import io.github.jan.supabase.auth.providers.builtin.Email
 import io.github.jan.supabase.createSupabaseClient
 import io.github.jan.supabase.postgrest.Postgrest
 import io.github.jan.supabase.postgrest.from
+import io.github.jan.supabase.postgrest.postgrest
+import io.github.jan.supabase.postgrest.rpc
 import io.github.jan.supabase.realtime.Realtime
 import io.github.jan.supabase.realtime.realtime
 import io.github.jan.supabase.realtime.channel
@@ -59,7 +63,12 @@ class SupabaseGateway(
         supabaseUrl = BuildConfig.SUPABASE_URL,
         supabaseKey = BuildConfig.SUPABASE_PUBLISHABLE_KEY
     ) {
-        install(Auth) { autoLoadFromStorage = true; alwaysAutoRefresh = true }
+        install(Auth) {
+            scheme = BuildConfig.AUTH_REDIRECT_SCHEME
+            host = BuildConfig.AUTH_REDIRECT_HOST
+            autoLoadFromStorage = true
+            alwaysAutoRefresh = true
+        }
         install(Postgrest)
         install(Realtime)
         install(Storage)
@@ -289,6 +298,134 @@ class SupabaseGateway(
         } catch (t: Throwable) {
             _account.value = _account.value.copy(syncing = false, error = t.message ?: "Sync failed")
             CloudResult.Failure(t.message ?: "Sync failed")
+        }
+    }
+
+
+    /**
+     * Accepts Supabase verification links returning to this build's app-specific URI scheme.
+     * Called from MainActivity for both cold starts and singleTask onNewIntent callbacks.
+     */
+    fun handleAuthDeepLink(intent: Intent?) {
+        val supabase = client ?: return
+        val uri = intent?.data ?: return
+        if (uri.scheme != BuildConfig.AUTH_REDIRECT_SCHEME ||
+            uri.host != BuildConfig.AUTH_REDIRECT_HOST
+        ) return
+
+        try {
+            supabase.handleDeeplinks(intent)
+            scope.launch { refreshAccount() }
+        } catch (t: Throwable) {
+            _account.value = _account.value.copy(
+                error = t.message ?: "Could not complete email verification"
+            )
+        }
+    }
+
+
+    // Stage 2 workspace administration uses SECURITY DEFINER database functions so the
+    // mobile client never writes membership or invitation records directly.
+    suspend fun listWorkspaces(): WorkspaceOperationResult<List<BeeKeepWorkspace>> =
+        workspaceOperation {
+            client!!.postgrest.rpc("beekeep_list_workspaces").decodeList<BeeKeepWorkspace>()
+        }
+
+    suspend fun createWorkspace(name: String): WorkspaceOperationResult<BeeKeepWorkspace> =
+        workspaceOperation {
+            client!!.postgrest.rpc("beekeep_create_workspace", WorkspaceNameParams(name.trim()))
+                .decodeList<BeeKeepWorkspace>().firstOrNull()
+                ?: error("Workspace was not returned after creation")
+        }
+
+    suspend fun listWorkspaceMembers(workspaceId: String): WorkspaceOperationResult<List<BeeKeepWorkspaceMember>> =
+        workspaceOperation {
+            client!!.postgrest.rpc(
+                "beekeep_list_workspace_members",
+                WorkspaceIdParams(workspaceId)
+            ).decodeList<BeeKeepWorkspaceMember>()
+        }
+
+    suspend fun listWorkspaceInvitations(workspaceId: String): WorkspaceOperationResult<List<BeeKeepWorkspaceInvitation>> =
+        workspaceOperation {
+            client!!.postgrest.rpc(
+                "beekeep_list_workspace_invitations",
+                WorkspaceIdParams(workspaceId)
+            ).decodeList<BeeKeepWorkspaceInvitation>()
+        }
+
+    suspend fun createWorkspaceInvitation(
+        workspaceId: String,
+        email: String,
+        role: String
+    ): WorkspaceOperationResult<BeeKeepWorkspaceInvitationCreated> =
+        workspaceOperation {
+            client!!.postgrest.rpc(
+                "beekeep_create_workspace_invitation",
+                WorkspaceInviteParams(workspaceId, email.trim(), role)
+            ).decodeList<BeeKeepWorkspaceInvitationCreated>().firstOrNull()
+                ?: error("Invitation was not returned after creation")
+        }
+
+    suspend fun acceptWorkspaceInvitation(token: String): WorkspaceOperationResult<BeeKeepWorkspaceJoinResult> =
+        workspaceOperation {
+            client!!.postgrest.rpc(
+                "beekeep_accept_workspace_invitation",
+                WorkspaceInvitationTokenParams(token.trim())
+            ).decodeList<BeeKeepWorkspaceJoinResult>().firstOrNull()
+                ?: error("The invitation could not be accepted")
+        }
+
+    suspend fun cancelWorkspaceInvitation(invitationId: String): WorkspaceOperationResult<Unit> =
+        workspaceOperation {
+            client!!.postgrest.rpc(
+                "beekeep_cancel_workspace_invitation",
+                WorkspaceInvitationIdParams(invitationId)
+            )
+            Unit
+        }
+
+    suspend fun updateWorkspaceMemberRole(
+        workspaceId: String,
+        userId: String,
+        role: String
+    ): WorkspaceOperationResult<Unit> =
+        workspaceOperation {
+            client!!.postgrest.rpc(
+                "beekeep_update_workspace_member_role",
+                WorkspaceMemberRoleParams(workspaceId, userId, role)
+            )
+            Unit
+        }
+
+    suspend fun removeWorkspaceMember(
+        workspaceId: String,
+        userId: String
+    ): WorkspaceOperationResult<Unit> =
+        workspaceOperation {
+            client!!.postgrest.rpc(
+                "beekeep_remove_workspace_member",
+                WorkspaceRemoveMemberParams(workspaceId, userId)
+            )
+            Unit
+        }
+
+    private suspend fun <T> workspaceOperation(block: suspend () -> T): WorkspaceOperationResult<T> {
+        val supabase = client
+        if (!configured || supabase == null) {
+            return WorkspaceOperationResult(error = "BeeKeep Cloud is not configured.")
+        }
+        if (supabase.auth.currentSessionOrNull() == null) {
+            refreshAccount()
+            return WorkspaceOperationResult(error = "Sign in to manage workspaces.")
+        }
+        return try {
+            WorkspaceOperationResult(value = block())
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Throwable) {
+            WorkspaceOperationResult(error = error.message?.takeIf { it.isNotBlank() }
+                ?: "The workspace request failed. Please try again.")
         }
     }
 

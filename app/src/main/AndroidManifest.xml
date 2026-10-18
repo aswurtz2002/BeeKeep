@@ -19,6 +19,13 @@
                 <data android:mimeType="application/vnd.beekeep.tag" />
             </intent-filter>
             <!-- Preserve support for older hive-specific tags so BeeKeep can migrate them. -->
+            <!-- Supabase email confirmation callback; scheme is unique for each build variant. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="${authScheme}" android:host="${authHost}" />
+            </intent-filter>
             <intent-filter>
                 <action android:name="android.nfc.action.NDEF_DISCOVERED" />
                 <category android:name="android.intent.category.DEFAULT" />

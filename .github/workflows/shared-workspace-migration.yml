@@ -1,4 +1,9 @@
 name: BeeKeep shared-workspace migration test
+# Avoid a queue of obsolete runs after rapid branch updates.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 
 on:
   push:
@@ -41,6 +46,16 @@ jobs:
       - name: Prepare existing per-user cloud schema and sample data
         run: psql -v ON_ERROR_STOP=1 -f supabase/tests/shared_workspace_pre_migration.sql
       - name: Apply Stage 1 workspace migration
-        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261017_beekeep_shared_workspaces.sql
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261017224333_beekeep_shared_workspaces.sql
       - name: Verify backfill, sign-up trigger, row security, and write restrictions
         run: psql -v ON_ERROR_STOP=1 -f supabase/tests/shared_workspace_foundation.sql
+      - name: Apply Stage 2 workspace invitations and roles migration
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261018025012_beekeep_workspace_invitations.sql
+      - name: Apply workspace role guard hardening
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261018025136_beekeep_workspace_role_guard_fix.sql
+      - name: Apply invitation acceptance fix
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261018025508_beekeep_workspace_accept_invitation_fix.sql
+      - name: Configure invitation token search paths
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261018025716_beekeep_workspace_crypto_search_path_fix.sql
+      - name: Verify invitation acceptance and manager permissions
+        run: psql -v ON_ERROR_STOP=1 -f supabase/tests/workspace_invitation_security.sql

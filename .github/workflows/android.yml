@@ -1,4 +1,9 @@
 name: BeeKeep Android build
+# Avoid a queue of obsolete runs after rapid branch updates.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 
 on:
   push:
