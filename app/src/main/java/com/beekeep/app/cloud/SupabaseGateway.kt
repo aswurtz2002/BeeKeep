@@ -92,6 +92,8 @@ class SupabaseGateway(
             return
         }
         try {
+            // Wait until stored credentials have been restored before showing signed-out UI.
+            supabase.auth.awaitInitialization()
             val session = supabase.auth.currentSessionOrNull()
             _account.value = CloudAccountState(
                 configured = true,
@@ -433,6 +435,7 @@ class SupabaseGateway(
     private suspend fun authCall(block: suspend () -> Unit): CloudResult {
         if (!configured || client == null) return CloudResult.NotConfigured
         return try {
+            client?.auth?.awaitInitialization()
             block()
             refreshAccount()
             if (enableRealtime && _account.value.signedIn) startRealtime()
