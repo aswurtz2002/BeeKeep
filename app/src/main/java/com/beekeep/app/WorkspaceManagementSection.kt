@@ -89,6 +89,8 @@ fun WorkspaceManagementSection(cloud: SupabaseGateway, activity: ComponentActivi
             createdInvite = null
             return@LaunchedEffect
         }
+        activeWorkspaceId = activity.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
+            .getString("active_team_workspace_id", "").orEmpty()
         loading = true
         val result = cloud.listWorkspaces()
         if (result.isSuccess) {
