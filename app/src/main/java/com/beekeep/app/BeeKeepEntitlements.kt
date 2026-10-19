@@ -192,6 +192,13 @@ object BeeKeepEntitlements {
 
     fun apiaryLimitMessage(context: Context): String = apiaryLimitMessage(currentPlan(context))
 
+    /** Stable classifications let every plan's limit error reach the same upgrade flow. */
+    internal fun isHiveLimitError(message: String?): Boolean =
+        message?.contains("Hive limit reached", ignoreCase = true) == true
+
+    internal fun isApiaryLimitError(message: String?): Boolean =
+        message?.contains("Apiary limit reached", ignoreCase = true) == true
+
     /** Legacy accessor retained for callers that specifically need the Free-plan message. */
     fun freeLimitMessage(): String = hiveLimitMessage(BeeKeepPlan.FREE)
 

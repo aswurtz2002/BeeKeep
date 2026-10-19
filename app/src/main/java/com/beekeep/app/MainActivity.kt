@@ -2079,7 +2079,9 @@ fun BeeKeepApp(
                 )
             } else 0,
             addToExistingWorkspace = isAddingToExistingWorkspace,
-            hiveLimit = BeeKeepEntitlements.hiveLimit(context),
+            hiveLimit = BeeKeepEntitlements.hiveLimit(purchasePlan),
+            apiaryLimit = BeeKeepEntitlements.apiaryLimit(purchasePlan),
+            currentPlan = purchasePlan,
             onBack = {
                 if (isAddingToExistingWorkspace) {
                     addingApiariesWithHives = false

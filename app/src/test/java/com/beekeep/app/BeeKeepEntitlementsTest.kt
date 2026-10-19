@@ -73,6 +73,29 @@ class BeeKeepEntitlementsTest {
     }
 
     @Test
+    fun capErrorsAreRecognizedAcrossFreeProAndUltimatePlans() {
+        BeeKeepPlan.values().forEach { plan ->
+            assertTrue(
+                "Hive cap message should be recognized for ${plan.displayName}",
+                BeeKeepEntitlements.isHiveLimitError(BeeKeepEntitlements.hiveLimitMessage(plan))
+            )
+            if (BeeKeepEntitlements.apiaryLimit(plan) == Int.MAX_VALUE) {
+                assertFalse(
+                    "Unlimited Free apiaries should not report a cap error",
+                    BeeKeepEntitlements.isApiaryLimitError(BeeKeepEntitlements.apiaryLimitMessage(plan))
+                )
+            } else {
+                assertTrue(
+                    "Apiary cap message should be recognized for ${plan.displayName}",
+                    BeeKeepEntitlements.isApiaryLimitError(BeeKeepEntitlements.apiaryLimitMessage(plan))
+                )
+            }
+        }
+        assertFalse(BeeKeepEntitlements.isHiveLimitError("Could not create your setup."))
+        assertFalse(BeeKeepEntitlements.isApiaryLimitError("Could not create your setup."))
+    }
+
+    @Test
     fun eachPlanHasTheRequestedHiveAndApiaryCaps() {
         assertEquals(150, BeeKeepEntitlements.hiveLimit(BeeKeepPlan.FREE))
         assertEquals(1_000, BeeKeepEntitlements.hiveLimit(BeeKeepPlan.PRO))
