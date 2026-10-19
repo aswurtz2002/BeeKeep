@@ -172,7 +172,13 @@ internal fun AddHiveScreen(
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(BeeKeepEntitlements.hiveLimitMessage(currentPlan))
-                    Text("Your existing hive records remain safe. Choose a plan with a higher limit to keep adding hives.")
+                    Text(
+                        if (currentPlan == BeeKeepPlan.ULTIMATE || currentPlan == BeeKeepPlan.ULTIMATE_YEARLY) {
+                            "Your existing hive records remain safe. Contact BeeKeep support if you need a higher limit."
+                        } else {
+                            "Your existing hive records remain safe. Choose a plan with a higher limit to keep adding hives."
+                        }
+                    )
                 }
             },
             confirmButton = {
