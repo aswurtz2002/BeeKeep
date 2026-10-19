@@ -294,7 +294,7 @@ internal fun HomeScreen(
                                 )
                                 Text(
                                     text = currentPlan.displayName,
-                                    style = MaterialTheme.typography.titleMedium,
+                                    style = MaterialTheme.typography.labelMedium,
                                     color = BeeKeepAccent,
                                     fontWeight = FontWeight.SemiBold,
                                     maxLines = 1,
