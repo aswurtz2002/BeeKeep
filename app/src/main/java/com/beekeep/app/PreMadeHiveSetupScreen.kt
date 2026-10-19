@@ -57,7 +57,9 @@ internal fun PreMadeHiveSetupScreen(
     existingApiaryNames: List<String> = emptyList(),
     existingHiveCount: Int = 0,
     addToExistingWorkspace: Boolean = false,
-    hiveLimit: Int = BeeKeepEntitlements.FREE_HIVE_LIMIT,
+    hiveLimit: Int = BeeKeepEntitlements.hiveLimit(BeeKeepPlan.FREE),
+    apiaryLimit: Int = BeeKeepEntitlements.apiaryLimit(BeeKeepPlan.FREE),
+    currentPlan: BeeKeepPlan = BeeKeepPlan.FREE,
     onBack: () -> Unit,
     onUpgrade: () -> Unit = {},
     onComplete: (createdApiaries: Int, createdHives: Int) -> Unit
@@ -75,6 +77,12 @@ internal fun PreMadeHiveSetupScreen(
         mutableStateOf(if (addToExistingWorkspace) listOf("1") else listOf("1", "1"))
     }
     val maximumNewHives = (hiveLimit - if (addToExistingWorkspace) existingHiveCount else 0).coerceAtLeast(0)
+    val existingApiaryCount = if (addToExistingWorkspace) existingApiaryNames.size else 0
+    val maximumNewApiaries = (apiaryLimit - existingApiaryCount).coerceAtLeast(0)
+    val formattedHiveCount = String.format(Locale.CANADA, "%,d", existingHiveCount)
+    val formattedHiveLimit = if (hiveLimit == Int.MAX_VALUE) "unlimited" else String.format(Locale.CANADA, "%,d", hiveLimit)
+    val formattedApiaryCount = String.format(Locale.CANADA, "%,d", existingApiaryCount)
+    val formattedApiaryLimit = if (apiaryLimit == Int.MAX_VALUE) "unlimited" else String.format(Locale.CANADA, "%,d", apiaryLimit)
     var hiveCounts by rememberSaveable(addToExistingWorkspace) {
         mutableStateOf(if (addToExistingWorkspace) listOf(minOf(10, maximumNewHives).toString()) else listOf("10", "10"))
     }
@@ -82,13 +90,12 @@ internal fun PreMadeHiveSetupScreen(
     var isSaving by remember { mutableStateOf(false) }
     var errorMessage by rememberSaveable { mutableStateOf<String?>(null) }
     var hiveLimitPromptVisible by rememberSaveable { mutableStateOf(false) }
+    var apiaryLimitPromptVisible by rememberSaveable { mutableStateOf(false) }
 
     val totalHives = hiveCounts.sumOf { it.toIntOrNull() ?: 0 }
     val existingApiaryNamesNormalized = remember(existingApiaryNames) {
         existingApiaryNames.map { it.trim().lowercase(Locale.ROOT) }.toSet()
     }
-    val canAddApiary = true
-
     BackHandler { if (!isSaving) onBack() }
 
     fun updateName(index: Int, value: String) {
@@ -156,9 +163,14 @@ internal fun PreMadeHiveSetupScreen(
                 modifier = Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
-                if (hiveLimit != Int.MAX_VALUE) {
+                if (hiveLimit != Int.MAX_VALUE || apiaryLimit != Int.MAX_VALUE) {
                     Text(
-                        "Free plan: $existingHiveCount of 150 hives currently used. Apiaries are unlimited.",
+                        "${currentPlan.displayName}: $formattedHiveCount of $formattedHiveLimit hives currently used. " +
+                            if (apiaryLimit == Int.MAX_VALUE) {
+                                "Apiaries are unlimited."
+                            } else {
+                                "$formattedApiaryCount of $formattedApiaryLimit apiaries currently used."
+                            },
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -291,19 +303,32 @@ internal fun PreMadeHiveSetupScreen(
                 }
 
                 OutlinedButton(
-                    onClick = { addApiary() },
+                    onClick = {
+                        if (apiaryNames.size >= maximumNewApiaries) {
+                            errorMessage = null
+                            apiaryLimitPromptVisible = true
+                        } else {
+                            addApiary()
+                        }
+                    },
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(14.dp),
-                    enabled = !isSaving && canAddApiary
+                    enabled = !isSaving
                 ) {
                     Icon(Icons.Rounded.Add, contentDescription = null)
                     Text("Add another apiary", modifier = Modifier.padding(start = 8.dp))
                 }
                 errorMessage?.let { message ->
                     Text(message, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
-                    if (message.contains("Free plan", ignoreCase = true)) {
+                    if (BeeKeepEntitlements.isHiveLimitError(message) ||
+                        BeeKeepEntitlements.isApiaryLimitError(message)
+                    ) {
                         OutlinedButton(onClick = onUpgrade, modifier = Modifier.fillMaxWidth(), enabled = !isSaving) {
-                            Text("VIEW PRO & ULTIMATE")
+                            Text(if (currentPlan == BeeKeepPlan.ULTIMATE || currentPlan == BeeKeepPlan.ULTIMATE_YEARLY) {
+                                "VIEW PLAN DETAILS"
+                            } else {
+                                "VIEW UPGRADE PLANS"
+                            })
                         }
                     }
                 }
@@ -326,6 +351,10 @@ internal fun PreMadeHiveSetupScreen(
                             val starts = startNumbers.map { it.toIntOrNull() }
                             val counts = hiveCounts.map { if (it.isBlank()) 0 else it.toIntOrNull() ?: -1 }
                             errorMessage = when {
+                                apiaryNames.size > maximumNewApiaries -> {
+                                    apiaryLimitPromptVisible = true
+                                    null
+                                }
                                 totalHives > maximumNewHives && hiveLimit != Int.MAX_VALUE -> {
                                     // Use the same honey-themed upgrade prompt as individual hive creation.
                                     hiveLimitPromptVisible = true
@@ -357,13 +386,14 @@ internal fun PreMadeHiveSetupScreen(
                                     if (success) {
                                         hiveLimitPromptVisible = false
                                         onComplete(cleanedNames.size, counts.sum())
-                                    } else if (hiveLimit != Int.MAX_VALUE &&
-                                        error?.contains("Free plan", ignoreCase = true) == true
-                                    ) {
-                                        // The view-model remains the source of truth if the count changed
-                                        // between validation and the attempted batch creation.
+                                    } else if (BeeKeepEntitlements.isHiveLimitError(error)) {
+                                        // The repository is the source of truth if another action
+                                        // changed the count between UI validation and this transaction.
                                         errorMessage = null
                                         hiveLimitPromptVisible = true
+                                    } else if (BeeKeepEntitlements.isApiaryLimitError(error)) {
+                                        errorMessage = null
+                                        apiaryLimitPromptVisible = true
                                     } else {
                                         errorMessage = error ?: "Could not create your setup. Please try again."
                                     }
@@ -399,15 +429,10 @@ internal fun PreMadeHiveSetupScreen(
                 },
                 text = {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("This setup requests $totalHives starter hives.")
-                        Text(
-                            "You can add $maximumNewHives more hives on your current plan. You currently have $existingHiveCount.",
-                        )
-                        Text(
-                            "Upgrade to Pro or Ultimate to continue with this setup. Apiaries remain unlimited on every plan.",
-                            color = androidx.compose.ui.graphics.Color(0xFF92400E),
-                            fontWeight = FontWeight.SemiBold
-                        )
+                        Text("This setup requests ${String.format(Locale.CANADA, "%,d", totalHives)} starter hives.")
+                        Text("You currently have $formattedHiveCount hives counted against ${currentPlan.displayName}; your plan allows $formattedHiveLimit.")
+                        Text(BeeKeepEntitlements.hiveLimitMessage(currentPlan))
+                        Text("Your existing hive records remain safe.")
                     }
                 },
                 confirmButton = {
@@ -418,11 +443,61 @@ internal fun PreMadeHiveSetupScreen(
                         },
                         shape = RoundedCornerShape(14.dp)
                     ) {
-                        Text("VIEW UPGRADE PLANS", fontWeight = FontWeight.ExtraBold)
+                        Text(
+                            if (currentPlan == BeeKeepPlan.ULTIMATE || currentPlan == BeeKeepPlan.ULTIMATE_YEARLY) {
+                                "VIEW PLAN DETAILS"
+                            } else {
+                                "VIEW UPGRADE PLANS"
+                            },
+                            fontWeight = FontWeight.ExtraBold
+                        )
                     }
                 },
                 dismissButton = {
                     TextButton(onClick = { hiveLimitPromptVisible = false }) {
+                        Text("NOT NOW", color = androidx.compose.ui.graphics.Color(0xFF78350F))
+                    }
+                }
+            )
+        }
+        if (apiaryLimitPromptVisible) {
+            AlertDialog(
+                onDismissRequest = { apiaryLimitPromptVisible = false },
+                shape = RoundedCornerShape(26.dp),
+                containerColor = androidx.compose.ui.graphics.Color(0xFFFFFBEB),
+                titleContentColor = androidx.compose.ui.graphics.Color(0xFF78350F),
+                textContentColor = androidx.compose.ui.graphics.Color(0xFF654321),
+                title = {
+                    Text("Apiary Limit Reached", fontWeight = FontWeight.ExtraBold)
+                },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("This setup requests ${apiaryNames.size} new apiaries.")
+                        Text("You currently have $formattedApiaryCount apiaries; your plan allows $formattedApiaryLimit.")
+                        Text(BeeKeepEntitlements.apiaryLimitMessage(currentPlan))
+                        Text("Your existing apiaries and hive records remain safe.")
+                    }
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            apiaryLimitPromptVisible = false
+                            onUpgrade()
+                        },
+                        shape = RoundedCornerShape(14.dp)
+                    ) {
+                        Text(
+                            if (currentPlan == BeeKeepPlan.ULTIMATE || currentPlan == BeeKeepPlan.ULTIMATE_YEARLY) {
+                                "VIEW PLAN DETAILS"
+                            } else {
+                                "VIEW UPGRADE PLANS"
+                            },
+                            fontWeight = FontWeight.ExtraBold
+                        )
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { apiaryLimitPromptVisible = false }) {
                         Text("NOT NOW", color = androidx.compose.ui.graphics.Color(0xFF78350F))
                     }
                 }
