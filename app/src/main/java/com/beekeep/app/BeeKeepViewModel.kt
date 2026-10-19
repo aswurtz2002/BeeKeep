@@ -164,6 +164,11 @@ class BeeKeepViewModel(
             onResult(false, "Each apiary needs a unique name.")
             return
         }
+        val apiaryLimit = BeeKeepEntitlements.apiaryLimit(appContext)
+        if (apiaryLimit != Int.MAX_VALUE && _apiaries.value.size + cleanApiaryNames.size > apiaryLimit) {
+            onResult(false, BeeKeepEntitlements.apiaryLimitMessage(appContext))
+            return
+        }
         if (startingHiveNumbers.any { it !in 1..999_999 }) {
             onResult(false, "Starting numbers must be between 1 and 999,999.")
             return
@@ -180,7 +185,7 @@ class BeeKeepViewModel(
         val requestedHiveCount = hiveCounts.sum()
         val limit = BeeKeepEntitlements.hiveLimit(appContext)
         if (requestedHiveCount > 0 && currentHiveCount + requestedHiveCount > limit) {
-            onResult(false, BeeKeepEntitlements.freeLimitMessage())
+            onResult(false, BeeKeepEntitlements.hiveLimitMessage(appContext))
             return
         }
         if (allowExistingWorkspace) {
@@ -236,10 +241,9 @@ class BeeKeepViewModel(
                 (_hives.value + _deadHives.value).map { it.id },
                 lockedIds
             )
-            if (planAtCreation == BeeKeepPlan.FREE &&
-                currentHiveCount >= BeeKeepEntitlements.FREE_HIVE_LIMIT
-            ) {
-                onResult(false, BeeKeepEntitlements.freeLimitMessage())
+            val hiveLimit = BeeKeepEntitlements.hiveLimit(planAtCreation)
+            if (currentHiveCount >= hiveLimit) {
+                onResult(false, BeeKeepEntitlements.hiveLimitMessage(planAtCreation))
                 return@launch
             }
             val duplicate = repo.findHiveByNumberAndApiary(clean, cleanApiary)
@@ -441,6 +445,11 @@ class BeeKeepViewModel(
     fun saveApiary(name: String, notes: String, lat: Double?, lon: Double?, forage: String, water: String, onResult: (Boolean, String?) -> Unit = { _, _ -> }) {
         val clean = name.trim()
         if (clean.isBlank()) { onResult(false, "Enter an apiary name."); return }
+        val apiaryLimit = BeeKeepEntitlements.apiaryLimit(appContext)
+        if (apiaryLimit != Int.MAX_VALUE && _apiaries.value.size >= apiaryLimit) {
+            onResult(false, BeeKeepEntitlements.apiaryLimitMessage(appContext))
+            return
+        }
         viewModelScope.launch {
             runCatching { repo.saveApiary(Apiary(IdGenerator.nextLong(), clean, notes, lat, lon, forage, water)) }
                 .onSuccess { onResult(true, null) }
