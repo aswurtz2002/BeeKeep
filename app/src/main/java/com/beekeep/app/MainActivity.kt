@@ -1743,7 +1743,7 @@ fun BeeKeepApp(
                 if (requestHiveAccessById(hiveId)) {
                     vm.updateHiveLocation(hiveId, latitude, longitude, onResult)
                 } else {
-                    onResult("This hive is locked. Renew Pro or purchase Ultimate to edit it.")
+                    onResult("This hive is locked because its paid subscription has ended. Renew a paid plan to edit it.")
                 }
             },
             onRecordBeeCountChange = { hiveId, previousFrames, newFrames ->
@@ -1997,14 +1997,14 @@ fun BeeKeepApp(
             onHarvest = { if (requestHiveAccess(hiveForDetail)) logType = HiveLogType.HARVEST },
             onTag = { uid, onResult ->
                 if (requestHiveAccess(hiveForDetail)) vm.assignTag(uid, onResult)
-                else onResult(false, "This hive is locked. Renew Pro or purchase Ultimate to manage it.")
+                else onResult(false, "This hive is locked because its paid subscription has ended. Renew a paid plan to manage it.")
             },
             isTagAssignedElsewhere = { targetHiveId, uid ->
                 nfc.isTagAssignedElsewhere(targetHiveId, uid)
             },
             onClearTag = { hiveId, onResult ->
                 if (requestHiveAccessById(hiveId)) vm.clearTagForHive(hiveId, onResult)
-                else onResult(false, "This hive is locked. Renew Pro or purchase Ultimate to manage its NFC tag.")
+                else onResult(false, "This hive is locked because its paid subscription has ended. Renew a paid plan to manage its NFC tag.")
             },
             confirmBeforeTagRemoval = autoVoicePrefs.getBoolean("confirm_tag_removal", true),
             tagAssignmentSuccessUid = if (lastHiveTagSuccessHiveId == hiveForDetail.id) lastHiveTagSuccessUid else null,
@@ -2355,14 +2355,14 @@ fun BeeKeepApp(
                     if (requestHiveAccessById(hiveId)) {
                         vm.assignTagToHive(hiveId, uid, reassign, onResult)
                     } else {
-                        onResult(false, "This hive is locked. Renew Pro or purchase Ultimate to manage its NFC tag.")
+                        onResult(false, "This hive is locked because its paid subscription has ended. Renew a paid plan to manage its NFC tag.")
                     }
                 },
                 onClearTag = { hiveId, onResult ->
                     if (requestHiveAccessById(hiveId)) {
                         vm.clearTagForHive(hiveId, onResult)
                     } else {
-                        onResult(false, "This hive is locked. Renew Pro or purchase Ultimate to manage its NFC tag.")
+                        onResult(false, "This hive is locked because its paid subscription has ended. Renew a paid plan to manage its NFC tag.")
                     }
                 },
                 onUnassignedTag = { uid ->
@@ -2735,7 +2735,7 @@ private fun TagManagementScreen(
             launchWriteHiveId = null
             launchWriteUid = null
             launchWriteStatusHandler = null
-            status = "This hive is locked because BeeKeep Pro is no longer active. Renew Pro or purchase Ultimate to manage its NFC tag."
+            status = "This hive is locked because its paid subscription has ended. Renew a paid plan to manage its NFC tag."
         }
     }
 
