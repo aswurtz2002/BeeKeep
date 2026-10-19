@@ -3151,8 +3151,13 @@ private fun MoreScreen(
                         color = Color(0xFF92400E)
                     )
                     Text(
-                        if (currentPlan == BeeKeepPlan.FREE) "Unlock unlimited hives • from $2.99 CAD/month"
-                        else "Unlimited hive creation is enabled on this device",
+                        if (currentPlan == BeeKeepPlan.FREE) {
+                            "Plans from $5.99 CAD/month • up to 10,000 hives"
+                        } else {
+                            val hives = String.format(java.util.Locale.CANADA, "%,d", BeeKeepEntitlements.hiveLimit(currentPlan))
+                            val apiaries = String.format(java.util.Locale.CANADA, "%,d", BeeKeepEntitlements.apiaryLimit(currentPlan))
+                            "Up to $hives hives • $apiaries apiaries"
+                        },
                         color = Color(0xFF78350F),
                         style = MaterialTheme.typography.bodySmall
                     )
