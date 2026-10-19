@@ -495,6 +495,7 @@ fun BeeKeepApp(
     var hiveLimitPromptVisible by rememberSaveable { mutableStateOf(false) }
     var logType by rememberSaveable { mutableStateOf<HiveLogType?>(null) }
     var addApiary by rememberSaveable { mutableStateOf(false) }
+    var apiaryLimitPromptVisible by rememberSaveable { mutableStateOf(false) }
     var addApiaryOptionsVisible by rememberSaveable { mutableStateOf(false) }
     var addingApiariesWithHives by rememberSaveable { mutableStateOf(false) }
     var editingApiary by remember { mutableStateOf<Apiary?>(null) }
@@ -619,7 +620,7 @@ fun BeeKeepApp(
         }
     }
 
-    // Show the free-plan limit prompt when the user enters the Add Hive flow at the cap.
+    // Show a themed prompt when the active plan's hive cap is reached.
     androidx.compose.runtime.LaunchedEffect(
         addHive,
         hives.size,
@@ -631,11 +632,7 @@ fun BeeKeepApp(
             (hives + deadHives).map { it.id },
             lockedHiveIds
         )
-        if (
-            addHive &&
-            purchasePlan == BeeKeepPlan.FREE &&
-            availablePlanHiveCount >= BeeKeepEntitlements.FREE_HIVE_LIMIT
-        ) {
+        if (addHive && availablePlanHiveCount >= BeeKeepEntitlements.hiveLimit(purchasePlan)) {
             hiveLimitPromptVisible = true
         }
     }
@@ -1415,13 +1412,13 @@ fun BeeKeepApp(
             title = { Text("Hive Locked", fontWeight = FontWeight.ExtraBold) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("${lockedHivePromptName ?: "This hive"} was added while BeeKeep Pro was active.")
-                    Text("Pro access is no longer active. Renew Pro or purchase Ultimate to unlock this hive and its records.")
+                    Text("${lockedHivePromptName ?: "This hive"} was added while a BeeKeep subscription was active.")
+                    Text("The subscription is no longer active. Renew a paid plan to unlock this hive and its records.")
                 }
             },
             confirmButton = {
                 Button(onClick = { openLockedHiveUpgrade() }, shape = RoundedCornerShape(14.dp)) {
-                    Text("RENEW PRO / UPGRADE", fontWeight = FontWeight.ExtraBold)
+                    Text("RENEW / VIEW PLANS", fontWeight = FontWeight.ExtraBold)
                 }
             },
             dismissButton = {
@@ -1450,16 +1447,14 @@ fun BeeKeepApp(
                     if (plan != BeeKeepPlan.FREE) {
                         screen = purchaseSuccessScreen
                         scope.launch {
+                            val term = if (
+                                plan == BeeKeepPlan.PRO_YEARLY || plan == BeeKeepPlan.ULTIMATE_YEARLY
+                            ) "year" else "month"
                             snackbarHostState.showSnackbar(
-                                if (plan.isProSubscription) {
-                                    if (previousPlan == BeeKeepPlan.FREE && hadLockedHives) {
-                                        val term = if (plan == BeeKeepPlan.PRO_YEARLY) "year" else "month"
-                                        "BeeKeep Pro renewed. Your previously locked hives are unlocked for another $term."
-                                    } else {
-                                        "Debug test plan activated: BeeKeep ${plan.displayName}."
-                                    }
+                                if (previousPlan == BeeKeepPlan.FREE && hadLockedHives) {
+                                    "BeeKeep ${plan.displayName} activated. Your previously locked hives are unlocked for another $term."
                                 } else {
-                                    "Debug test plan activated: BeeKeep Ultimate."
+                                    "Debug test plan activated: BeeKeep ${plan.displayName}."
                                 }
                             )
                         }
@@ -1467,10 +1462,9 @@ fun BeeKeepApp(
                         scope.launch {
                             snackbarHostState.showSnackbar(
                                 if (previousPlan.isProSubscription) {
-                                    val term = if (previousPlan == BeeKeepPlan.PRO_YEARLY) "yearly" else "monthly"
-                                    "BeeKeep Pro $term plan ended. Pro-created hives are locked until Pro is renewed or Ultimate is activated."
+                                    "BeeKeep ${previousPlan.displayName} subscription ended. Subscription-created hives are locked until a paid plan is activated again."
                                 } else {
-                                    "Debug test plan reset to Free. Pro-created hives stay locked until Pro is renewed or Ultimate is activated."
+                                    "Debug test plan reset to Free. Hives created while a paid subscription was active stay locked until a paid plan is activated again."
                                 }
                             )
                         }
@@ -1495,6 +1489,7 @@ fun BeeKeepApp(
         AddHiveScreen(
             apiaries = apiaries,
             initialApiary = selectedApiaryName,
+            currentPlan = purchasePlan,
             defaultQueenStatus = autoVoicePrefs.getString("default_queen_status", "Laying")?.takeIf { it in setOf("Laying", "Queenless", "Virgin") } ?: "Laying",
             defaultStrength = autoVoicePrefs.getInt("default_starting_strength", 3).coerceIn(1, 5),
             hiveLimitPromptVisible = hiveLimitPromptVisible,
@@ -1514,8 +1509,8 @@ fun BeeKeepApp(
             }
         ) { number, apiary, queen, strength ->
             vm.createHive(number, apiary, queen, strength, tagUid = pendingTagUid) { success, error ->
-                if (!success && error?.contains("Free plan", ignoreCase = true) == true) {
-                    // A limit rejection must open the prompt, not disappear into a snackbar.
+                if (!success && error?.contains("Hive limit reached", ignoreCase = true) == true) {
+                    // A cap rejection must open the themed prompt, not disappear into a snackbar.
                     hiveLimitPromptVisible = true
                 } else {
                     scope.launch { snackbarHostState.showSnackbar(error ?: "Hive ${number.trim()} created") }
@@ -1560,12 +1555,37 @@ fun BeeKeepApp(
         return
     }
     if (addApiary) {
-        AddApiaryScreen(locationController, null, { addApiary = false }) { _, name, notes, lat, lon, forage, water ->
-            vm.saveApiary(name, notes, lat, lon, forage, water) { success, error ->
-                scope.launch { snackbarHostState.showSnackbar(error ?: "Apiary saved") }
-                if (success) addApiary = false
+        AddApiaryScreen(
+            locationController = locationController,
+            existingApiary = null,
+            onBack = {
+                addApiary = false
+                apiaryLimitPromptVisible = false
+            },
+            apiaryLimitPromptVisible = apiaryLimitPromptVisible,
+            currentPlan = purchasePlan,
+            onDismissApiaryLimitPrompt = { apiaryLimitPromptVisible = false },
+            onOpenUpgrade = {
+                apiaryLimitPromptVisible = false
+                addApiary = false
+                purchaseBackScreen = screen
+                purchaseSuccessScreen = Screen.HOME
+                screen = Screen.PURCHASES
+            },
+            onSave = { _, name, notes, lat, lon, forage, water ->
+                vm.saveApiary(name, notes, lat, lon, forage, water) { success, error ->
+                    if (!success && error?.contains("Apiary limit reached", ignoreCase = true) == true) {
+                        apiaryLimitPromptVisible = true
+                    } else {
+                        scope.launch { snackbarHostState.showSnackbar(error ?: "Apiary saved") }
+                    }
+                    if (success) {
+                        addApiary = false
+                        apiaryLimitPromptVisible = false
+                    }
+                }
             }
-        }
+        )
         return
     }
     if (fastAssignmentScreenActive) {
@@ -1723,7 +1743,7 @@ fun BeeKeepApp(
                 if (requestHiveAccessById(hiveId)) {
                     vm.updateHiveLocation(hiveId, latitude, longitude, onResult)
                 } else {
-                    onResult("This hive is locked. Renew Pro or purchase Ultimate to edit it.")
+                    onResult("This hive is locked because its paid subscription has ended. Renew a paid plan to edit it.")
                 }
             },
             onRecordBeeCountChange = { hiveId, previousFrames, newFrames ->
@@ -1977,14 +1997,14 @@ fun BeeKeepApp(
             onHarvest = { if (requestHiveAccess(hiveForDetail)) logType = HiveLogType.HARVEST },
             onTag = { uid, onResult ->
                 if (requestHiveAccess(hiveForDetail)) vm.assignTag(uid, onResult)
-                else onResult(false, "This hive is locked. Renew Pro or purchase Ultimate to manage it.")
+                else onResult(false, "This hive is locked because its paid subscription has ended. Renew a paid plan to manage it.")
             },
             isTagAssignedElsewhere = { targetHiveId, uid ->
                 nfc.isTagAssignedElsewhere(targetHiveId, uid)
             },
             onClearTag = { hiveId, onResult ->
                 if (requestHiveAccessById(hiveId)) vm.clearTagForHive(hiveId, onResult)
-                else onResult(false, "This hive is locked. Renew Pro or purchase Ultimate to manage its NFC tag.")
+                else onResult(false, "This hive is locked because its paid subscription has ended. Renew a paid plan to manage its NFC tag.")
             },
             confirmBeforeTagRemoval = autoVoicePrefs.getBoolean("confirm_tag_removal", true),
             tagAssignmentSuccessUid = if (lastHiveTagSuccessHiveId == hiveForDetail.id) lastHiveTagSuccessUid else null,
@@ -2335,14 +2355,14 @@ fun BeeKeepApp(
                     if (requestHiveAccessById(hiveId)) {
                         vm.assignTagToHive(hiveId, uid, reassign, onResult)
                     } else {
-                        onResult(false, "This hive is locked. Renew Pro or purchase Ultimate to manage its NFC tag.")
+                        onResult(false, "This hive is locked because its paid subscription has ended. Renew a paid plan to manage its NFC tag.")
                     }
                 },
                 onClearTag = { hiveId, onResult ->
                     if (requestHiveAccessById(hiveId)) {
                         vm.clearTagForHive(hiveId, onResult)
                     } else {
-                        onResult(false, "This hive is locked. Renew Pro or purchase Ultimate to manage its NFC tag.")
+                        onResult(false, "This hive is locked because its paid subscription has ended. Renew a paid plan to manage its NFC tag.")
                     }
                 },
                 onUnassignedTag = { uid ->
@@ -2715,7 +2735,7 @@ private fun TagManagementScreen(
             launchWriteHiveId = null
             launchWriteUid = null
             launchWriteStatusHandler = null
-            status = "This hive is locked because BeeKeep Pro is no longer active. Renew Pro or purchase Ultimate to manage its NFC tag."
+            status = "This hive is locked because its paid subscription has ended. Renew a paid plan to manage its NFC tag."
         }
     }
 
@@ -3131,8 +3151,13 @@ private fun MoreScreen(
                         color = Color(0xFF92400E)
                     )
                     Text(
-                        if (currentPlan == BeeKeepPlan.FREE) "Unlock unlimited hives • from $2.99 CAD/month"
-                        else "Unlimited hive creation is enabled on this device",
+                        if (currentPlan == BeeKeepPlan.FREE) {
+                            "Plans from $5.99 CAD/month • up to 10,000 hives"
+                        } else {
+                            val hives = String.format(java.util.Locale.CANADA, "%,d", BeeKeepEntitlements.hiveLimit(currentPlan))
+                            val apiaries = String.format(java.util.Locale.CANADA, "%,d", BeeKeepEntitlements.apiaryLimit(currentPlan))
+                            "Up to $hives hives • $apiaries apiaries"
+                        },
                         color = Color(0xFF78350F),
                         style = MaterialTheme.typography.bodySmall
                     )

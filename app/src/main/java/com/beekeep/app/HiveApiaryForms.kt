@@ -67,6 +67,7 @@ internal fun AddHiveScreen(
     defaultQueenStatus: String = "Laying",
     defaultStrength: Int = 3,
     hiveLimitPromptVisible: Boolean = false,
+    currentPlan: BeeKeepPlan = BeeKeepPlan.FREE,
     onDismissHiveLimitPrompt: () -> Unit = {},
     onOpenUpgrade: () -> Unit = {},
     onBack: () -> Unit,
@@ -170,12 +171,13 @@ internal fun AddHiveScreen(
             },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("You’ve reached the Free plan limit of 150 hives.")
-                    Text("Your existing hive records are safe. Upgrade to Pro or Ultimate to keep adding hives.")
+                    Text(BeeKeepEntitlements.hiveLimitMessage(currentPlan))
                     Text(
-                        "Apiaries remain unlimited on every plan.",
-                        color = androidx.compose.ui.graphics.Color(0xFF92400E),
-                        fontWeight = FontWeight.SemiBold
+                        if (currentPlan == BeeKeepPlan.ULTIMATE || currentPlan == BeeKeepPlan.ULTIMATE_YEARLY) {
+                            "Your existing hive records remain safe. Contact BeeKeep support if you need a higher limit."
+                        } else {
+                            "Your existing hive records remain safe. Choose a plan with a higher limit to keep adding hives."
+                        }
                     )
                 }
             },
@@ -184,7 +186,7 @@ internal fun AddHiveScreen(
                     onClick = onOpenUpgrade,
                     shape = RoundedCornerShape(14.dp)
                 ) {
-                    Text("VIEW UPGRADE PLANS", fontWeight = FontWeight.ExtraBold)
+                    Text(if (currentPlan == BeeKeepPlan.ULTIMATE || currentPlan == BeeKeepPlan.ULTIMATE_YEARLY) "VIEW PLAN DETAILS" else "VIEW UPGRADE PLANS", fontWeight = FontWeight.ExtraBold)
                 }
             },
             dismissButton = {
@@ -202,6 +204,10 @@ internal fun AddApiaryScreen(
     existingApiary: Apiary?,
     onBack: () -> Unit,
     onDelete: ((Long, (Boolean, String?) -> Unit) -> Unit)? = null,
+    apiaryLimitPromptVisible: Boolean = false,
+    currentPlan: BeeKeepPlan = BeeKeepPlan.FREE,
+    onDismissApiaryLimitPrompt: () -> Unit = {},
+    onOpenUpgrade: () -> Unit = {},
     onSave: (Long?, String, String, Double?, Double?, String, String) -> Unit
 ) {
     var name by rememberSaveable(existingApiary?.id) { mutableStateOf(existingApiary?.name.orEmpty()) }
@@ -350,4 +356,34 @@ internal fun AddApiaryScreen(
             }
         )
     }
+    if (existingApiary == null && apiaryLimitPromptVisible) {
+        AlertDialog(
+            onDismissRequest = onDismissApiaryLimitPrompt,
+            shape = RoundedCornerShape(26.dp),
+            containerColor = androidx.compose.ui.graphics.Color(0xFFFFFBEB),
+            titleContentColor = androidx.compose.ui.graphics.Color(0xFF78350F),
+            textContentColor = androidx.compose.ui.graphics.Color(0xFF654321),
+            title = { Text("Apiary Limit Reached", fontWeight = FontWeight.ExtraBold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(BeeKeepEntitlements.apiaryLimitMessage(currentPlan))
+                    Text("Your existing apiaries and hive records remain safe.")
+                }
+            },
+            confirmButton = {
+                Button(onClick = onOpenUpgrade, shape = RoundedCornerShape(14.dp)) {
+                    Text(
+                        if (currentPlan == BeeKeepPlan.ULTIMATE || currentPlan == BeeKeepPlan.ULTIMATE_YEARLY) "VIEW PLAN DETAILS" else "VIEW UPGRADE PLANS",
+                        fontWeight = FontWeight.ExtraBold
+                    )
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = onDismissApiaryLimitPrompt) {
+                    Text("NOT NOW", color = androidx.compose.ui.graphics.Color(0xFF78350F))
+                }
+            }
+        )
+    }
+
 }

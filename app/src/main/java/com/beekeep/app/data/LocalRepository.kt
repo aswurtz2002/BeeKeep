@@ -228,6 +228,11 @@ class LocalHiveRepository(context: Context) {
         db.withTransaction {
             val existingApiaries = db.apiaries().allForBackup()
             val existingHives = db.hives().allForBackup()
+            val apiaryLimit = BeeKeepEntitlements.apiaryLimit(appContext)
+            val currentApiaryCount = existingApiaries.count { !it.deleted }
+            require(currentApiaryCount + cleanApiaryNames.size <= apiaryLimit) {
+                BeeKeepEntitlements.apiaryLimitMessage(appContext)
+            }
             if (!allowExistingWorkspace) {
                 require(existingApiaries.isEmpty() && existingHives.isEmpty()) {
                     "Starter setup is only available when the workspace is empty. Existing records were left unchanged."
@@ -269,7 +274,7 @@ class LocalHiveRepository(context: Context) {
             )
             val hiveLimit = BeeKeepEntitlements.hiveLimit(appContext)
             require(requestedHiveCount == 0 || currentHiveCount + requestedHiveCount <= hiveLimit) {
-                BeeKeepEntitlements.freeLimitMessage()
+                BeeKeepEntitlements.hiveLimitMessage(appContext)
             }
 
             val now = System.currentTimeMillis()
@@ -310,14 +315,15 @@ class LocalHiveRepository(context: Context) {
         requireValidCoordinates(h.latitude, h.longitude, "Hive")
         db.withTransaction {
         val existing = db.hives().get(h.id)
-        if (existing == null && !BeeKeepEntitlements.hasUnlimitedHives(appContext)) {
+        if (existing == null) {
             val lockedIds = BeeKeepEntitlements.lockedHiveIds(appContext)
             val currentHiveCount = BeeKeepEntitlements.countHivesSubjectToFreeLimit(
                 db.hives().allForBackup().filter { !it.deleted }.map { it.id },
                 lockedIds
             )
-            require(currentHiveCount < BeeKeepEntitlements.FREE_HIVE_LIMIT) {
-                BeeKeepEntitlements.freeLimitMessage()
+            val hiveLimit = BeeKeepEntitlements.hiveLimit(appContext)
+            require(currentHiveCount < hiveLimit) {
+                BeeKeepEntitlements.hiveLimitMessage(appContext)
             }
         }
         val cleanApiary = h.apiary.trim()
@@ -782,6 +788,13 @@ class LocalHiveRepository(context: Context) {
                 throw IllegalArgumentException("Apiary $cleanName already exists.")
             }
             val previous = db.apiaries().get(a.id)
+            if (previous == null) {
+                val activeApiaryCount = db.apiaries().allForBackup().count { !it.deleted }
+                val apiaryLimit = BeeKeepEntitlements.apiaryLimit(appContext)
+                require(activeApiaryCount < apiaryLimit) {
+                    BeeKeepEntitlements.apiaryLimitMessage(appContext)
+                }
+            }
             val now = System.currentTimeMillis()
             val entity = ApiaryEntity(a.id, cleanName, a.notes.trim(), a.latitude, a.longitude, a.forageNotes.trim(), a.waterNotes.trim(), now, false)
             db.apiaries().upsert(entity)
