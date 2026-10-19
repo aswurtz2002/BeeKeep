@@ -280,8 +280,13 @@ internal fun HomeScreen(
                         verticalArrangement = Arrangement.spacedBy(5.dp)
                     ) {
                         if (currentPlan != BeeKeepPlan.FREE) {
+                            val tierLabel = when (currentPlan) {
+                                BeeKeepPlan.PRO, BeeKeepPlan.PRO_YEARLY -> "Pro"
+                                BeeKeepPlan.ULTIMATE, BeeKeepPlan.ULTIMATE_YEARLY -> "Ultimate"
+                                BeeKeepPlan.FREE -> ""
+                            }
                             Row(
-                                verticalAlignment = Alignment.Bottom,
+                                verticalAlignment = Alignment.Top,
                                 horizontalArrangement = Arrangement.spacedBy(5.dp)
                             ) {
                                 Text(
@@ -293,13 +298,13 @@ internal fun HomeScreen(
                                     softWrap = false
                                 )
                                 Text(
-                                    text = currentPlan.displayName,
+                                    text = tierLabel,
                                     style = MaterialTheme.typography.labelMedium,
                                     color = BeeKeepAccent,
                                     fontWeight = FontWeight.SemiBold,
                                     maxLines = 1,
                                     softWrap = false,
-                                    modifier = Modifier.padding(bottom = 5.dp)
+                                    modifier = Modifier.padding(top = 2.dp)
                                 )
                             }
                         } else {
