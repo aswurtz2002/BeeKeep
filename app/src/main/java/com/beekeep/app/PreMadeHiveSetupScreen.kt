@@ -373,7 +373,7 @@ internal fun PreMadeHiveSetupScreen(
                                 } -> "A hive range cannot end above 999,999."
                                 else -> null
                             }
-                            if (errorMessage == null && totalHives <= maximumNewHives) {
+                            if (errorMessage == null && totalHives <= maximumNewHives && apiaryNames.size <= maximumNewApiaries) {
                                 isSaving = true
                                 vm.createPreMadeSetup(
                                     hivePrefix = hivePrefix.trim(),
