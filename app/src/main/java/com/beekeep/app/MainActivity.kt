@@ -1820,7 +1820,10 @@ fun BeeKeepApp(
             return
         }
         when (currentLogType) {
-            HiveLogType.FEED -> FeedDialog({ logType = null }) { type, ratio, amount, unit, notes ->
+            HiveLogType.FEED -> FeedDialog(
+                onDismiss = { logType = null },
+                hiveName = hiveDisplayName(currentSelected.number)
+            ) { type, ratio, amount, unit, notes ->
                 if (requestHiveAccess(currentSelected)) {
                     vm.saveFeeding(type, ratio, amount, unit, notes) { success, error ->
                         if (success) logType = null
@@ -1830,7 +1833,10 @@ fun BeeKeepApp(
                     logType = null
                 }
             }
-            HiveLogType.TREAT -> TreatmentDialog({ logType = null }) { type, product, days, withdrawal, notes ->
+            HiveLogType.TREAT -> TreatmentDialog(
+                onDismiss = { logType = null },
+                hiveName = hiveDisplayName(currentSelected.number)
+            ) { type, product, days, withdrawal, notes ->
                 if (requestHiveAccess(currentSelected)) {
                     vm.saveTreatment(type, product, days, withdrawal, notes) { success, error ->
                         if (success) logType = null
@@ -1840,7 +1846,10 @@ fun BeeKeepApp(
                     logType = null
                 }
             }
-            HiveLogType.HARVEST -> HarvestDialog({ logType = null }) { supers, wet, dry, unit, wax, propolis, notes ->
+            HiveLogType.HARVEST -> HarvestDialog(
+                onDismiss = { logType = null },
+                hiveName = hiveDisplayName(currentSelected.number)
+            ) { supers, wet, dry, unit, wax, propolis, notes ->
                 if (requestHiveAccess(currentSelected)) {
                     vm.saveHarvest(supers, wet, dry, unit, wax, propolis, notes) { success, error ->
                         if (success) logType = null
