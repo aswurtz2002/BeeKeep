@@ -3,7 +3,9 @@
 
 insert into auth.users (id, email, raw_app_meta_data, raw_user_meta_data)
 values
-    ('00000000-0000-0000-0000-000000000011', 'ultimate-gate-free@example.test', '{}'::jsonb, '{}'::jsonb),
+    -- A user-editable metadata spoof must not grant authorization.
+    ('00000000-0000-0000-0000-000000000011', 'ultimate-gate-free@example.test', '{}'::jsonb,
+        '{"beekeep_plan":"ultimate_yearly","beekeep_subscription_expires_at":"2099-01-01T00:00:00Z"}'::jsonb),
     ('00000000-0000-0000-0000-000000000012', 'ultimate-gate-pro@example.test',
         '{"beekeep_plan":"pro","beekeep_subscription_expires_at":"2099-01-01T00:00:00Z"}'::jsonb, '{}'::jsonb),
     ('00000000-0000-0000-0000-000000000013', 'ultimate-gate-owner@example.test',
