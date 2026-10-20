@@ -382,10 +382,17 @@ internal fun FeedDialog(
                 }
                 val nextUnit = if (unit in nextUnits) unit
                 else if (selected in listOf("Fondant", "Pollen patty", "Dry sugar")) "lb" else "gal"
-                if (nextUnit != unit) amount = convertLogAmountUnits(amount, unit, nextUnit)
+                val previousUnit = unit
+                val previousAmount = amount
+                val nextAmount = if (nextUnit != previousUnit) {
+                    convertLogAmountUnits(previousAmount, previousUnit, nextUnit)
+                } else previousAmount
+                amount = nextAmount
                 unit = nextUnit
                 type = selected
-                error = ""
+                error = if (previousAmount.isNotBlank() && previousUnit != nextUnit && nextAmount.isBlank()) {
+                    "The feed type changed between volume and weight. Re-enter the amount in the new unit."
+                } else ""
                 ratioChoice = if (selected == "Syrup") ratioChoice.takeIf { it in listOf("1:1", "2:1", "1:2", "Custom") } ?: "1:1" else ""
             }
             if (type == "Other") {
@@ -430,10 +437,14 @@ internal fun FeedDialog(
                 singleLine = true
             )
             Text("Unit", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
-            LogChoiceChips(unitOptions, unit) {
-                amount = convertLogAmountUnits(amount, unit, it)
-                unit = it
-                error = ""
+            LogChoiceChips(unitOptions, unit) { nextUnit ->
+                val previousAmount = amount
+                val nextAmount = convertLogAmountUnits(previousAmount, unit, nextUnit)
+                amount = nextAmount
+                error = if (previousAmount.isNotBlank() && unit != nextUnit && nextAmount.isBlank()) {
+                    "The unit changed between volume and weight. Re-enter the amount."
+                } else ""
+                unit = nextUnit
             }
         }
 
