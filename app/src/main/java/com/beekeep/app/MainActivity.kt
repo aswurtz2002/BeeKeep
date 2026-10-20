@@ -1439,35 +1439,41 @@ fun BeeKeepApp(
             onBack = { screen = purchaseBackScreen },
             onChoosePlan = { plan ->
                 if (BuildConfig.DEBUG) {
-                    val previousPlan = BeeKeepEntitlements.currentPlan(context)
-                    val hadLockedHives = lockedHiveIds.isNotEmpty()
-                    BeeKeepEntitlements.setDebugPlan(context, plan)
-                    purchasePlanName = plan.name
-                    lockedHiveIds = BeeKeepEntitlements.lockedHiveIds(context)
-                    if (plan != BeeKeepPlan.FREE) {
-                        screen = purchaseSuccessScreen
-                        scope.launch {
-                            val term = if (
-                                plan == BeeKeepPlan.PRO_YEARLY || plan == BeeKeepPlan.ULTIMATE_YEARLY
-                            ) "year" else "month"
-                            snackbarHostState.showSnackbar(
-                                if (previousPlan == BeeKeepPlan.FREE && hadLockedHives) {
-                                    "BeeKeep ${plan.displayName} activated. Your previously locked hives are unlocked for another $term."
-                                } else {
-                                    "Debug test plan activated: BeeKeep ${plan.displayName}."
-                                }
-                            )
+                    scope.launch {
+                        val previousPlan = BeeKeepEntitlements.currentPlan(context)
+                        val hadLockedHives = lockedHiveIds.isNotEmpty()
+                        val serverSync = cloud.syncDebugPlanToStaging(plan)
+
+                        BeeKeepEntitlements.setDebugPlan(context, plan)
+                        purchasePlanName = plan.name
+                        lockedHiveIds = BeeKeepEntitlements.lockedHiveIds(context)
+
+                        if (plan != BeeKeepPlan.FREE) {
+                            screen = purchaseSuccessScreen
                         }
-                    } else {
-                        scope.launch {
-                            snackbarHostState.showSnackbar(
-                                if (previousPlan.isProSubscription) {
-                                    "BeeKeep ${previousPlan.displayName} subscription ended. Subscription-created hives are locked until a paid plan is activated again."
-                                } else {
-                                    "Debug test plan reset to Free. Hives created while a paid subscription was active stay locked until a paid plan is activated again."
-                                }
-                            )
+
+                        val term = if (
+                            plan == BeeKeepPlan.PRO_YEARLY || plan == BeeKeepPlan.ULTIMATE_YEARLY
+                        ) "year" else "month"
+                        val localMessage = when {
+                            plan == BeeKeepPlan.FREE && previousPlan.isProSubscription ->
+                                "Debug test plan reset to Free. Subscription-created hives stay locked until a paid plan is activated again."
+                            plan == BeeKeepPlan.FREE ->
+                                "Debug test plan reset to Free."
+                            previousPlan == BeeKeepPlan.FREE && hadLockedHives ->
+                                "BeeKeep ${plan.displayName} activated. Previously locked hives are unlocked for another $term."
+                            else -> "Debug test plan activated: BeeKeep ${plan.displayName}."
                         }
+                        val fullMessage = if (serverSync.isSuccess) {
+                            if (plan == BeeKeepPlan.ULTIMATE || plan == BeeKeepPlan.ULTIMATE_YEARLY) {
+                                "$localMessage Staging workspace entitlement synced."
+                            } else {
+                                "$localMessage Staging cloud entitlement updated."
+                            }
+                        } else {
+                            "$localMessage Staging workspace entitlement was NOT updated: ${serverSync.error}. This device-only simulation will not unlock team workspace creation."
+                        }
+                        snackbarHostState.showSnackbar(fullMessage)
                     }
                 }
             }
