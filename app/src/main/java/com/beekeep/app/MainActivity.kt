@@ -3264,7 +3264,6 @@ private fun MoreScreen(
                                             is CloudResult.Failure -> authMessage = result.message
                                         }
                                     }
-                                    }
                                 }
                             },
                             modifier = Modifier.weight(1f)
