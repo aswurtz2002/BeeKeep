@@ -85,6 +85,13 @@ data class BeeKeepUsernameAvailability(val available: Boolean)
 data class BeeKeepUltimateEntitlement(val active: Boolean)
 
 @Serializable
+data class DebugEntitlementSyncResponse(
+    val success: Boolean,
+    val active: Boolean,
+    val plan: String
+)
+
+@Serializable
 data class WorkspaceUsernameParams(val target_username: String)
 
 @Serializable
