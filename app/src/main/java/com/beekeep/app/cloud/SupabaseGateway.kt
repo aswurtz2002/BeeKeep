@@ -700,6 +700,36 @@ class SupabaseGateway(
                 ?: error("Workspace was not returned after creation")
         }
 
+    /**
+     * Checks handle availability before account creation. This endpoint deliberately supports
+     * signed-out users and returns only a boolean; it never exposes profile rows.
+     */
+    suspend fun isUsernameAvailable(username: String): WorkspaceOperationResult<Boolean> {
+        val supabase = client
+            ?: return WorkspaceOperationResult(error = "BeeKeep Cloud is not configured.")
+        val cleanedUsername = username.trim()
+        if (!cleanedUsername.matches(Regex("^[A-Za-z0-9_]{3,20}$"))) {
+            return WorkspaceOperationResult(
+                error = "Username must be 3–20 characters using only letters, numbers, or underscores."
+            )
+        }
+
+        return try {
+            val availability = supabase.postgrest.rpc(
+                "beekeep_is_username_available",
+                WorkspaceUsernameParams(cleanedUsername)
+            ).decodeList<BeeKeepUsernameAvailability>().firstOrNull()
+                ?: error("Username availability was not returned.")
+            WorkspaceOperationResult(value = availability.available)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Throwable) {
+            WorkspaceOperationResult(
+                error = "Couldn't check that username right now. Please try again."
+            )
+        }
+    }
+
     suspend fun getUsername(): WorkspaceOperationResult<String> =
         workspaceOperation {
             client!!.postgrest.rpc("beekeep_get_username")
@@ -844,7 +874,20 @@ class SupabaseGateway(
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (t: Throwable) {
-            val message = t.message ?: "Authentication failed"
+            val rawMessage = t.message.orEmpty().trim()
+            val lowerMessage = rawMessage.lowercase()
+            val message = when {
+                "beekeep_profiles_username_lower_idx" in lowerMessage ||
+                    ("username" in lowerMessage && "already taken" in lowerMessage) ->
+                    "That username is already taken. Please choose another."
+                rawMessage.isBlank() ||
+                    "unknown error" in lowerMessage ||
+                    "headers:" in lowerMessage ||
+                    "url:" in lowerMessage ||
+                    rawMessage.length > 240 ->
+                    "BeeKeep couldn't complete authentication. Check your connection and account details, then try again."
+                else -> rawMessage
+            }
             _account.value = _account.value.copy(error = message)
             CloudResult.Failure(message)
         }

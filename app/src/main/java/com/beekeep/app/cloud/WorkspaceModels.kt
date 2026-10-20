@@ -79,6 +79,9 @@ data class WorkspaceInvitationIdParams(val target_invitation_id: String)
 data class BeeKeepUsername(val username: String)
 
 @Serializable
+data class BeeKeepUsernameAvailability(val available: Boolean)
+
+@Serializable
 data class WorkspaceUsernameParams(val target_username: String)
 
 @Serializable

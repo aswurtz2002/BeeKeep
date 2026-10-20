@@ -3251,11 +3251,18 @@ private fun MoreScreen(
                             onClick = {
                                 scope.launch {
                                     authMessage = ""
-                                    when (val result = cloud.signUp(email, password, username.trim())) {
-                                        CloudResult.Success -> { authMessage = "Account created. Check your email if verification is required."; CloudSyncScheduler.runNow(context) }
-                                        CloudResult.NotConfigured -> authMessage = "Cloud is not configured."
-                                        CloudResult.NotSignedIn -> authMessage = "Account created but not signed in yet."
-                                        is CloudResult.Failure -> authMessage = result.message
+                                    val availability = cloud.isUsernameAvailable(username.trim())
+                                    if (!availability.isSuccess) {
+                                        authMessage = availability.error ?: "Couldn't check username availability. Please try again."
+                                    } else if (availability.value != true) {
+                                        authMessage = "That username is already taken. Please choose another."
+                                    } else {
+                                        when (val result = cloud.signUp(email, password, username.trim())) {
+                                            CloudResult.Success -> { authMessage = "Account created. Check your email if verification is required."; CloudSyncScheduler.runNow(context) }
+                                            CloudResult.NotConfigured -> authMessage = "Cloud is not configured."
+                                            CloudResult.NotSignedIn -> authMessage = "Account created but not signed in yet."
+                                            is CloudResult.Failure -> authMessage = result.message
+                                        }
                                     }
                                 }
                             },
