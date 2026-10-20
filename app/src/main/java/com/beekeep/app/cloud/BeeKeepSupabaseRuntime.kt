@@ -10,15 +10,6 @@ import io.github.jan.supabase.storage.Storage
 import kotlinx.coroutines.sync.Mutex
 
 /**
- * Owns the single Supabase client used in this app process.
- *
- * The foreground Activity and WorkManager worker both sync in the same process and share
- * Supabase's persisted Auth session. Constructing one auto-refreshing client per gateway lets
- * independent refresh loops race over the same rotating refresh token; Supabase can reject the
- * second use with refresh_token_already_used and revoke the session. Sharing the client also
- * gives every gateway the same refresh lifecycle.
- */
-/**
  * Small, thread-safe process singleton used so client creation remains testable without starting
  * Android or Supabase. The first successful factory result is retained for the lifetime of the
  * holder; concurrent callers cannot create independent Auth refresh loops.
@@ -35,6 +26,15 @@ internal class LazySingleton<T : Any> {
     }
 }
 
+/**
+ * Owns the single Supabase client used in this app process.
+ *
+ * The foreground Activity and WorkManager worker both sync in the same process and share
+ * Supabase's persisted Auth session. Constructing one auto-refreshing client per gateway lets
+ * independent refresh loops race over the same rotating refresh token; Supabase can reject the
+ * second use with refresh_token_already_used and revoke the session. Sharing the client also
+ * gives every gateway the same refresh lifecycle.
+ */
 internal object BeeKeepSupabaseRuntime {
     private val clientHolder = LazySingleton<SupabaseClient>()
 
