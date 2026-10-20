@@ -1548,7 +1548,7 @@ fun BeeKeepApp(
                             .filter { it.apiary.equals(apiaryToEdit.name, ignoreCase = true) }
                             .map { it.id }
                             .distinct()
-                            .forEach { clearInspectionDraftsForHive(this@MainActivity, it) }
+                            .forEach { clearInspectionDraftsForHive(activity, it) }
                         if (selectedApiaryName?.equals(apiaryToEdit.name, ignoreCase = true) == true) {
                             selectedApiaryName = null
                             if (screen == Screen.APIARY_HIVES) screen = Screen.APIARIES
@@ -2063,7 +2063,7 @@ fun BeeKeepApp(
                 if (requestHiveAccess(hiveForDetail)) {
                     vm.deleteHivePermanently(hiveForDetail.id) { success, error ->
                         if (success) {
-                            clearInspectionDraftsForHive(this@MainActivity, hiveForDetail.id)
+                            clearInspectionDraftsForHive(activity, hiveForDetail.id)
                             selectedHiveOpen = false
                             vm.clearHive()
                         }
