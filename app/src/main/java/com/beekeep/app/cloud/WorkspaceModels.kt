@@ -82,6 +82,9 @@ data class BeeKeepUsername(val username: String)
 data class BeeKeepUsernameAvailability(val available: Boolean)
 
 @Serializable
+data class BeeKeepUltimateEntitlement(val active: Boolean)
+
+@Serializable
 data class WorkspaceUsernameParams(val target_username: String)
 
 @Serializable
