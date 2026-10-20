@@ -75,3 +75,7 @@ jobs:
         run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261018214324_beekeep_workspace_member_roster_type_fix.sql
       - name: Verify usernames, member roster, and owner-only workspace deletion
         run: psql -v ON_ERROR_STOP=1 -f supabase/tests/workspace_username_and_delete_security.sql
+      - name: Apply username availability and sign-up safety migration
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261020030000_beekeep_username_availability.sql
+      - name: Verify duplicate username handling and availability
+        run: psql -v ON_ERROR_STOP=1 -f supabase/tests/username_availability.sql
