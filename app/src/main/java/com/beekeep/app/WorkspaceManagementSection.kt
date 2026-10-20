@@ -54,7 +54,8 @@ import kotlinx.coroutines.delay
 fun WorkspaceManagementSection(
     cloud: SupabaseGateway,
     activity: ComponentActivity,
-    usernameRefreshKey: Int = 0
+    usernameRefreshKey: Int = 0,
+    onUpgrade: () -> Unit
 ) {
     val account by cloud.account.collectAsState()
     val scope = rememberCoroutineScope()
@@ -84,6 +85,8 @@ fun WorkspaceManagementSection(
     var workspaceMenuExpanded by remember { mutableStateOf(false) }
     var invitations by remember { mutableStateOf<List<BeeKeepWorkspaceInvitation>>(emptyList()) }
     var loading by remember { mutableStateOf(false) }
+    var hasUltimateEntitlement by remember { mutableStateOf(false) }
+    var showUltimateRequiredDialog by rememberSaveable { mutableStateOf(false) }
     var message by rememberSaveable { mutableStateOf("") }
     var showCreateDialog by remember { mutableStateOf(false) }
     var newWorkspaceName by rememberSaveable { mutableStateOf("") }
@@ -131,6 +134,7 @@ fun WorkspaceManagementSection(
         if (!account.signedIn) {
             activeWorkspaceId = activity.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
                 .getString("active_team_workspace_id", "").orEmpty()
+            hasUltimateEntitlement = false
             workspaces = emptyList()
             members = emptyList()
             membersLoadedWorkspaceId = null
@@ -141,6 +145,8 @@ fun WorkspaceManagementSection(
         }
         activeWorkspaceId = activity.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
             .getString("active_team_workspace_id", "").orEmpty()
+        val entitlement = cloud.myActiveUltimateEntitlement()
+        hasUltimateEntitlement = entitlement.value == true
         loading = true
         val result = cloud.listWorkspaces()
         if (result.isSuccess) {
@@ -220,7 +226,13 @@ fun WorkspaceManagementSection(
                     }
                     Button(
                         enabled = !loading,
-                        onClick = { showCreateDialog = true }
+                        onClick = {
+                            if (hasUltimateEntitlement) {
+                                showCreateDialog = true
+                            } else {
+                                showUltimateRequiredDialog = true
+                            }
+                        }
                     ) { Text("CREATE") }
                 }
 
@@ -640,6 +652,17 @@ fun WorkspaceManagementSection(
                         expanded = showInvitePanel,
                         onToggle = { showInvitePanel = !showInvitePanel }
                     ) {
+                        if (workspace.member_role == "owner" && !hasUltimateEntitlement) {
+                            Text(
+                                "An active BeeKeep Ultimate subscription is required for workspace owners to invite teammates.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Button(
+                                onClick = onUpgrade,
+                                modifier = Modifier.fillMaxWidth()
+                            ) { Text("UPGRADE TO ULTIMATE") }
+                        } else {
                         OutlinedTextField(
                             value = inviteEmail,
                             onValueChange = { inviteEmail = it },
@@ -735,6 +758,7 @@ fun WorkspaceManagementSection(
                                     }
                                 }
                             }
+                        }
                         }
                     }
 
@@ -1009,6 +1033,32 @@ fun WorkspaceManagementSection(
                     enabled = !loading,
                     onClick = { deleteWorkspaceTarget = null }
                 ) { Text("CANCEL") }
+            }
+        )
+    }
+
+    if (showUltimateRequiredDialog) {
+        AlertDialog(
+            onDismissRequest = { showUltimateRequiredDialog = false },
+            title = { Text("Ultimate required") },
+            text = {
+                Text(
+                    "An active BeeKeep Ultimate subscription is required to create and own a team workspace. " +
+                        "People you invite can join and use your team workspace without buying Ultimate themselves."
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showUltimateRequiredDialog = false
+                        onUpgrade()
+                    }
+                ) { Text("UPGRADE TO ULTIMATE") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showUltimateRequiredDialog = false }) {
+                    Text("NOT NOW")
+                }
             }
         )
     }
