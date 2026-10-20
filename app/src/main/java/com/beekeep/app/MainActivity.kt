@@ -3171,7 +3171,8 @@ private fun MoreScreen(
         WorkspaceManagementSection(
             cloud = cloud,
             activity = activity,
-            usernameRefreshKey = usernameRefreshKey
+            usernameRefreshKey = usernameRefreshKey,
+            onUpgrade = onUpgrade
         )
 
         Card(onClick = onTagManager, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(24.dp)) {
