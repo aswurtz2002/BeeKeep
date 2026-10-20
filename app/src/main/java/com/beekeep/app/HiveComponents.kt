@@ -310,6 +310,21 @@ internal fun hasMeaningfulHarvestRecord(
     propolis: Double
 ): Boolean = supersPulled > 0 || listOf(wetHoney, dryHoney, wax, propolis).any { it > 0.0 }
 
+/** Convert compatible liquid/weight units without silently changing what a typed amount means. */
+internal fun convertLogAmountUnits(raw: String, fromUnit: String, toUnit: String): String {
+    if (raw.isBlank() || fromUnit == toUnit) return raw
+    val value = raw.trim().replace(',', '.').toDoubleOrNull() ?: return raw
+    if (!value.isFinite()) return raw
+    val converted = when (fromUnit to toUnit) {
+        "gal" to "L" -> value * 3.785411784
+        "L" to "gal" -> value / 3.785411784
+        "lb" to "kg" -> value * 0.45359237
+        "kg" to "lb" -> value / 0.45359237
+        else -> return ""
+    }
+    return String.format(Locale.US, "%.3f", converted).trimEnd('0').trimEnd('.')
+}
+
 @Composable
 internal fun FeedDialog(
     onDismiss: () -> Unit,
@@ -360,15 +375,18 @@ internal fun FeedDialog(
 
         LogFieldSection("What did you feed?") {
             LogChoiceChips(typeOptions, type) { selected ->
-                type = selected
-                error = ""
-                ratioChoice = if (selected == "Syrup") ratioChoice.takeIf { it in listOf("1:1", "2:1", "1:2", "Custom") } ?: "1:1" else ""
                 val nextUnits = when (selected) {
                     "Fondant", "Pollen patty", "Dry sugar" -> listOf("lb", "kg")
                     "Other" -> listOf("L", "gal", "lb", "kg")
                     else -> listOf("L", "gal")
                 }
-                if (unit !in nextUnits) unit = if (selected in listOf("Fondant", "Pollen patty", "Dry sugar")) "lb" else "gal"
+                val nextUnit = if (unit in nextUnits) unit
+                else if (selected in listOf("Fondant", "Pollen patty", "Dry sugar")) "lb" else "gal"
+                if (nextUnit != unit) amount = convertLogAmountUnits(amount, unit, nextUnit)
+                unit = nextUnit
+                type = selected
+                error = ""
+                ratioChoice = if (selected == "Syrup") ratioChoice.takeIf { it in listOf("1:1", "2:1", "1:2", "Custom") } ?: "1:1" else ""
             }
             if (type == "Other") {
                 OutlinedTextField(
@@ -412,7 +430,11 @@ internal fun FeedDialog(
                 singleLine = true
             )
             Text("Unit", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
-            LogChoiceChips(unitOptions, unit) { unit = it; error = "" }
+            LogChoiceChips(unitOptions, unit) {
+                amount = convertLogAmountUnits(amount, unit, it)
+                unit = it
+                error = ""
+            }
         }
 
         LogFieldSection("Notes (optional)") {
@@ -622,7 +644,14 @@ internal fun HarvestDialog(
         }
 
         LogFieldSection("Weight unit") {
-            LogChoiceChips(listOf("lb", "kg"), unit) { unit = it; error = "" }
+            LogChoiceChips(listOf("lb", "kg"), unit) { nextUnit ->
+                wet = convertLogAmountUnits(wet, unit, nextUnit)
+                dry = convertLogAmountUnits(dry, unit, nextUnit)
+                wax = convertLogAmountUnits(wax, unit, nextUnit)
+                propolis = convertLogAmountUnits(propolis, unit, nextUnit)
+                unit = nextUnit
+                error = ""
+            }
         }
 
         LogFieldSection("Honey") {
