@@ -1543,12 +1543,13 @@ fun BeeKeepApp(
                     }
                     if (success) {
                         // Remove unfinished drafts for every visible hive deleted with this apiary.
-                        (hives + deadHives)
+                        val deletedHiveIds = (hives + deadHives)
                             .asSequence()
                             .filter { it.apiary.equals(apiaryToEdit.name, ignoreCase = true) }
                             .map { it.id }
                             .distinct()
-                            .forEach { clearInspectionDraftsForHive(activity, it) }
+                            .toList()
+                        clearInspectionDraftsForHives(activity, deletedHiveIds)
                         if (selectedApiaryName?.equals(apiaryToEdit.name, ignoreCase = true) == true) {
                             selectedApiaryName = null
                             if (screen == Screen.APIARY_HIVES) screen = Screen.APIARIES
