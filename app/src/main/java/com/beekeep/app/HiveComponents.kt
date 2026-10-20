@@ -303,6 +303,14 @@ internal fun parseOptionalNonNegativeLogWeight(raw: String): Double? {
 internal fun parseNonNegativeLogDays(raw: String): Int? =
     raw.trim().toIntOrNull()?.takeIf { it >= 0 }
 
+internal fun hasMeaningfulHarvestRecord(
+    supersPulled: Int,
+    wetHoney: Double,
+    dryHoney: Double,
+    wax: Double,
+    propolis: Double
+): Boolean = supersPulled > 0 || listOf(wetHoney, dryHoney, wax, propolis).any { it > 0.0 }
+
 @Composable
 internal fun FeedDialog(
     onDismiss: () -> Unit,
@@ -579,7 +587,7 @@ internal fun HarvestDialog(
                 parsedDry == null -> error = "Dry honey must be a valid non-negative weight."
                 parsedWax == null -> error = "Wax weight must be a valid non-negative weight."
                 parsedPropolis == null -> error = "Propolis weight must be a valid non-negative weight."
-                supers == 0 && parsedWet == 0.0 && parsedDry == 0.0 && parsedWax == 0.0 && parsedPropolis == 0.0 ->
+                !hasMeaningfulHarvestRecord(supers, parsedWet, parsedDry, parsedWax, parsedPropolis) ->
                     error = "Enter at least one harvest quantity or the number of supers pulled."
                 unit !in listOf("lb", "kg") -> error = "Choose a valid weight unit."
                 else -> onSave(supers, parsedWet, parsedDry, unit, parsedWax, parsedPropolis, notes.trim())
@@ -588,7 +596,7 @@ internal fun HarvestDialog(
     ) {
         LogInfoPanel(
             title = "Harvest record",
-            body = "Enter whichever measurements you have. Leave unmeasured weights blank; at least one quantity or a supers count is required."
+            body = "Blank weight fields are saved as 0 in the current record format. Enter your measured amounts or a supers count before saving."
         )
         LogValidationMessage(error)
 
@@ -625,7 +633,7 @@ internal fun HarvestDialog(
                     onValueChange = { wet = it; error = "" },
                     modifier = Modifier.weight(1f),
                     label = { Text("Wet ($unit)") },
-                    placeholder = { Text("Optional") },
+                    placeholder = { Text("Blank = 0") },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     singleLine = true
                 )
@@ -634,7 +642,7 @@ internal fun HarvestDialog(
                     onValueChange = { dry = it; error = "" },
                     modifier = Modifier.weight(1f),
                     label = { Text("Dry ($unit)") },
-                    placeholder = { Text("Optional") },
+                    placeholder = { Text("Blank = 0") },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     singleLine = true
                 )
@@ -648,7 +656,7 @@ internal fun HarvestDialog(
                     onValueChange = { wax = it; error = "" },
                     modifier = Modifier.weight(1f),
                     label = { Text("Wax ($unit)") },
-                    placeholder = { Text("Optional") },
+                    placeholder = { Text("Blank = 0") },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     singleLine = true
                 )
@@ -657,7 +665,7 @@ internal fun HarvestDialog(
                     onValueChange = { propolis = it; error = "" },
                     modifier = Modifier.weight(1f),
                     label = { Text("Propolis ($unit)") },
-                    placeholder = { Text("Optional") },
+                    placeholder = { Text("Blank = 0") },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     singleLine = true
                 )
