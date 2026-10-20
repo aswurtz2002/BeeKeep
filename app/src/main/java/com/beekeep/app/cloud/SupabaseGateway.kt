@@ -4,22 +4,17 @@ import android.content.Context
 import android.content.Intent
 import com.beekeep.app.BuildConfig
 import com.beekeep.app.data.LocalHiveRepository
-import io.github.jan.supabase.auth.Auth
 import io.github.jan.supabase.auth.auth
 import io.github.jan.supabase.auth.handleDeeplinks
 import io.github.jan.supabase.auth.providers.builtin.Email
-import io.github.jan.supabase.createSupabaseClient
-import io.github.jan.supabase.postgrest.Postgrest
 import io.github.jan.supabase.postgrest.from
 import io.github.jan.supabase.postgrest.postgrest
 import io.github.jan.supabase.postgrest.rpc
 import io.github.jan.supabase.postgrest.query.Order
-import io.github.jan.supabase.realtime.Realtime
 import io.github.jan.supabase.realtime.realtime
 import io.github.jan.supabase.realtime.channel
 import io.github.jan.supabase.realtime.postgresChangeFlow
 import io.github.jan.supabase.realtime.PostgresAction
-import io.github.jan.supabase.storage.Storage
 import io.github.jan.supabase.storage.storage
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.CancellationException
@@ -63,24 +58,11 @@ class SupabaseGateway(
 
     val configured: Boolean = BuildConfig.SUPABASE_URL.isNotBlank() && BuildConfig.SUPABASE_PUBLISHABLE_KEY.isNotBlank()
 
-    private val client = if (configured) createSupabaseClient(
-        supabaseUrl = BuildConfig.SUPABASE_URL,
-        supabaseKey = BuildConfig.SUPABASE_PUBLISHABLE_KEY
-    ) {
-        install(Auth) {
-            scheme = BuildConfig.AUTH_REDIRECT_SCHEME
-            host = BuildConfig.AUTH_REDIRECT_HOST
-            autoLoadFromStorage = true
-            autoSaveToStorage = true
-            alwaysAutoRefresh = true
-        }
-        install(Postgrest)
-        install(Realtime)
-        install(Storage)
-    } else null
+    // Foreground and WorkManager gateways must share one client/session refresh loop.
+    private val client = BeeKeepSupabaseRuntime.client()
 
     private var realtimeJob: Job? = null
-    private val syncMutex = Mutex()
+    private val syncMutex = BeeKeepSupabaseRuntime.syncMutex
 
     private val _account = MutableStateFlow(
         CloudAccountState(configured = configured, signedIn = false)
@@ -112,7 +94,7 @@ class SupabaseGateway(
         }
     }
 
-    suspend fun signIn(email: String, password: String): CloudResult = authCall {
+    suspend fun signIn(email: String, password: String): CloudResult = authCall(restoreWorkspaceId = repository.activeWorkspaceId.value) {
         val supabase = client ?: return@authCall
         supabase.auth.signInWith(Email) {
             this.email = email.trim()
@@ -834,7 +816,10 @@ class SupabaseGateway(
         }
     }
 
-    private suspend fun authCall(block: suspend () -> Unit): CloudResult {
+    private suspend fun authCall(
+        restoreWorkspaceId: String? = null,
+        block: suspend () -> Unit
+    ): CloudResult {
         if (!configured || client == null) return CloudResult.NotConfigured
         return try {
             client?.auth?.awaitInitialization()
@@ -843,6 +828,18 @@ class SupabaseGateway(
             repository.switchWorkspace(null)
             block()
             refreshAccount()
+            val workspaceToRestore = restoreWorkspaceId?.trim()?.takeIf { it.isNotEmpty() }
+            if (_account.value.signedIn && workspaceToRestore != null) {
+                // Authentication first switches to private data for account isolation. Restore
+                // the previous team only after the newly authenticated user passes membership checks.
+                val restored = activateWorkspace(workspaceToRestore)
+                if (!restored.isSuccess) {
+                    _account.value = _account.value.copy(
+                        error = "Signed in, but the previous team workspace could not be restored: " +
+                            (restored.error ?: "you may no longer be a member")
+                    )
+                }
+            }
             if (enableRealtime && _account.value.signedIn) startRealtime()
             CloudResult.Success
         } catch (cancelled: CancellationException) {
