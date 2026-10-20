@@ -7,6 +7,7 @@ BeeKeep is offline-first. Local writes are committed to Room first, then queued 
 - The existing `beekeep_documents` table retains the per-user data model for personal workspaces and older app versions.
 - Personal apiaries, hives, inspections, feedings, treatments, harvests, events and NFC history continue to synchronize under the signed-in user.
 - Signing out switches the active local dataset back to the personal/offline database.
+- The foreground app and background WorkManager sync share one process-wide Supabase client and sync mutex. Do not create a separate auto-refreshing Auth client for each gateway: independent refresh loops can race on the same persisted rotating refresh token and cause `refresh_token_already_used` session failures.
 
 ## Team workspace data
 
