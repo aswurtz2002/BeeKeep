@@ -5,6 +5,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -20,7 +21,7 @@ import import androidx.compose.foundation.verticalScroll
 import import androidx.compose.foundation.layout.heightIn
 import import androidx.compose.foundation.layout.widthIn
 import import androidx.compose.foundation.layout.weight
-import import androidx.compose.material.icons.rounded.Add
+import import androidx.compose.material.icons.rounded.CalendarMonth
 import import androidx.compose.material.icons.rounded.Close
 import import androidx.compose.material.icons.rounded.MedicalServices
 import import androidx.compose.material.icons.rounded.Scale
@@ -451,6 +452,7 @@ internal fun TreatmentDialog(onDismiss: () -> Unit, onSave: (String, String, Int
                 product.trim().isBlank() -> error = "Enter the product or treatment name."
                 parsedRemovalDays == null -> error = "Enter removal days from the product label, or 0 if no removal reminder applies."
                 parsedWithdrawalDays == null -> error = "Enter the additional withdrawal days from the product label, or 0 if none applies."
+                parsedRemovalDays == 0 && parsedWithdrawalDays > 0 -> error = "An additional withdrawal period needs a removal date. Check the product label."
                 else -> onSave(finalType, product.trim(), parsedRemovalDays, parsedWithdrawalDays, notes.trim())
             }
         }
@@ -833,7 +835,7 @@ private fun LogDatePreview(label: String, date: String) {
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Icon(Icons.Rounded.Add, contentDescription = null, tint = MaterialTheme.colorScheme.secondary)
+            Icon(Icons.Rounded.CalendarMonth, contentDescription = null, tint = MaterialTheme.colorScheme.secondary)
             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSecondaryContainer)
                 Text(date, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSecondaryContainer)
