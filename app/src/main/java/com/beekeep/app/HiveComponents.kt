@@ -56,6 +56,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -351,6 +352,7 @@ internal fun FeedDialog(
         title = "Log feeding",
         subtitle = hiveName?.let { "$it · Recorded when saved" } ?: "Record what you gave this colony",
         icon = Icons.Rounded.WaterDrop,
+        validationMessage = error,
         onDismiss = onDismiss,
         onSave = {
             val parsedAmount = parsePositiveLogAmount(amount)
@@ -492,6 +494,7 @@ internal fun TreatmentDialog(
         title = "Log treatment",
         subtitle = hiveName?.let { "$it · Record product and follow-up timing" } ?: "Record product and follow-up timing",
         icon = Icons.Rounded.MedicalServices,
+        validationMessage = error,
         onDismiss = onDismiss,
         onSave = {
             val finalType = if (type == "Other") customType.trim() else type
@@ -612,6 +615,7 @@ internal fun HarvestDialog(
         title = "Log harvest",
         subtitle = hiveName?.let { "$it · Capture supers and recovered products" } ?: "Capture supers and recovered products",
         icon = Icons.Rounded.Scale,
+        validationMessage = error,
         onDismiss = onDismiss,
         onSave = {
             when {
@@ -731,6 +735,7 @@ private fun FieldLogDialog(
     title: String,
     subtitle: String,
     icon: ImageVector,
+    validationMessage: String,
     onDismiss: () -> Unit,
     onSave: () -> Unit,
     content: @Composable ColumnScope.() -> Unit
@@ -738,6 +743,10 @@ private fun FieldLogDialog(
     val configuration = LocalConfiguration.current
     val maxDialogHeight = (configuration.screenHeightDp.dp * 0.88f).coerceAtMost(760.dp)
     val maxFormHeight = (configuration.screenHeightDp.dp * 0.54f).coerceAtMost(470.dp)
+    val formScrollState = rememberScrollState()
+    LaunchedEffect(validationMessage) {
+        if (validationMessage.isNotBlank()) formScrollState.animateScrollTo(0)
+    }
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -782,7 +791,7 @@ private fun FieldLogDialog(
                     modifier = Modifier
                         .fillMaxWidth()
                         .heightIn(max = maxFormHeight)
-                        .verticalScroll(rememberScrollState())
+                        .verticalScroll(formScrollState)
                         .padding(horizontal = 20.dp, vertical = 16.dp),
                     verticalArrangement = Arrangement.spacedBy(16.dp),
                     content = content
