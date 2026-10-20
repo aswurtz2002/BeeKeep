@@ -700,6 +700,36 @@ class SupabaseGateway(
                 ?: error("Workspace was not returned after creation")
         }
 
+    /**
+     * Checks handle availability before account creation. This endpoint deliberately supports
+     * signed-out users and returns only a boolean; it never exposes profile rows.
+     */
+    suspend fun isUsernameAvailable(username: String): WorkspaceOperationResult<Boolean> {
+        val supabase = client
+            ?: return WorkspaceOperationResult(error = "BeeKeep Cloud is not configured.")
+        val cleanedUsername = username.trim()
+        if (!cleanedUsername.matches(Regex("^[A-Za-z0-9_]{3,20}$"))) {
+            return WorkspaceOperationResult(
+                error = "Username must be 3–20 characters using only letters, numbers, or underscores."
+            )
+        }
+
+        return try {
+            val availability = supabase.postgrest.rpc(
+                "beekeep_is_username_available",
+                WorkspaceUsernameParams(cleanedUsername)
+            ).decodeList<BeeKeepUsernameAvailability>().firstOrNull()
+                ?: error("Username availability was not returned.")
+            WorkspaceOperationResult(value = availability.available)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Throwable) {
+            WorkspaceOperationResult(
+                error = "Couldn't check that username right now. Please try again."
+            )
+        }
+    }
+
     suspend fun getUsername(): WorkspaceOperationResult<String> =
         workspaceOperation {
             client!!.postgrest.rpc("beekeep_get_username")
