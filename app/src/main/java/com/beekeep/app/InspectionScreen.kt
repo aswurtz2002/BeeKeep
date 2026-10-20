@@ -113,6 +113,34 @@ private fun formatBroodStoresGauge(value: Double): String {
 }
 private const val INSPECTION_FORM_DRAFTS = "beekeep_inspection_form_drafts"
 
+/**
+ * Discard unfinished field-entry state when a hive is permanently removed.
+ * These values intentionally live outside Room so an inspection can survive
+ * navigation or process death, so deletion paths must clean them explicitly.
+ */
+internal fun clearInspectionDraftsForHive(context: android.content.Context, hiveId: Long) {
+    if (hiveId <= 0L) return
+    val hiveKey = "hive_$hiveId"
+    context.getSharedPreferences(INSPECTION_NOTE_DRAFTS, android.content.Context.MODE_PRIVATE).edit {
+        remove(hiveKey)
+        remove("${hiveKey}_recorded_at")
+    }
+    context.getSharedPreferences(INSPECTION_FORM_DRAFTS, android.content.Context.MODE_PRIVATE).edit {
+        remove(hiveKey)
+        remove("bee_count_history_start_$hiveId")
+    }
+}
+
+/** Clear all unfinished field-entry state after Reset Apiaries succeeds locally. */
+internal fun clearAllInspectionDrafts(context: android.content.Context) {
+    context.getSharedPreferences(INSPECTION_NOTE_DRAFTS, android.content.Context.MODE_PRIVATE).edit {
+        clear()
+    }
+    context.getSharedPreferences(INSPECTION_FORM_DRAFTS, android.content.Context.MODE_PRIVATE).edit {
+        clear()
+    }
+}
+
 private data class InspectionFormDraft(
     val strength: Int,
     val queenStatus: String,
