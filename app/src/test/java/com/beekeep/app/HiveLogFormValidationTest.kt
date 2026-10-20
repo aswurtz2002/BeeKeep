@@ -53,4 +53,13 @@ class HiveLogFormValidationTest {
         assertEquals(true, hasMeaningfulHarvestRecord(0, 4.5, 0.0, 0.0, 0.0))
         assertEquals(true, hasMeaningfulHarvestRecord(0, 0.0, 0.0, 0.25, 0.0))
     }
+
+    @Test
+    fun convertsCompatibleFeedAndHarvestUnits() {
+        assertEquals("3.785", convertLogAmountUnits("1", "gal", "L"))
+        assertEquals("10", convertLogAmountUnits("4.536", "kg", "lb"))
+        assertEquals("", convertLogAmountUnits("2", "gal", "lb"))
+        assertEquals("", convertLogAmountUnits("", "lb", "kg"))
+        assertEquals("1,5", convertLogAmountUnits("1,5", "kg", "kg"))
+    }
 }
