@@ -693,6 +693,17 @@ class SupabaseGateway(
             client!!.postgrest.rpc("beekeep_list_workspaces").decodeList<BeeKeepWorkspace>()
         }
 
+    /**
+     * Reads the signed-in account's server-managed Ultimate entitlement. The database derives
+     * this from trusted auth app metadata; local plan simulation is never an authorization source.
+     */
+    suspend fun myActiveUltimateEntitlement(): WorkspaceOperationResult<Boolean> =
+        workspaceOperation {
+            client!!.postgrest.rpc("beekeep_my_active_ultimate_entitlement")
+                .decodeList<BeeKeepUltimateEntitlement>()
+                .firstOrNull()?.active ?: error("Ultimate entitlement was not returned")
+        }
+
     suspend fun createWorkspace(name: String): WorkspaceOperationResult<BeeKeepWorkspace> =
         workspaceOperation {
             client!!.postgrest.rpc("beekeep_create_workspace", WorkspaceNameParams(name.trim()))
