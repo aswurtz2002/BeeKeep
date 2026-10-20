@@ -17,25 +17,25 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
-import import androidx.compose.foundation.verticalScroll
-import import androidx.compose.foundation.layout.heightIn
-import import androidx.compose.foundation.layout.widthIn
-import import androidx.compose.foundation.layout.weight
-import import androidx.compose.material.icons.rounded.CalendarMonth
-import import androidx.compose.material.icons.rounded.Close
-import import androidx.compose.material.icons.rounded.MedicalServices
-import import androidx.compose.material.icons.rounded.Scale
-import import androidx.compose.material.icons.rounded.WaterDrop
-import import androidx.compose.material3.Divider
-import import androidx.compose.material3.Surface
-import import androidx.compose.ui.graphics.vector.ImageVector
-import import androidx.compose.ui.platform.LocalConfiguration
-import import androidx.compose.ui.window.Dialog
-import import androidx.compose.ui.window.DialogProperties
-import import java.time.LocalDate
-import import java.time.format.DateTimeFormatter
-import import java.time.format.FormatStyle
-import import java.util.Locale
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.weight
+import androidx.compose.material.icons.rounded.CalendarMonth
+import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.MedicalServices
+import androidx.compose.material.icons.rounded.Scale
+import androidx.compose.material.icons.rounded.WaterDrop
+import androidx.compose.material3.Divider
+import androidx.compose.material3.Surface
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import java.time.LocalDate
+import java.time.format.DateTimeFormatter
+import java.time.format.FormatStyle
+import java.util.Locale
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
