@@ -507,7 +507,7 @@ internal fun TreatmentDialog(
     ) {
         LogInfoPanel(
             title = "Product-label timing",
-            body = "Enter the timing specified for the product you are using. BeeKeep tracks the dates you enter; it does not determine a safe treatment schedule.",
+            body = "Enter the timing specified for the product you are using. BeeKeep records these dates; it does not create treatment alerts or determine a safe treatment schedule.",
             warning = true
         )
         LogValidationMessage(error)
@@ -537,7 +537,7 @@ internal fun TreatmentDialog(
             )
         }
 
-        LogFieldSection("Removal reminder") {
+        LogFieldSection("Removal timing") {
             OutlinedTextField(
                 value = removalDays,
                 onValueChange = { removalDays = it.filter(Char::isDigit).take(4); error = "" },
@@ -549,12 +549,12 @@ internal fun TreatmentDialog(
             )
             when {
                 parsedRemovalDays == null -> Text("Removal date will appear when you enter the number of days.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                parsedRemovalDays == 0 -> Text("No removal reminder will be scheduled.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                parsedRemovalDays == 0 -> Text("No removal date will be recorded.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 else -> LogDatePreview("Planned removal", plannedRemovalDate.orEmpty())
             }
         }
 
-        LogFieldSection("Withdrawal reminder") {
+        LogFieldSection("Withdrawal timing") {
             OutlinedTextField(
                 value = withdrawalDays,
                 onValueChange = { withdrawalDays = it.filter(Char::isDigit).take(4); error = "" },
@@ -566,7 +566,7 @@ internal fun TreatmentDialog(
             )
             when {
                 parsedWithdrawalDays == null -> Text("Enter the additional interval from the product label.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                parsedWithdrawalDays == 0 -> Text("No additional withdrawal reminder.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                parsedWithdrawalDays == 0 -> Text("No withdrawal end date will be recorded.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 plannedWithdrawalDate != null -> LogDatePreview("Withdrawal date", plannedWithdrawalDate)
                 parsedRemovalDays == null -> Text("Enter removal days first to calculate the withdrawal date.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 parsedRemovalDays == 0 -> Text("A withdrawal reminder requires a removal date.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
