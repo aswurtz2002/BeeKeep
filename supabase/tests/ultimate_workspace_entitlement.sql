@@ -112,6 +112,7 @@ end;
 $member_entitlement_assertions$;
 
 -- A non-Ultimate invited worker can collaborate while the workspace owner is active.
+select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-000000000013', false);
 insert into public.beekeep_workspace_documents (
     workspace_id, entity_type, entity_id, payload, updated_at, deleted, device_id, updated_by
 ) values (
@@ -120,6 +121,7 @@ insert into public.beekeep_workspace_documents (
     '00000000-0000-0000-0000-000000000013'
 );
 
+select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-000000000014', false);
 insert into public.beekeep_workspace_documents (
     workspace_id, entity_type, entity_id, payload, updated_at, deleted, device_id, updated_by
 ) values (
