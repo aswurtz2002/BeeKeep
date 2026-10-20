@@ -948,32 +948,6 @@ internal fun InspectionScreen(
                 }
             }
             item {
-                SectionHeader("QUEEN")
-                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    for (option in listOf("Laying", "Queenless", "Virgin")) {
-                        FilterChip(
-                            selected = queen == option,
-                            onClick = {
-                                queen = option
-                                haptic.performHapticFeedback(HapticFeedbackType.SegmentTick)
-                            },
-                            label = { Text(option) },
-                            colors = androidx.compose.material3.FilterChipDefaults.filterChipColors(
-                                containerColor = MaterialTheme.colorScheme.surface,
-                                labelColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                                selectedContainerColor = Color(0xFFD97706),
-                                selectedLabelColor = Color.White
-                            ),
-                            border = BorderStroke(
-                                1.dp,
-                                if (queen == option) Color(0xFFD97706) else MaterialTheme.colorScheme.outline
-                            )
-                        )
-                    }
-                }
-            }
-
-            item {
                 Card(
                     shape = RoundedCornerShape(24.dp),
                     border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
@@ -1121,14 +1095,95 @@ internal fun InspectionScreen(
             }
 
             item {
-                SectionHeader("QUEEN CELLS")
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                    CompactCounter("Emergency", emergency, 0..20, haptic, Modifier.weight(1f)) { emergency = it }
-                    CompactCounter("Supercedure", supercedure, 0..20, haptic, Modifier.weight(1f)) { supercedure = it }
+                SectionHeader("QUEEN STATUS")
+                Card(
+                    shape = RoundedCornerShape(20.dp),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+                ) {
+                    Column(
+                        Modifier.fillMaxWidth().padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text(
+                            "Queen condition",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            "Choose the best match for this inspection.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            for (option in listOf("Laying", "Queenless", "Virgin")) {
+                                FilterChip(
+                                    selected = queen == option,
+                                    onClick = {
+                                        queen = option
+                                        haptic.performHapticFeedback(HapticFeedbackType.SegmentTick)
+                                    },
+                                    modifier = Modifier.weight(1f),
+                                    label = { Text(option, maxLines = 1, softWrap = false) },
+                                    colors = androidx.compose.material3.FilterChipDefaults.filterChipColors(
+                                        containerColor = MaterialTheme.colorScheme.surface,
+                                        labelColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        selectedContainerColor = Color(0xFFD97706),
+                                        selectedLabelColor = Color.White
+                                    ),
+                                    border = BorderStroke(
+                                        1.dp,
+                                        if (queen == option) Color(0xFFD97706) else MaterialTheme.colorScheme.outline
+                                    )
+                                )
+                            }
+                        }
+                        Spacer(Modifier.height(2.dp))
+                        Box(
+                            Modifier.fillMaxWidth()
+                                .height(1.dp)
+                                .background(MaterialTheme.colorScheme.outlineVariant)
+                        )
+                        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                            Text(
+                                "Queen cells observed",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Text(
+                                "Count each type seen. Leave a count at zero when none are present.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        CompactCounter(
+                            "Emergency cells",
+                            emergency,
+                            0..20,
+                            haptic,
+                            Modifier.fillMaxWidth()
+                        ) { emergency = it }
+                        CompactCounter(
+                            "Supersedure cells",
+                            supercedure,
+                            0..20,
+                            haptic,
+                            Modifier.fillMaxWidth()
+                        ) { supercedure = it }
+                        CompactCounter(
+                            "Swarm cells",
+                            swarm,
+                            0..20,
+                            haptic,
+                            Modifier.fillMaxWidth()
+                        ) { swarm = it }
+                    }
                 }
-            }
-            item {
-                CompactCounter("Swarm", swarm, 0..20, haptic, Modifier.fillMaxWidth()) { swarm = it }
             }
 
             item {
