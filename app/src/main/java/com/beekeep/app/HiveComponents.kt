@@ -304,7 +304,11 @@ internal fun parseNonNegativeLogDays(raw: String): Int? =
     raw.trim().toIntOrNull()?.takeIf { it >= 0 }
 
 @Composable
-internal fun FeedDialog(onDismiss: () -> Unit, onSave: (String, String, Double, String, String) -> Unit) {
+internal fun FeedDialog(
+    onDismiss: () -> Unit,
+    hiveName: String? = null,
+    onSave: (String, String, Double, String, String) -> Unit
+) {
     var type by rememberSaveable { mutableStateOf("Syrup") }
     var customType by rememberSaveable { mutableStateOf("") }
     var ratioChoice by rememberSaveable { mutableStateOf("1:1") }
@@ -323,7 +327,7 @@ internal fun FeedDialog(onDismiss: () -> Unit, onSave: (String, String, Double, 
 
     FieldLogDialog(
         title = "Log feeding",
-        subtitle = "Record what you gave this colony",
+        subtitle = hiveName?.let { "$it · Recorded when saved" } ?: "Record what you gave this colony",
         icon = Icons.Rounded.WaterDrop,
         onDismiss = onDismiss,
         onSave = {
@@ -345,6 +349,7 @@ internal fun FeedDialog(onDismiss: () -> Unit, onSave: (String, String, Double, 
             title = "Feeding entry",
             body = "The save time is recorded automatically. Amounts must be greater than zero."
         )
+        LogValidationMessage(error)
 
         LogFieldSection("What did you feed?") {
             LogChoiceChips(typeOptions, type) { selected ->
@@ -415,12 +420,15 @@ internal fun FeedDialog(onDismiss: () -> Unit, onSave: (String, String, Double, 
             )
         }
 
-        LogValidationMessage(error)
     }
 }
 
 @Composable
-internal fun TreatmentDialog(onDismiss: () -> Unit, onSave: (String, String, Int, Int, String) -> Unit) {
+internal fun TreatmentDialog(
+    onDismiss: () -> Unit,
+    hiveName: String? = null,
+    onSave: (String, String, Int, Int, String) -> Unit
+) {
     var type by rememberSaveable { mutableStateOf("Mite treatment") }
     var customType by rememberSaveable { mutableStateOf("") }
     var product by rememberSaveable { mutableStateOf("") }
@@ -442,7 +450,7 @@ internal fun TreatmentDialog(onDismiss: () -> Unit, onSave: (String, String, Int
 
     FieldLogDialog(
         title = "Log treatment",
-        subtitle = "Record product and follow-up timing",
+        subtitle = hiveName?.let { "$it · Record product and follow-up timing" } ?: "Record product and follow-up timing",
         icon = Icons.Rounded.MedicalServices,
         onDismiss = onDismiss,
         onSave = {
@@ -462,6 +470,7 @@ internal fun TreatmentDialog(onDismiss: () -> Unit, onSave: (String, String, Int
             body = "Enter the timing specified for the product you are using. BeeKeep tracks the dates you enter; it does not determine a safe treatment schedule.",
             warning = true
         )
+        LogValidationMessage(error)
 
         LogFieldSection("Treatment type") {
             LogChoiceChips(typeOptions, type) {
@@ -536,12 +545,15 @@ internal fun TreatmentDialog(onDismiss: () -> Unit, onSave: (String, String, Int
             )
         }
 
-        LogValidationMessage(error)
     }
 }
 
 @Composable
-internal fun HarvestDialog(onDismiss: () -> Unit, onSave: (Int, Double, Double, String, Double, Double, String) -> Unit) {
+internal fun HarvestDialog(
+    onDismiss: () -> Unit,
+    hiveName: String? = null,
+    onSave: (Int, Double, Double, String, Double, Double, String) -> Unit
+) {
     var supers by rememberSaveable { mutableIntStateOf(0) }
     var wet by rememberSaveable { mutableStateOf("") }
     var dry by rememberSaveable { mutableStateOf("") }
@@ -558,7 +570,7 @@ internal fun HarvestDialog(onDismiss: () -> Unit, onSave: (Int, Double, Double, 
 
     FieldLogDialog(
         title = "Log harvest",
-        subtitle = "Capture supers and recovered products",
+        subtitle = hiveName?.let { "$it · Capture supers and recovered products" } ?: "Capture supers and recovered products",
         icon = Icons.Rounded.Scale,
         onDismiss = onDismiss,
         onSave = {
@@ -578,6 +590,7 @@ internal fun HarvestDialog(onDismiss: () -> Unit, onSave: (Int, Double, Double, 
             title = "Harvest record",
             body = "Enter whichever measurements you have. Leave unmeasured weights blank; at least one quantity or a supers count is required."
         )
+        LogValidationMessage(error)
 
         LogFieldSection("Supers pulled") {
             Row(
@@ -663,7 +676,6 @@ internal fun HarvestDialog(onDismiss: () -> Unit, onSave: (Int, Double, Double, 
             )
         }
 
-        LogValidationMessage(error)
     }
 }
 
