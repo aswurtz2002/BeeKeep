@@ -623,6 +623,8 @@ if (backupMessage.isNotBlank()) Text(backupMessage, color = if (backupMessage.st
                                 cloud.stopRealtime()
                                 val cloudResult = cloud.resetWorkspace()
                                 repository.resetAllData()
+                                // Drafts are SharedPreferences-backed, not Room rows; clear them too.
+                                clearAllInspectionDrafts(context)
                                 preferences.edit {
                                     putBoolean("initial_setup_completed", false)
                                     putLong("last_successful_sync_at", 0L)
