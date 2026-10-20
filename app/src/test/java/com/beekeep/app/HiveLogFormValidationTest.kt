@@ -45,4 +45,12 @@ class HiveLogFormValidationTest {
         assertEquals(0, parseNonNegativeLogDays("0"))
         assertEquals(42, parseNonNegativeLogDays("42"))
     }
+
+    @Test
+    fun harvestMustContainAtLeastOneQuantity() {
+        assertEquals(false, hasMeaningfulHarvestRecord(0, 0.0, 0.0, 0.0, 0.0))
+        assertEquals(true, hasMeaningfulHarvestRecord(1, 0.0, 0.0, 0.0, 0.0))
+        assertEquals(true, hasMeaningfulHarvestRecord(0, 4.5, 0.0, 0.0, 0.0))
+        assertEquals(true, hasMeaningfulHarvestRecord(0, 0.0, 0.0, 0.25, 0.0))
+    }
 }
