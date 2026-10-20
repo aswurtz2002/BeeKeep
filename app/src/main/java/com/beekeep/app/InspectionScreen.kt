@@ -113,6 +113,49 @@ private fun formatBroodStoresGauge(value: Double): String {
 }
 private const val INSPECTION_FORM_DRAFTS = "beekeep_inspection_form_drafts"
 
+/**
+ * Discard unfinished field-entry state when a hive is permanently removed.
+ * These values intentionally live outside Room so an inspection can survive
+ * navigation or process death, so deletion paths must clean them explicitly.
+ */
+internal fun clearInspectionDraftsForHives(
+    context: android.content.Context,
+    hiveIds: Collection<Long>
+) {
+    val validHiveIds = hiveIds.asSequence().filter { it > 0L }.distinct().toList()
+    if (validHiveIds.isEmpty()) return
+
+    // Batch a whole apiary's cleanup into one edit per preference store, instead
+    // of scheduling a full XML rewrite for every hive in a large yard.
+    context.getSharedPreferences(INSPECTION_NOTE_DRAFTS, android.content.Context.MODE_PRIVATE).edit {
+        validHiveIds.forEach { hiveId ->
+            val hiveKey = "hive_$hiveId"
+            remove(hiveKey)
+            remove("${hiveKey}_recorded_at")
+        }
+    }
+    context.getSharedPreferences(INSPECTION_FORM_DRAFTS, android.content.Context.MODE_PRIVATE).edit {
+        validHiveIds.forEach { hiveId ->
+            remove("hive_$hiveId")
+            remove("bee_count_history_start_$hiveId")
+        }
+    }
+}
+
+internal fun clearInspectionDraftsForHive(context: android.content.Context, hiveId: Long) {
+    clearInspectionDraftsForHives(context, listOf(hiveId))
+}
+
+/** Clear all unfinished field-entry state after Reset Apiaries succeeds locally. */
+internal fun clearAllInspectionDrafts(context: android.content.Context) {
+    context.getSharedPreferences(INSPECTION_NOTE_DRAFTS, android.content.Context.MODE_PRIVATE).edit {
+        clear()
+    }
+    context.getSharedPreferences(INSPECTION_FORM_DRAFTS, android.content.Context.MODE_PRIVATE).edit {
+        clear()
+    }
+}
+
 private data class InspectionFormDraft(
     val strength: Int,
     val queenStatus: String,

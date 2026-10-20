@@ -52,3 +52,9 @@ Run this checklist on a real Android phone before calling a release production-r
 - Test yellow/black mode in low light.
 - Confirm touch targets remain comfortable with gloves.
 - Rotate/resize the phone only if the current portrait-only product decision is intentionally preserved.
+
+## Inspection draft lifecycle
+
+- Start an inspection, change several fields and notes, leave without saving, and reopen the same hive; verify the unfinished values return to that hive.
+- Switch rapidly between two hives with NFC and confirm draft values never appear under the wrong hive.
+- Permanently delete a hive, delete an apiary containing hives, and use Reset Apiaries; after creating or opening another hive, verify deleted form drafts, note drafts, and bee-count draft baselines do not return.
