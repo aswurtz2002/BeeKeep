@@ -79,3 +79,7 @@ jobs:
         run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261020025057_beekeep_username_availability.sql
       - name: Verify duplicate username handling and availability
         run: psql -v ON_ERROR_STOP=1 -f supabase/tests/username_availability.sql
+      - name: Apply Ultimate workspace entitlement enforcement
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261020031200_beekeep_ultimate_workspace_entitlement.sql
+      - name: Verify Ultimate workspace ownership and invited worker access
+        run: psql -v ON_ERROR_STOP=1 -f supabase/tests/ultimate_workspace_entitlement.sql

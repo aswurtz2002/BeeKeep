@@ -22,7 +22,8 @@ create extension if not exists pgcrypto with schema extensions;
 create table auth.users (
     id uuid primary key,
     email text unique,
-    raw_user_meta_data jsonb not null default '{}'::jsonb
+    raw_user_meta_data jsonb not null default '{}'::jsonb,
+    raw_app_meta_data jsonb not null default '{}'::jsonb
 );
 
 create or replace function auth.uid()
