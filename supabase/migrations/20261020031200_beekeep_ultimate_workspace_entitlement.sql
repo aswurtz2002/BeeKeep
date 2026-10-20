@@ -16,7 +16,7 @@ returns boolean
 language plpgsql
 stable
 security definer
-set search_path = auth, public, pg_temp
+set search_path = ''
 as $function$
 declare
     metadata jsonb;
@@ -71,7 +71,7 @@ returns boolean
 language sql
 stable
 security definer
-set search_path = public, auth, pg_temp
+set search_path = ''
 as $function$
     select coalesce((
         select public.beekeep_user_has_active_ultimate(w.owner_user_id)
@@ -92,7 +92,7 @@ returns table(active boolean)
 language sql
 stable
 security definer
-set search_path = public, auth, pg_temp
+set search_path = ''
 as $function$
     select public.beekeep_user_has_active_ultimate(auth.uid());
 $function$;
@@ -107,7 +107,7 @@ create or replace function public.beekeep_enforce_ultimate_for_workspace_owner()
 returns trigger
 language plpgsql
 security definer
-set search_path = public, auth, pg_temp
+set search_path = ''
 as $function$
 begin
     if new.is_personal = false
@@ -130,7 +130,7 @@ create or replace function public.beekeep_enforce_ultimate_for_workspace_invitat
 returns trigger
 language plpgsql
 security definer
-set search_path = public, auth, pg_temp
+set search_path = ''
 as $function$
 begin
     if new.status = 'pending'
@@ -191,7 +191,7 @@ create or replace function public.beekeep_copy_personal_documents_to_workspace(t
 returns table(copied_count integer)
 language plpgsql
 security definer
-set search_path = public, auth, pg_temp
+set search_path = ''
 as $function$
 declare
     caller_id uuid := auth.uid();
