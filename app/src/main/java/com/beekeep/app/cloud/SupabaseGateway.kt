@@ -3,10 +3,12 @@ package com.beekeep.app.cloud
 import android.content.Context
 import android.content.Intent
 import com.beekeep.app.BuildConfig
+import com.beekeep.app.BeeKeepPlan
 import com.beekeep.app.data.LocalHiveRepository
 import io.github.jan.supabase.auth.auth
 import io.github.jan.supabase.auth.handleDeeplinks
 import io.github.jan.supabase.auth.providers.builtin.Email
+import io.github.jan.supabase.functions.functions
 import io.github.jan.supabase.postgrest.from
 import io.github.jan.supabase.postgrest.postgrest
 import io.github.jan.supabase.postgrest.rpc
@@ -29,6 +31,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.launch
+import io.ktor.client.call.body
 import java.util.UUID
 import org.json.JSONObject
 import kotlinx.serialization.json.buildJsonObject
@@ -703,6 +706,46 @@ class SupabaseGateway(
                 .decodeList<BeeKeepUltimateEntitlement>()
                 .firstOrNull()?.active ?: error("Ultimate entitlement was not returned")
         }
+
+    /**
+     * Debug purchase simulation is synced only to the isolated staging Edge Function.
+     * The function itself rejects every project except BeeKeep-Staging and cannot grant
+     * entitlement on production. Release builds never call this method.
+     */
+    suspend fun syncDebugPlanToStaging(plan: BeeKeepPlan): WorkspaceOperationResult<Boolean> {
+        if (!BuildConfig.DEBUG) {
+            return WorkspaceOperationResult(error = "Debug plan simulation is unavailable in release builds.")
+        }
+        val supabase = client
+            ?: return WorkspaceOperationResult(error = "BeeKeep Cloud is not configured.")
+        if (supabase.auth.currentSessionOrNull() == null) {
+            return WorkspaceOperationResult(error = "Sign in to BeeKeep Cloud to sync the staging test entitlement.")
+        }
+        val serverPlan = when (plan) {
+            BeeKeepPlan.FREE -> "free"
+            BeeKeepPlan.PRO -> "pro_monthly"
+            BeeKeepPlan.PRO_YEARLY -> "pro_yearly"
+            BeeKeepPlan.ULTIMATE -> "ultimate_monthly"
+            BeeKeepPlan.ULTIMATE_YEARLY -> "ultimate_yearly"
+        }
+        return try {
+            val response = supabase.functions.invoke(
+                function = "beekeep-debug-entitlement",
+                body = buildJsonObject { put("plan", serverPlan) }
+            ).body<DebugEntitlementSyncResponse>()
+            if (!response.success || response.plan != serverPlan) {
+                WorkspaceOperationResult(error = "The staging test entitlement could not be updated.")
+            } else {
+                WorkspaceOperationResult(value = true)
+            }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Throwable) {
+            WorkspaceOperationResult(
+                error = error.message ?: "The staging test entitlement could not be updated."
+            )
+        }
+    }
 
     suspend fun createWorkspace(name: String): WorkspaceOperationResult<BeeKeepWorkspace> =
         workspaceOperation {
