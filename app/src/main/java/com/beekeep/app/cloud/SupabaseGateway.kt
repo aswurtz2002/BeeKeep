@@ -874,7 +874,20 @@ class SupabaseGateway(
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (t: Throwable) {
-            val message = t.message ?: "Authentication failed"
+            val rawMessage = t.message.orEmpty().trim()
+            val lowerMessage = rawMessage.lowercase()
+            val message = when {
+                "beekeep_profiles_username_lower_idx" in lowerMessage ||
+                    ("username" in lowerMessage && "already taken" in lowerMessage) ->
+                    "That username is already taken. Please choose another."
+                rawMessage.isBlank() ||
+                    "unknown error" in lowerMessage ||
+                    "headers:" in lowerMessage ||
+                    "url:" in lowerMessage ||
+                    rawMessage.length > 240 ->
+                    "BeeKeep couldn't complete authentication. Check your connection and account details, then try again."
+                else -> rawMessage
+            }
             _account.value = _account.value.copy(error = message)
             CloudResult.Failure(message)
         }
