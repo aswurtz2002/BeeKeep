@@ -460,7 +460,7 @@ internal fun TreatmentDialog(
                 product.trim().isBlank() -> error = "Enter the product or treatment name."
                 parsedRemovalDays == null -> error = "Enter removal days from the product label, or 0 if no removal reminder applies."
                 parsedWithdrawalDays == null -> error = "Enter the additional withdrawal days from the product label, or 0 if none applies."
-                parsedRemovalDays == 0 && parsedWithdrawalDays > 0 -> error = "An additional withdrawal period needs a removal date. Check the product label."
+                parsedRemovalDays == 0 && parsedWithdrawalDays != null && parsedWithdrawalDays > 0 -> error = "An additional withdrawal period needs a removal date. Check the product label."
                 else -> onSave(finalType, product.trim(), parsedRemovalDays, parsedWithdrawalDays, notes.trim())
             }
         }
