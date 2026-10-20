@@ -118,17 +118,32 @@ private const val INSPECTION_FORM_DRAFTS = "beekeep_inspection_form_drafts"
  * These values intentionally live outside Room so an inspection can survive
  * navigation or process death, so deletion paths must clean them explicitly.
  */
-internal fun clearInspectionDraftsForHive(context: android.content.Context, hiveId: Long) {
-    if (hiveId <= 0L) return
-    val hiveKey = "hive_$hiveId"
+internal fun clearInspectionDraftsForHives(
+    context: android.content.Context,
+    hiveIds: Collection<Long>
+) {
+    val validHiveIds = hiveIds.asSequence().filter { it > 0L }.distinct().toList()
+    if (validHiveIds.isEmpty()) return
+
+    // Batch a whole apiary's cleanup into one edit per preference store, instead
+    // of scheduling a full XML rewrite for every hive in a large yard.
     context.getSharedPreferences(INSPECTION_NOTE_DRAFTS, android.content.Context.MODE_PRIVATE).edit {
-        remove(hiveKey)
-        remove("${hiveKey}_recorded_at")
+        validHiveIds.forEach { hiveId ->
+            val hiveKey = "hive_$hiveId"
+            remove(hiveKey)
+            remove("${hiveKey}_recorded_at")
+        }
     }
     context.getSharedPreferences(INSPECTION_FORM_DRAFTS, android.content.Context.MODE_PRIVATE).edit {
-        remove(hiveKey)
-        remove("bee_count_history_start_$hiveId")
+        validHiveIds.forEach { hiveId ->
+            remove("hive_$hiveId")
+            remove("bee_count_history_start_$hiveId")
+        }
     }
+}
+
+internal fun clearInspectionDraftsForHive(context: android.content.Context, hiveId: Long) {
+    clearInspectionDraftsForHives(context, listOf(hiveId))
 }
 
 /** Clear all unfinished field-entry state after Reset Apiaries succeeds locally. */
