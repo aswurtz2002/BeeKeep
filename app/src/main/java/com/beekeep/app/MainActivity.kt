@@ -1542,6 +1542,13 @@ fun BeeKeepApp(
                         snackbarHostState.showSnackbar(error ?: "Apiary and its hives deleted")
                     }
                     if (success) {
+                        // Remove unfinished drafts for every visible hive deleted with this apiary.
+                        (hives + deadHives)
+                            .asSequence()
+                            .filter { it.apiary.equals(apiaryToEdit.name, ignoreCase = true) }
+                            .map { it.id }
+                            .distinct()
+                            .forEach { clearInspectionDraftsForHive(this@MainActivity, it) }
                         if (selectedApiaryName?.equals(apiaryToEdit.name, ignoreCase = true) == true) {
                             selectedApiaryName = null
                             if (screen == Screen.APIARY_HIVES) screen = Screen.APIARIES
@@ -2055,7 +2062,11 @@ fun BeeKeepApp(
             onDelete = {
                 if (requestHiveAccess(hiveForDetail)) {
                     vm.deleteHivePermanently(hiveForDetail.id) { success, error ->
-                        if (success) { selectedHiveOpen = false; vm.clearHive() }
+                        if (success) {
+                            clearInspectionDraftsForHive(this@MainActivity, hiveForDetail.id)
+                            selectedHiveOpen = false
+                            vm.clearHive()
+                        }
                         scope.launch { snackbarHostState.showSnackbar(error ?: "${hiveReferenceName(hiveForDetail.number)} permanently deleted.") }
                     }
                 }
