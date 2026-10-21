@@ -4,6 +4,8 @@ import android.Manifest
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -15,11 +17,13 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -30,6 +34,8 @@ import androidx.compose.material.icons.rounded.Yard
 import androidx.compose.material.icons.rounded.ArrowDropDown
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Button
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
@@ -37,6 +43,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -239,61 +246,337 @@ internal fun AddApiaryScreen(
             }
         } else gpsStatus = "Location permission denied"
     }
-    Column(Modifier.fillMaxSize().safeDrawingPadding().verticalScroll(rememberScrollState()).padding(18.dp),verticalArrangement=Arrangement.spacedBy(12.dp)) {
-        Row(verticalAlignment=Alignment.CenterVertically){IconButton(onBack){Icon(Icons.Rounded.ArrowBack,"Back")};Text(if (existingApiary == null) "Add Apiary" else "Edit Apiary",style=MaterialTheme.typography.headlineSmall,fontWeight=FontWeight.ExtraBold)}
-        OutlinedTextField(name,{name=it},Modifier.fillMaxWidth(),label={Text("Apiary name")},singleLine=true)
-        OutlinedTextField(notes,{notes=it},Modifier.fillMaxWidth(),label={Text("Site notes")})
-        OutlinedTextField(forage,{forage=it},Modifier.fillMaxWidth(),label={Text("Forage notes")})
-        OutlinedTextField(water,{water=it},Modifier.fillMaxWidth(),label={Text("Water notes")})
-        OutlinedButton(onClick={
-            if(locationController.hasPermission()) locationController.current { r ->
-                if(r != null){lat=r.latitude;lon=r.longitude;gpsStatus="GPS captured"} else gpsStatus="Could not get a location"
-            } else locationPermission.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION,Manifest.permission.ACCESS_COARSE_LOCATION))
-        },Modifier.fillMaxWidth().height(54.dp)){Icon(Icons.Rounded.LocationOn,null);Spacer(Modifier.width(6.dp));Text(if(lat==null)"CAPTURE CURRENT GPS" else "GPS CAPTURED")}
-        if (lat != null && lon != null) {
-            Text("Saved GPS: ${"%.5f".format(Locale.US, lat)}, ${"%.5f".format(Locale.US, lon)}", color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Bold)
-            Text("Satellite preview • drag to move, pinch to zoom", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            ApiarySatelliteMap(
-                apiaries = listOf(
-                    Apiary(
-                        id = existingApiary?.id ?: Long.MIN_VALUE,
-                        name = "Current apiary location",
-                        notes = notes,
-                        latitude = lat,
-                        longitude = lon,
-                        forageNotes = forage,
-                        waterNotes = water
-                    )
-                ),
-                focusedApiaryId = existingApiary?.id ?: Long.MIN_VALUE,
-                currentLocation = null,
-                satelliteView = true,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(260.dp)
-                    .clip(RoundedCornerShape(20.dp))
+    val fieldColors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
+        focusedContainerColor = MaterialTheme.colorScheme.surface,
+        unfocusedContainerColor = MaterialTheme.colorScheme.surface,
+        focusedBorderColor = androidx.compose.ui.graphics.Color(0xFFD97706),
+        unfocusedBorderColor = MaterialTheme.colorScheme.outline,
+        focusedLabelColor = androidx.compose.ui.graphics.Color(0xFF92400E),
+        cursorColor = androidx.compose.ui.graphics.Color(0xFFD97706)
+    )
+    val captureLocation = {
+        if (locationController.hasPermission()) {
+            locationController.current { r ->
+                if (r != null) {
+                    lat = r.latitude
+                    lon = r.longitude
+                    gpsStatus = "GPS captured"
+                } else {
+                    gpsStatus = "Could not get a location"
+                }
+            }
+        } else {
+            locationPermission.launch(
+                arrayOf(
+                    Manifest.permission.ACCESS_FINE_LOCATION,
+                    Manifest.permission.ACCESS_COARSE_LOCATION
+                )
             )
-            TextButton(onClick = { lat = null; lon = null; gpsStatus = "GPS location removed" }) { Text("REMOVE GPS LOCATION") }
         }
-        if(gpsStatus.isNotBlank()) Text(gpsStatus,color=if(gpsStatus.startsWith("Could") || gpsStatus.startsWith("Location permission denied"))MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,fontWeight=FontWeight.Bold)
-        Button({onSave(existingApiary?.id, name.trim(),notes.trim(),lat,lon,forage.trim(),water.trim())},Modifier.fillMaxWidth().height(60.dp),enabled=name.isNotBlank(),shape=RoundedCornerShape(24.dp)){Text(if (existingApiary == null) "SAVE APIARY" else "SAVE CHANGES",fontWeight=FontWeight.ExtraBold)}
+    }
 
-        if (existingApiary != null && onDelete != null) {
-            Spacer(Modifier.height(12.dp))
-            androidx.compose.material3.HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-            Spacer(Modifier.height(8.dp))
-            OutlinedButton(
-                onClick = {
-                    deleteError = null
-                    showDeleteConfirmation = true
-                },
-                modifier = Modifier.fillMaxWidth().height(54.dp),
-                enabled = !deletingApiary,
-                colors = androidx.compose.material3.ButtonDefaults.outlinedButtonColors(
-                    contentColor = MaterialTheme.colorScheme.error
+    Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+        InspectionHoneycombBackground(Modifier.fillMaxSize())
+        Column(
+            Modifier.fillMaxSize()
+                .safeDrawingPadding()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 16.dp, vertical = 14.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Surface(
+                    shape = CircleShape,
+                    color = androidx.compose.ui.graphics.Color(0xFFFFF3C4),
+                    contentColor = androidx.compose.ui.graphics.Color(0xFF92400E)
+                ) {
+                    IconButton(onClick = onBack, modifier = Modifier.size(48.dp)) {
+                        Icon(Icons.Rounded.ArrowBack, contentDescription = "Back to apiaries")
+                    }
+                }
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(
+                        if (existingApiary == null) "APIARY SETUP" else "APIARY SETTINGS",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = androidx.compose.ui.graphics.Color(0xFFB45309)
+                    )
+                    Text(
+                        if (existingApiary == null) "Add an apiary" else "Edit Apiary",
+                        style = MaterialTheme.typography.headlineMedium,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = MaterialTheme.colorScheme.onBackground
+                    )
+                    Text(
+                        if (existingApiary == null) "Set up a home for your hives." else "Keep your yard details up to date.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
+            Card(
+                shape = RoundedCornerShape(24.dp),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+            ) {
+                Column(
+                    Modifier.fillMaxWidth().padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Surface(
+                            shape = RoundedCornerShape(14.dp),
+                            color = androidx.compose.ui.graphics.Color(0xFFFFF3C4),
+                            contentColor = androidx.compose.ui.graphics.Color(0xFF92400E)
+                        ) {
+                            Box(Modifier.size(44.dp), contentAlignment = Alignment.Center) {
+                                Icon(Icons.Rounded.Yard, contentDescription = null)
+                            }
+                        }
+                        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                            Text("Apiary details", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.ExtraBold)
+                            Text("Give this yard a name you will recognize.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                    OutlinedTextField(
+                        value = name,
+                        onValueChange = { name = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { Text("Apiary name") },
+                        placeholder = { Text("e.g. North Meadow") },
+                        supportingText = { Text("Required") },
+                        singleLine = true,
+                        shape = RoundedCornerShape(15.dp),
+                        colors = fieldColors
+                    )
+                }
+            }
+
+            Card(
+                shape = RoundedCornerShape(24.dp),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+            ) {
+                Column(
+                    Modifier.fillMaxWidth().padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Text("YARD NOTES", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.ExtraBold, color = androidx.compose.ui.graphics.Color(0xFFB45309))
+                    Text("Useful details for you or your team when visiting this location.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    OutlinedTextField(
+                        value = notes,
+                        onValueChange = { notes = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { Text("Site notes") },
+                        placeholder = { Text("Gate access, parking, hazards…") },
+                        minLines = 2,
+                        maxLines = 4,
+                        shape = RoundedCornerShape(15.dp),
+                        colors = fieldColors
+                    )
+                    OutlinedTextField(
+                        value = forage,
+                        onValueChange = { forage = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { Text("Forage notes") },
+                        placeholder = { Text("Nearby crops, flowering plants, seasonal forage…") },
+                        minLines = 2,
+                        maxLines = 4,
+                        shape = RoundedCornerShape(15.dp),
+                        colors = fieldColors
+                    )
+                    OutlinedTextField(
+                        value = water,
+                        onValueChange = { water = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { Text("Water notes") },
+                        placeholder = { Text("Ponds, streams, water sources…") },
+                        minLines = 2,
+                        maxLines = 4,
+                        shape = RoundedCornerShape(15.dp),
+                        colors = fieldColors
+                    )
+                }
+            }
+
+            Card(
+                shape = RoundedCornerShape(24.dp),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+            ) {
+                Column(
+                    Modifier.fillMaxWidth().padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Surface(
+                            shape = RoundedCornerShape(14.dp),
+                            color = androidx.compose.ui.graphics.Color(0xFFFFF3C4),
+                            contentColor = androidx.compose.ui.graphics.Color(0xFF92400E)
+                        ) {
+                            Box(Modifier.size(44.dp), contentAlignment = Alignment.Center) {
+                                Icon(Icons.Rounded.LocationOn, contentDescription = null)
+                            }
+                        }
+                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                            Text("Apiary location", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.ExtraBold)
+                            Text("Save a pin so you can find this yard again.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        Surface(
+                            shape = RoundedCornerShape(50),
+                            color = if (lat != null && lon != null) androidx.compose.ui.graphics.Color(0xFFDCFCE7) else MaterialTheme.colorScheme.surfaceVariant,
+                            contentColor = if (lat != null && lon != null) androidx.compose.ui.graphics.Color(0xFF166534) else MaterialTheme.colorScheme.onSurfaceVariant
+                        ) {
+                            Text(
+                                if (lat != null && lon != null) "PIN SET" else "OPTIONAL",
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.ExtraBold
+                            )
+                        }
+                    }
+                    Button(
+                        onClick = { captureLocation() },
+                        modifier = Modifier.fillMaxWidth().height(52.dp),
+                        shape = RoundedCornerShape(15.dp),
+                        colors = androidx.compose.material3.ButtonDefaults.buttonColors(
+                            containerColor = androidx.compose.ui.graphics.Color(0xFFD97706),
+                            contentColor = androidx.compose.ui.graphics.Color.White
+                        )
+                    ) {
+                        Icon(Icons.Rounded.LocationOn, contentDescription = null)
+                        Spacer(Modifier.width(8.dp))
+                        Text(if (lat == null || lon == null) "CAPTURE CURRENT GPS" else "UPDATE GPS LOCATION", fontWeight = FontWeight.ExtraBold)
+                    }
+                    if (lat != null && lon != null) {
+                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text(
+                                "SAVED COORDINATES",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Text(
+                                "${"%.5f".format(Locale.US, lat)}, ${"%.5f".format(Locale.US, lon)}",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Text(
+                                "Satellite preview · drag to move and pinch to zoom",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        ApiarySatelliteMap(
+                            apiaries = listOf(
+                                Apiary(
+                                    id = existingApiary?.id ?: Long.MIN_VALUE,
+                                    name = name.ifBlank { "Current apiary location" },
+                                    notes = notes,
+                                    latitude = lat,
+                                    longitude = lon,
+                                    forageNotes = forage,
+                                    waterNotes = water
+                                )
+                            ),
+                            focusedApiaryId = existingApiary?.id ?: Long.MIN_VALUE,
+                            currentLocation = null,
+                            satelliteView = true,
+                            modifier = Modifier.fillMaxWidth().height(250.dp).clip(RoundedCornerShape(18.dp))
+                        )
+                        TextButton(
+                            onClick = {
+                                lat = null
+                                lon = null
+                                gpsStatus = "GPS location removed"
+                            },
+                            modifier = Modifier.align(Alignment.End)
+                        ) {
+                            Text("REMOVE LOCATION", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold)
+                        }
+                    } else {
+                        Surface(
+                            shape = RoundedCornerShape(16.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant
+                        ) {
+                            Row(
+                                Modifier.fillMaxWidth().padding(14.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                Icon(Icons.Rounded.LocationOn, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(
+                                    "No map pin yet. Capture GPS while you are at the apiary, or save this yard without a location.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
+                    if (gpsStatus.isNotBlank()) {
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = if (gpsStatus.startsWith("Could") || gpsStatus.startsWith("Location permission denied")) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.secondaryContainer
+                        ) {
+                            Text(
+                                gpsStatus,
+                                modifier = Modifier.fillMaxWidth().padding(10.dp),
+                                color = if (gpsStatus.startsWith("Could") || gpsStatus.startsWith("Location permission denied")) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onSecondaryContainer,
+                                style = MaterialTheme.typography.bodySmall,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                }
+            }
+
+            Button(
+                onClick = { onSave(existingApiary?.id, name.trim(), notes.trim(), lat, lon, forage.trim(), water.trim()) },
+                modifier = Modifier.fillMaxWidth().height(58.dp),
+                enabled = name.isNotBlank() && !deletingApiary,
+                shape = RoundedCornerShape(18.dp),
+                colors = androidx.compose.material3.ButtonDefaults.buttonColors(
+                    containerColor = androidx.compose.ui.graphics.Color(0xFFD97706),
+                    contentColor = androidx.compose.ui.graphics.Color.White,
+                    disabledContainerColor = androidx.compose.ui.graphics.Color(0xFFD97706).copy(alpha = 0.45f),
+                    disabledContentColor = androidx.compose.ui.graphics.Color.White.copy(alpha = 0.75f)
                 )
             ) {
-                Text("DELETE APIARY", fontWeight = FontWeight.ExtraBold)
+                Text(if (existingApiary == null) "SAVE APIARY" else "SAVE CHANGES", fontWeight = FontWeight.ExtraBold)
+            }
+
+            if (existingApiary != null && onDelete != null) {
+                Card(
+                    shape = RoundedCornerShape(20.dp),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.35f)),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+                ) {
+                    Column(
+                        Modifier.fillMaxWidth().padding(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text("DANGER ZONE", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.ExtraBold, color = MaterialTheme.colorScheme.error)
+                        Text("Deleting this apiary also deletes its assigned hives and their histories. This cannot be undone.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        OutlinedButton(
+                            onClick = {
+                                deleteError = null
+                                showDeleteConfirmation = true
+                            },
+                            modifier = Modifier.fillMaxWidth().height(50.dp),
+                            enabled = !deletingApiary,
+                            shape = RoundedCornerShape(14.dp),
+                            colors = androidx.compose.material3.ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                        ) {
+                            Text(if (deletingApiary) "DELETING…" else "DELETE APIARY", fontWeight = FontWeight.ExtraBold)
+                        }
+                    }
+                }
             }
         }
     }
