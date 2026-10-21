@@ -48,6 +48,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.shape.CircleShape
@@ -103,6 +104,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.rememberCoroutineScope
@@ -488,6 +490,8 @@ fun BeeKeepApp(
     var purchaseSuccessScreen by rememberSaveable { mutableStateOf(Screen.HOME) }
     var selectedHiveOpen by rememberSaveable { mutableStateOf(false) }
     var selectedApiaryName by rememberSaveable { mutableStateOf<String?>(null) }
+    // Preserve scroll/search state when a hive detail screen temporarily replaces a list.
+    val screenSaveableStateHolder = rememberSaveableStateHolder()
     var mapOrigin by rememberSaveable { mutableStateOf(Screen.HOME) }
     var mapFocusApiaryId by rememberSaveable { mutableStateOf<Long?>(null) }
     var inspecting by rememberSaveable { mutableStateOf(false) }
@@ -2146,7 +2150,8 @@ fun BeeKeepApp(
             screen = Screen.APIARIES
             return
         }
-        ApiaryHivesScreen(
+        screenSaveableStateHolder.SaveableStateProvider("apiary-hives:$apiaryName") {
+            ApiaryHivesScreen(
             apiaryName = apiaryName,
             hives = hives.filter { it.apiary.equals(apiaryName, ignoreCase = true) },
             compactHiveRows = compactHiveRows,
@@ -2165,7 +2170,8 @@ fun BeeKeepApp(
                     }
                 }
             }
-        )
+            )
+        }
         return
     }
     Scaffold(
@@ -2234,7 +2240,8 @@ fun BeeKeepApp(
                     screen = Screen.APIARIES
                 }
             )
-            Screen.HIVES -> AllHivesScreen(
+            Screen.HIVES -> screenSaveableStateHolder.SaveableStateProvider("all-hives") {
+                AllHivesScreen(
                 hives = hives,
                 compactHiveRows = compactHiveRows,
                 lockedHiveIds = lockedHiveIds,
@@ -2252,7 +2259,8 @@ fun BeeKeepApp(
                         }
                     }
                 }
-            )
+                )
+            }
             Screen.APIARIES -> ApiariesScreen(
                 apiaries, hives, padding,
                 onAddApiary = { addApiaryOptionsVisible = true },
@@ -2514,6 +2522,7 @@ private fun AllHivesScreen(
     onOpenHive: (Long) -> Unit
 ) {
     BackHandler { onBack() }
+    val listState = rememberLazyListState()
     var query by rememberSaveable { mutableStateOf("") }
     val filtered = hives
         .filter { hive ->
@@ -2575,6 +2584,7 @@ private fun AllHivesScreen(
                 }
             } else {
                 LazyColumn(
+                    state = listState,
                     contentPadding = PaddingValues(bottom = 20.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
@@ -2599,6 +2609,7 @@ private fun ApiaryHivesScreen(
     onOpenHive: (Long) -> Unit
 ) {
     BackHandler { onBack() }
+    val listState = rememberLazyListState()
     var query by rememberSaveable(apiaryName) { mutableStateOf("") }
     val filtered = hives.filter { it.number.contains(query, ignoreCase = true) }
 
@@ -2642,7 +2653,7 @@ private fun ApiaryHivesScreen(
                 )
             }
         } else {
-            LazyColumn(contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            LazyColumn(state = listState, contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 items(filtered, key = { it.id }) { hive ->
                     HiveRow(hive, compact = compactHiveRows, locked = hive.id in lockedHiveIds) { onOpenHive(hive.id) }
                 }
