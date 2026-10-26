@@ -168,10 +168,7 @@ class SupabaseGateway(
                     _account.value = _account.value.copy(syncing = false, error = message)
                     return@withLock CloudResult.Failure(message)
                 }
-                val remoteRows = supabase.from("beekeep_workspace_documents")
-                    .select { filter { eq("workspace_id", activeTeamWorkspaceId) } }
-                    .decodeList<CloudWorkspaceDocumentRow>()
-                    .filter { it.workspace_id == activeTeamWorkspaceId }
+                val remoteRows = loadAllWorkspaceDocuments(activeTeamWorkspaceId)
                 val resetAt = System.currentTimeMillis()
                 val tombstones = remoteRows.map { row ->
                     val payload = JSONObject()
@@ -202,9 +199,7 @@ class SupabaseGateway(
             }
 
             // RLS limits this query to the signed-in user's personal cloud documents.
-            val remoteRows = supabase.from("beekeep_documents").select()
-                .decodeList<CloudDocumentRow>()
-                .filter { it.user_id == userId }
+            val remoteRows = loadAllPersonalDocuments().filter { it.user_id == userId }
             val resetAt = System.currentTimeMillis()
             val tombstones = remoteRows.map { row ->
                 val existingPayload = runCatching { JSONObject(row.payload) }.getOrDefault(JSONObject())
@@ -310,6 +305,31 @@ class SupabaseGateway(
                 }
                 .decodeList<CloudDocumentRow>()
             documents += page
+            if (page.size < pageSize) break
+            offset += pageSize
+        }
+        return documents
+    }
+
+    /**
+     * Team workspaces can grow beyond a single PostgREST response. Page in a deterministic
+     * order so sync and reset see the full record set rather than silently skipping later rows.
+     */
+    private suspend fun loadAllWorkspaceDocuments(workspaceId: String): List<CloudWorkspaceDocumentRow> {
+        val supabase = client ?: return emptyList()
+        val pageSize = 500L
+        var offset = 0L
+        val documents = mutableListOf<CloudWorkspaceDocumentRow>()
+        while (true) {
+            val page = supabase.from("beekeep_workspace_documents")
+                .select {
+                    filter { eq("workspace_id", workspaceId) }
+                    order(column = "entity_type", order = Order.ASCENDING)
+                    order(column = "entity_id", order = Order.ASCENDING)
+                    range(offset..(offset + pageSize - 1L))
+                }
+                .decodeList<CloudWorkspaceDocumentRow>()
+            documents += page.filter { it.workspace_id == workspaceId }
             if (page.size < pageSize) break
             offset += pageSize
         }
@@ -561,26 +581,6 @@ class SupabaseGateway(
     ): CloudResult {
         val supabase = client ?: return CloudResult.NotConfigured
         try {
-            suspend fun loadAllWorkspaceDocuments(): List<CloudWorkspaceDocumentRow> {
-                val pageSize = 500L
-                var offset = 0L
-                val documents = mutableListOf<CloudWorkspaceDocumentRow>()
-                while (true) {
-                    val page = supabase.from("beekeep_workspace_documents")
-                        .select {
-                            filter { eq("workspace_id", workspaceId) }
-                            order(column = "entity_type", order = Order.ASCENDING)
-                            order(column = "entity_id", order = Order.ASCENDING)
-                            range(offset..(offset + pageSize - 1L))
-                        }
-                        .decodeList<CloudWorkspaceDocumentRow>()
-                    documents += page.filter { it.workspace_id == workspaceId }
-                    if (page.size < pageSize) break
-                    offset += pageSize
-                }
-                return documents
-            }
-
             val workspace = supabase.postgrest.rpc("beekeep_list_workspaces")
                 .decodeList<BeeKeepWorkspace>()
                 .firstOrNull { it.id == workspaceId && !it.is_personal }
@@ -597,7 +597,7 @@ class SupabaseGateway(
             if (repository.activeWorkspaceReadOnly.value == isWritable) {
                 repository.switchWorkspace(workspaceId, readOnly = !isWritable)
             }
-            val remoteBefore = loadAllWorkspaceDocuments()
+            val remoteBefore = loadAllWorkspaceDocuments(workspaceId)
             val remoteByKey = remoteBefore.associateBy { "${it.entity_type}:${it.entity_id}" }.toMutableMap()
             val pending = repository.pendingSync(100)
             val uploadable = mutableListOf<CloudWorkspaceDocumentRow>()
