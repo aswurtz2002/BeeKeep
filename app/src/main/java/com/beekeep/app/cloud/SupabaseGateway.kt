@@ -291,6 +291,31 @@ class SupabaseGateway(
         }
     }
 
+    /**
+     * Personal workspaces can contain thousands of hive and history records. PostgREST
+     * responses are bounded, so always page with a deterministic order instead of silently
+     * treating a single response page as the entire local/cloud dataset.
+     */
+    private suspend fun loadAllPersonalDocuments(): List<CloudDocumentRow> {
+        val supabase = client ?: return emptyList()
+        val pageSize = 500L
+        var offset = 0L
+        val documents = mutableListOf<CloudDocumentRow>()
+        while (true) {
+            val page = supabase.from("beekeep_documents")
+                .select {
+                    order(column = "entity_type", order = Order.ASCENDING)
+                    order(column = "entity_id", order = Order.ASCENDING)
+                    range(offset..(offset + pageSize - 1L))
+                }
+                .decodeList<CloudDocumentRow>()
+            documents += page
+            if (page.size < pageSize) break
+            offset += pageSize
+        }
+        return documents
+    }
+
     suspend fun syncNow(): CloudResult = syncMutex.withLock {
         if (!configured || client == null) return@withLock CloudResult.NotConfigured
         try {
@@ -325,7 +350,7 @@ class SupabaseGateway(
         try {
 
             // Pull first. This prevents an older offline outbox entry from overwriting a newer cloud record.
-            val remoteBefore = client.from("beekeep_documents").select().decodeList<CloudDocumentRow>()
+            val remoteBefore = loadAllPersonalDocuments()
             val remoteByKey = remoteBefore.associateBy { "${it.entity_type}:${it.entity_id}" }
             val pending = repository.pendingSync(100)
             val uploadable = mutableListOf<CloudDocumentRow>()
@@ -356,7 +381,7 @@ class SupabaseGateway(
                 pending.filter { it.id in uploadableIds }.forEach { repository.markSyncDone(it.id) }
             }
 
-            val remote = client.from("beekeep_documents").select().decodeList<CloudDocumentRow>()
+            val remote = loadAllPersonalDocuments()
             remote.forEach { repository.applyCloudDocument(it) }
 
             repository.pruneSync()
