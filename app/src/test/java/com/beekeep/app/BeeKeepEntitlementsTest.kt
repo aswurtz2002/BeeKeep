@@ -60,16 +60,16 @@ class BeeKeepEntitlementsTest {
 
     @Test
     fun yearlyPricesShowCorrectSavingsComparedWithMonthlyBilling() {
-        assertEquals(71.88, BeeKeepPricing.PRO_MONTHLY_CAD * 12, 0.001)
-        assertEquals(21.89, BeeKeepPricing.proYearlySavingsCad, 0.001)
+        assertEquals(35.88, BeeKeepPricing.PRO_MONTHLY_CAD * 12, 0.001)
+        assertEquals(10.89, BeeKeepPricing.proYearlySavingsCad, 0.001)
         assertEquals(30, BeeKeepPricing.proYearlyDiscountPercent)
-        assertEquals(119.88, BeeKeepPricing.ULTIMATE_MONTHLY_CAD * 12, 0.001)
-        assertEquals(39.89, BeeKeepPricing.ultimateYearlySavingsCad, 0.001)
-        assertEquals(33, BeeKeepPricing.ultimateYearlyDiscountPercent)
-        assertEquals("$5.99", BeeKeepPricing.formatCad(BeeKeepPricing.PRO_MONTHLY_CAD))
-        assertEquals("$49.99", BeeKeepPricing.formatCad(BeeKeepPricing.PRO_YEARLY_CAD))
-        assertEquals("$9.99", BeeKeepPricing.formatCad(BeeKeepPricing.ULTIMATE_MONTHLY_CAD))
-        assertEquals("$79.99", BeeKeepPricing.formatCad(BeeKeepPricing.ULTIMATE_YEARLY_CAD))
+        assertEquals(83.88, BeeKeepPricing.ULTIMATE_MONTHLY_CAD * 12, 0.001)
+        assertEquals(23.89, BeeKeepPricing.ultimateYearlySavingsCad, 0.001)
+        assertEquals(28, BeeKeepPricing.ultimateYearlyDiscountPercent)
+        assertEquals("$2.99", BeeKeepPricing.formatCad(BeeKeepPricing.PRO_MONTHLY_CAD))
+        assertEquals("$24.99", BeeKeepPricing.formatCad(BeeKeepPricing.PRO_YEARLY_CAD))
+        assertEquals("$6.99", BeeKeepPricing.formatCad(BeeKeepPricing.ULTIMATE_MONTHLY_CAD))
+        assertEquals("$59.99", BeeKeepPricing.formatCad(BeeKeepPricing.ULTIMATE_YEARLY_CAD))
     }
 
     @Test
