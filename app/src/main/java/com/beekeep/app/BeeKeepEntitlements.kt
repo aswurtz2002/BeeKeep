@@ -209,6 +209,26 @@ object BeeKeepEntitlements {
     internal fun countHivesSubjectToFreeLimit(hiveIds: Collection<Long>, lockedIds: Set<Long>): Int =
         hiveIds.count { it !in lockedIds }
 
+    /**
+     * Converts the trusted server response to a paid plan for release UI. A missing/expired
+     * server entitlement always resolves to Free; editable profile metadata is never used here.
+     */
+    internal fun planFromServerEntitlement(
+        planCode: String?,
+        baseHiveLimit: Int,
+        isActivePaidPlan: Boolean
+    ): BeeKeepPlan {
+        if (!isActivePaidPlan || baseHiveLimit < PRO_HIVE_LIMIT) return BeeKeepPlan.FREE
+        val normalized = planCode.orEmpty().lowercase(Locale.ROOT).filter(Char::isLetter)
+        return when (normalized) {
+            "pro", "promonthly" -> BeeKeepPlan.PRO
+            "proyearly" -> BeeKeepPlan.PRO_YEARLY
+            "ultimate", "ultimatemonthly" -> BeeKeepPlan.ULTIMATE
+            "ultimateyearly" -> BeeKeepPlan.ULTIMATE_YEARLY
+            else -> if (baseHiveLimit >= ULTIMATE_HIVE_LIMIT) BeeKeepPlan.ULTIMATE else BeeKeepPlan.PRO
+        }
+    }
+
     private fun standardHiveLimit(plan: BeeKeepPlan): Int = when (plan) {
         BeeKeepPlan.FREE -> FREE_HIVE_LIMIT
         BeeKeepPlan.PRO, BeeKeepPlan.PRO_YEARLY -> PRO_HIVE_LIMIT
