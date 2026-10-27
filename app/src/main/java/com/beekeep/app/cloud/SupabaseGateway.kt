@@ -124,7 +124,7 @@ class SupabaseGateway(
                 .decodeList<BeeKeepHiveLimitOverride>()
                 .firstOrNull()
             val limit = response?.hive_limit_override?.takeIf {
-                it in BeeKeepEntitlements.ULTIMATE_HIVE_LIMIT..BeeKeepEntitlements.MAX_CUSTOM_HIVE_LIMIT
+                it in BeeKeepEntitlements.PRO_HIVE_LIMIT..BeeKeepEntitlements.MAX_CUSTOM_HIVE_LIMIT
             }
             BeeKeepEntitlements.updateCloudHiveLimitOverride(appContext, userId, limit)
             _hiveLimitOverride.value = limit
