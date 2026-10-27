@@ -91,7 +91,10 @@ $expired_rpc_assertion$;
 reset role;
 
 -- Exercise the insert guard using the Free tier's 150-record cap without creating thousands
--- of fixtures. The account has a fake override row, which must not increase its allowance.
+-- of fixtures. Run as the matching authenticated account because the existing cloud trigger also
+-- verifies auth.uid() against user_id. The fake override row must not increase the allowance.
+set role authenticated;
+select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-000000000024', true);
 insert into public.beekeep_documents (
     user_id, entity_type, entity_id, payload, updated_at, deleted, device_id
 )
@@ -123,6 +126,7 @@ begin
     end if;
 end;
 $personal_limit_guard_assertion$;
+reset role;
 
 rollback;
 
