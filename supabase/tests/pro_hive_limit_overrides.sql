@@ -113,7 +113,7 @@ begin
     end if;
 
     -- Signed-in customers can read only their own verified Pro allowance through the dedicated RPC.
-    set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-000000000042', true);
+    perform set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-000000000042', true);
     select hive_limit_override into current_limit
       from public.beekeep_my_hive_limit_override();
     if current_limit <> 1500 then
