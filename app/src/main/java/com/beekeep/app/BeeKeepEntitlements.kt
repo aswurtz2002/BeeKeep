@@ -228,6 +228,9 @@ object BeeKeepEntitlements {
     fun hiveLimit(plan: BeeKeepPlan): Int =
         effectiveHiveLimit(plan, activeCloudHiveLimitOverride)
 
+    fun hiveLimit(plan: BeeKeepPlan, customLimit: Int?): Int =
+        effectiveHiveLimit(plan, customLimit ?: activeCloudHiveLimitOverride)
+
     /** This overload loads the account-scoped cache before making a quota decision. */
     fun hiveLimit(context: Context): Int {
         val prefs = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
