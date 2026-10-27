@@ -70,7 +70,7 @@ internal fun PurchaseScreen(
             price = BeeKeepPricing.formatCad(BeeKeepPricing.PRO_MONTHLY_CAD),
             billing = "CAD / month",
             description = "More capacity for a growing beekeeping operation.",
-            features = listOf("Up to 1,000 hives", "Up to 100 apiaries"),
+            features = listOf("1,000 hive limit", "100 apiary limit"),
             current = currentPlan == BeeKeepPlan.PRO,
             highlighted = false,
             actionLabel = when {
@@ -87,7 +87,7 @@ internal fun PurchaseScreen(
             price = BeeKeepPricing.formatCad(BeeKeepPricing.PRO_YEARLY_CAD),
             billing = "CAD / year",
             description = "Billed yearly. Save ${BeeKeepPricing.proYearlyDiscountPercent}% compared with 12 monthly payments.",
-            features = listOf("Up to 1,000 hives", "Up to 100 apiaries"),
+            features = listOf("1,000 hive limit", "100 apiary limit"),
             current = currentPlan == BeeKeepPlan.PRO_YEARLY,
             highlighted = false,
             badgeText = "${BeeKeepPricing.proYearlyDiscountPercent}% OFF",
@@ -106,10 +106,10 @@ internal fun PurchaseScreen(
             billing = "CAD / month",
             description = "Built for large operations that need shared workplace access and cloud sync.",
             features = listOf(
-                "Up to 10,000 hives",
-                "Up to 1,000 apiaries",
-                "Shared workplace — only the owner needs Ultimate; invited workers do not need their own subscription",
-                "Cloud sync"
+                "10,000 hive limit",
+                "1,000 apiary limit",
+                "Cloud sync",
+                "Shared workplace — only the owner needs Ultimate; invited workers do not need their own subscription"
             ),
             current = currentPlan == BeeKeepPlan.ULTIMATE,
             highlighted = false,
@@ -128,10 +128,10 @@ internal fun PurchaseScreen(
             billing = "CAD / year",
             description = "Billed yearly. Save ${BeeKeepPricing.ultimateYearlyDiscountPercent}% compared with 12 monthly payments.",
             features = listOf(
-                "Up to 10,000 hives",
-                "Up to 1,000 apiaries",
-                "Shared workplace — only the owner needs Ultimate; invited workers do not need their own subscription",
-                "Cloud sync"
+                "10,000 hive limit",
+                "1,000 apiary limit",
+                "Cloud sync",
+                "Shared workplace — only the owner needs Ultimate; invited workers do not need their own subscription"
             ),
             current = currentPlan == BeeKeepPlan.ULTIMATE_YEARLY,
             highlighted = true,
