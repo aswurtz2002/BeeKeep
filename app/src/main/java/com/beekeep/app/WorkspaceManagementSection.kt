@@ -300,7 +300,10 @@ fun WorkspaceManagementSection(
                     }
                     OutlinedButton(
                         enabled = !loading,
-                        onClick = { showJoinAnotherTeam = true }
+                        onClick = {
+                            showJoinAnotherTeam = true
+                            createdInvite = null
+                        }
                     ) { Text("JOIN") }
                     Button(
                         enabled = !loading,
@@ -428,6 +431,60 @@ fun WorkspaceManagementSection(
                 }
             }
         }
+
+            WorkspacePanel(
+                title = if (sharedWorkspaces.isEmpty()) "Join a team" else "Join another team",
+                description = if (sharedWorkspaces.isEmpty()) {
+                    "Enter the invitation code you received."
+                } else {
+                    "Have an invitation code for another team?"
+                },
+                collapsible = sharedWorkspaces.isNotEmpty(),
+                expanded = showJoinAnotherTeam || sharedWorkspaces.isEmpty(),
+                onToggle = { showJoinAnotherTeam = !showJoinAnotherTeam }
+            ) {
+                OutlinedTextField(
+                    value = acceptToken,
+                    onValueChange = { value -> acceptToken = value.filter { it in 'A'..'Z' || it in 'a'..'z' || it in '0'..'9' }.take(128) },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Invitation code") },
+                    placeholder = { Text("Bee123456") },
+                    singleLine = true
+                )
+                Text(
+                    "Use the BeeKeep account email the invitation was sent to.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Button(
+                    enabled = account.signedIn && !loading && isSupportedWorkspaceInvitationCode(acceptToken),
+                    onClick = {
+                        scope.launch {
+                            loading = true
+                            val result = cloud.acceptWorkspaceInvitation(acceptToken)
+                            if (result.isSuccess && result.value != null) {
+                                val joined = result.value!!
+                                acceptToken = ""
+                                createdInvite = null
+                                val refreshed = cloud.listWorkspaces()
+                                if (refreshed.isSuccess) workspaces = refreshed.value.orEmpty()
+                                selectedWorkspaceId = joined.workspace_id
+                                activity.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE).edit()
+                                    .putString("selected_team_workspace_id", joined.workspace_id).apply()
+                                val activation = cloud.activateWorkspace(joined.workspace_id)
+                                activeWorkspaceId = activity.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
+                                    .getString("active_team_workspace_id", "").orEmpty()
+                                message = activation.error
+                                    ?: "Joined ${joined.workspace_name} as ${joined.workspace_role}. Team data is now active."
+                            } else {
+                                message = result.error ?: "Couldn't accept this invitation."
+                            }
+                            loading = false
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text("JOIN WORKSPACE") }
+            }
 
         if (account.signedIn) {
             selectedWorkspace?.let { workspace ->
@@ -930,59 +987,7 @@ fun WorkspaceManagementSection(
                 }
             }
 
-            WorkspacePanel(
-                title = if (sharedWorkspaces.isEmpty()) "Join a team" else "Join another team",
-                description = if (sharedWorkspaces.isEmpty()) {
-                    "Enter the invitation code you received."
-                } else {
-                    "Have an invitation code for another team?"
-                },
-                collapsible = sharedWorkspaces.isNotEmpty(),
-                expanded = showJoinAnotherTeam || sharedWorkspaces.isEmpty(),
-                onToggle = { showJoinAnotherTeam = !showJoinAnotherTeam }
-            ) {
-                OutlinedTextField(
-                    value = acceptToken,
-                    onValueChange = { value -> acceptToken = value.filter { it in 'A'..'Z' || it in 'a'..'z' || it in '0'..'9' }.take(128) },
-                    modifier = Modifier.fillMaxWidth(),
-                    label = { Text("Invitation code") },
-                    placeholder = { Text("Bee123456") },
-                    singleLine = true
-                )
-                Text(
-                    "Use the BeeKeep account email the invitation was sent to.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Button(
-                    enabled = account.signedIn && !loading && isSupportedWorkspaceInvitationCode(acceptToken),
-                    onClick = {
-                        scope.launch {
-                            loading = true
-                            val result = cloud.acceptWorkspaceInvitation(acceptToken)
-                            if (result.isSuccess && result.value != null) {
-                                val joined = result.value!!
-                                acceptToken = ""
-                                createdInvite = null
-                                val refreshed = cloud.listWorkspaces()
-                                if (refreshed.isSuccess) workspaces = refreshed.value.orEmpty()
-                                selectedWorkspaceId = joined.workspace_id
-                                activity.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE).edit()
-                                    .putString("selected_team_workspace_id", joined.workspace_id).apply()
-                                val activation = cloud.activateWorkspace(joined.workspace_id)
-                                activeWorkspaceId = activity.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
-                                    .getString("active_team_workspace_id", "").orEmpty()
-                                message = activation.error
-                                    ?: "Joined ${joined.workspace_name} as ${joined.workspace_role}. Team data is now active."
-                            } else {
-                                message = result.error ?: "Couldn't accept this invitation."
-                            }
-                            loading = false
-                        }
-                    },
-                    modifier = Modifier.fillMaxWidth()
-                ) { Text("JOIN WORKSPACE") }
-            }
+
 
             if (message.isNotBlank()) {
                 val messageIsError = listOf(
