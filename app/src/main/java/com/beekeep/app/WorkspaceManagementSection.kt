@@ -282,12 +282,14 @@ fun WorkspaceManagementSection(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             } else {
-                Row(
+                Column(
                     modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(3.dp)
+                    ) {
                         Text(
                             if (sharedWorkspaces.size == 1) "1 team workspace" else "${sharedWorkspaces.size} team workspaces",
                             style = MaterialTheme.typography.titleSmall,
@@ -299,32 +301,44 @@ fun WorkspaceManagementSection(
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
-                    OutlinedButton(
-                        enabled = !loading,
-                        onClick = {
-                            showJoinAnotherTeam = true
-                            createdInvite = null
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        OutlinedButton(
+                            enabled = !loading,
+                            onClick = {
+                                showJoinAnotherTeam = true
+                                createdInvite = null
+                            },
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text("JOIN TEAM", maxLines = 1, softWrap = false)
                         }
-                    ) { Text("JOIN") }
-                    Button(
-                        enabled = !loading,
-                        onClick = {
-                            // Recheck server entitlement. Debug Ultimate plans are synced only
-                            // to BeeKeep-Staging; verification failures are not upgrade denials.
-                            scope.launch {
-                                loading = true
-                                when (refreshUltimateEntitlement()) {
-                                    true -> {
-                                        showUltimateRequiredDialog = false
-                                        showCreateDialog = true
+                        Button(
+                            enabled = !loading,
+                            onClick = {
+                                // Recheck server entitlement. Debug Ultimate plans are synced only
+                                // to BeeKeep-Staging; verification failures are not upgrade denials.
+                                scope.launch {
+                                    loading = true
+                                    when (refreshUltimateEntitlement()) {
+                                        true -> {
+                                            showUltimateRequiredDialog = false
+                                            showCreateDialog = true
+                                        }
+                                        false -> showUltimateRequiredDialog = true
+                                        null -> Unit
                                     }
-                                    false -> showUltimateRequiredDialog = true
-                                    null -> Unit
+                                    loading = false
                                 }
-                                loading = false
-                            }
+                            },
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text("CREATE TEAM", maxLines = 1, softWrap = false)
                         }
-                    ) { Text("CREATE TEAM") }
+                    }
                 }
 
                 if (sharedWorkspaces.isEmpty()) {

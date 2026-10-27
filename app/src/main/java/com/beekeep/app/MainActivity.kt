@@ -541,7 +541,6 @@ fun BeeKeepApp(
     val deadHives by vm.deadHives.collectAsStateWithLifecycle()
     val account by cloud.account.collectAsStateWithLifecycle()
     val activeWorkspaceId by vm.activeWorkspaceId.collectAsStateWithLifecycle()
-    val activeWorkspaceReadOnly by vm.activeWorkspaceReadOnly.collectAsStateWithLifecycle()
     val apiaries by vm.apiaries.collectAsStateWithLifecycle()
     val selected by vm.selected.collectAsStateWithLifecycle()
     val inspections by vm.inspections.collectAsStateWithLifecycle()
@@ -2179,37 +2178,6 @@ fun BeeKeepApp(
         topBar = {},
         bottomBar = {
             Column {
-                if (account.signedIn && !activeWorkspaceId.isNullOrBlank()) {
-                    Surface(
-                        color = MaterialTheme.colorScheme.secondaryContainer,
-                        contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
-                        tonalElevation = 1.dp
-                    ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    "TEAM WORKSPACE ACTIVE",
-                                    style = MaterialTheme.typography.labelLarge,
-                                    fontWeight = FontWeight.Bold
-                                )
-                                Text(
-                                    if (activeWorkspaceReadOnly) {
-                                        "Shared team data · View only"
-                                    } else {
-                                        "Shared team data · Changes sync with your team"
-                                    },
-                                    style = MaterialTheme.typography.bodySmall
-                                )
-                            }
-                            TextButton(onClick = { screen = Screen.MORE }) {
-                                Text("MANAGE")
-                            }
-                        }
-                    }
-                }
             NavigationBar(
                 modifier = Modifier.clip(RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp)),
                 containerColor = if (darkMode) NavBarDark else NavBarLight,
