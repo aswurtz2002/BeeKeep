@@ -1,4 +1,4 @@
-// Private support-admin endpoint for BeeKeep per-account Ultimate hive-limit exceptions.
+// Private support-admin endpoint for BeeKeep per-account Pro and Ultimate hive-limit exceptions.
 // The service-role key stays in Supabase. Every mutating request rechecks the trusted
 // app_metadata flag on the authenticated user before touching the internal override table.
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
@@ -88,16 +88,18 @@ Deno.serve(async (req: Request) => {
   }
 
   let customLimit: number | null = null;
-  let reason: string | null = null;
+  let reason: string | null = typeof body.reason === "string" ? body.reason.trim() : null;
   if (action === "set") {
     customLimit = body.hive_limit as number;
-    reason = typeof body.reason === "string" ? body.reason.trim() : "";
-    if (!Number.isInteger(customLimit) || customLimit < 10000 || customLimit > 1000000) {
-      return respond(400, { success: false, error: "Custom hive limits must be between 10,000 and 1,000,000." });
+    reason = reason ?? "";
+    if (!Number.isInteger(customLimit) || customLimit < 1000 || customLimit > 1000000) {
+      return respond(400, { success: false, error: "Custom hive limits must be between 1,000 and 1,000,000. The server also checks the account's plan-specific minimum." });
     }
     if (reason.length < 3 || reason.length > 500) {
       return respond(400, { success: false, error: "Enter a reason between 3 and 500 characters." });
     }
+  } else if (action === "clear" && reason != null && reason.length > 0 && (reason.length < 3 || reason.length > 500)) {
+    return respond(400, { success: false, error: "Enter a reason between 3 and 500 characters, or leave it blank." });
   }
 
   const admin = createClient(supabaseUrl, serviceRoleKey, {

@@ -422,6 +422,7 @@ fun BeeKeepApp(
 ) {
     val context = LocalContext.current
     val cloudHiveLimitOverride by cloud.hiveLimitOverride.collectAsStateWithLifecycle()
+    val serverVerifiedPlan by cloud.verifiedPlan.collectAsStateWithLifecycle()
     val autoVoicePrefs = remember(context) {
         context.getSharedPreferences(PREFS, android.content.Context.MODE_PRIVATE)
     }
@@ -486,7 +487,10 @@ fun BeeKeepApp(
     var purchasePlanName by rememberSaveable {
         mutableStateOf(BeeKeepEntitlements.currentPlan(context).name)
     }
-    val purchasePlan = runCatching { BeeKeepPlan.valueOf(purchasePlanName) }.getOrDefault(BeeKeepPlan.FREE)
+    val localPurchasePlan = runCatching { BeeKeepPlan.valueOf(purchasePlanName) }.getOrDefault(BeeKeepPlan.FREE)
+    // Release quotas follow the authenticated server entitlement rather than defaulting every
+    // paid customer to Free. Debug builds retain the local purchase simulator.
+    val purchasePlan = if (BuildConfig.DEBUG) localPurchasePlan else serverVerifiedPlan ?: BeeKeepPlan.FREE
     val effectiveHiveLimit = BeeKeepEntitlements.hiveLimit(purchasePlan, cloudHiveLimitOverride)
     var lockedHiveIds by remember { mutableStateOf(BeeKeepEntitlements.lockedHiveIds(context)) }
     var lockedHivePromptVisible by rememberSaveable { mutableStateOf(false) }

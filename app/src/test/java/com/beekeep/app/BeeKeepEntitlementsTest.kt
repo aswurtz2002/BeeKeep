@@ -96,26 +96,63 @@ class BeeKeepEntitlementsTest {
     }
 
     @Test
-    fun customHiveLimitRaisesOnlyAnActiveUltimateAllowance() {
+    fun customHiveLimitRaisesOnlyAnActivePaidPlanAllowance() {
+        assertEquals(1_000, BeeKeepEntitlements.effectiveHiveLimit(BeeKeepPlan.PRO, null))
+        assertEquals(1_000, BeeKeepEntitlements.effectiveHiveLimit(BeeKeepPlan.PRO_YEARLY, 999))
+        assertEquals(1_500, BeeKeepEntitlements.effectiveHiveLimit(BeeKeepPlan.PRO, 1_500))
+        assertEquals(25_000, BeeKeepEntitlements.effectiveHiveLimit(BeeKeepPlan.PRO_YEARLY, 25_000))
+
         assertEquals(10_000, BeeKeepEntitlements.effectiveHiveLimit(BeeKeepPlan.ULTIMATE, null))
         assertEquals(10_000, BeeKeepEntitlements.effectiveHiveLimit(BeeKeepPlan.ULTIMATE_YEARLY, 9_999))
         assertEquals(11_000, BeeKeepEntitlements.effectiveHiveLimit(BeeKeepPlan.ULTIMATE, 11_000))
         assertEquals(25_000, BeeKeepEntitlements.effectiveHiveLimit(BeeKeepPlan.ULTIMATE_YEARLY, 25_000))
 
-        // A trusted override is only honored for Ultimate; it cannot grant extra capacity
-        // to a Free or Pro account if one is accidentally left in the override table.
+        // Overrides never grant a paid allowance to Free or allow a limit outside the supported range.
         assertEquals(150, BeeKeepEntitlements.effectiveHiveLimit(BeeKeepPlan.FREE, 11_000))
-        assertEquals(1_000, BeeKeepEntitlements.effectiveHiveLimit(BeeKeepPlan.PRO, 11_000))
+        assertEquals(1_000, BeeKeepEntitlements.effectiveHiveLimit(BeeKeepPlan.PRO, 999_999_999))
         assertEquals(10_000, BeeKeepEntitlements.effectiveHiveLimit(BeeKeepPlan.ULTIMATE, 1_000_001))
     }
 
     @Test
-    fun customUltimateLimitMessageShowsTheIndividualAllowance() {
-        val message = BeeKeepEntitlements.hiveLimitMessage(BeeKeepPlan.ULTIMATE, 11_000)
-        assertTrue(message.contains("11,000"))
-        assertTrue(message.contains("custom BeeKeep Ultimate hive limit"))
-        assertTrue(message.contains("existing records are safe"))
-        assertFalse(message.contains("10,000 hive limit"))
+    fun customHiveLimitWarningsShowThePerAccountAllowanceForProAndUltimate() {
+        val proMessage = BeeKeepEntitlements.hiveLimitMessage(BeeKeepPlan.PRO, 1_500)
+        assertTrue(proMessage.contains("1,500"))
+        assertTrue(proMessage.contains("custom BeeKeep Pro hive limit"))
+        assertFalse(proMessage.contains("Pro has a 1,000 hive limit"))
+
+        val ultimateMessage = BeeKeepEntitlements.hiveLimitMessage(BeeKeepPlan.ULTIMATE, 11_000)
+        assertTrue(ultimateMessage.contains("11,000"))
+        assertTrue(ultimateMessage.contains("custom BeeKeep Ultimate hive limit"))
+        assertTrue(ultimateMessage.contains("existing records are safe"))
+        assertFalse(ultimateMessage.contains("10,000 hive limit"))
+    }
+
+    @Test
+    fun trustedServerEntitlementMapsActivePaidTiersAndRejectsExpiredPlans() {
+        assertEquals(
+            BeeKeepPlan.PRO_YEARLY,
+            BeeKeepEntitlements.planFromServerEntitlement("pro_yearly", 1_000, isActivePaidPlan = true)
+        )
+        assertEquals(
+            BeeKeepPlan.PRO,
+            BeeKeepEntitlements.planFromServerEntitlement("pro_monthly", 1_000, isActivePaidPlan = true)
+        )
+        assertEquals(
+            BeeKeepPlan.ULTIMATE_YEARLY,
+            BeeKeepEntitlements.planFromServerEntitlement("ultimate_yearly", 10_000, isActivePaidPlan = true)
+        )
+        assertEquals(
+            BeeKeepPlan.ULTIMATE,
+            BeeKeepEntitlements.planFromServerEntitlement("ultimate_monthly", 10_000, isActivePaidPlan = true)
+        )
+        assertEquals(
+            BeeKeepPlan.FREE,
+            BeeKeepEntitlements.planFromServerEntitlement("ultimate_yearly", 150, isActivePaidPlan = false)
+        )
+        assertEquals(
+            BeeKeepPlan.FREE,
+            BeeKeepEntitlements.planFromServerEntitlement("pro_yearly", 1_000, isActivePaidPlan = false)
+        )
     }
 
     @Test

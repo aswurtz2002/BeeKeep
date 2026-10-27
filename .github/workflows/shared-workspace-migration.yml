@@ -113,3 +113,8 @@ jobs:
         run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261027110000_beekeep_admin_hive_limit_tool.sql
       - name: Verify protected support-admin hive-limit operations
         run: psql -v ON_ERROR_STOP=1 -f supabase/tests/admin_hive_limit_tool.sql
+
+      - name: Extend custom hive limits to Pro and add support audit history
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261027130000_beekeep_pro_and_ultimate_hive_limit_overrides.sql
+      - name: Verify Pro and Ultimate custom hive limits and audit trail
+        run: psql -v ON_ERROR_STOP=1 -f supabase/tests/pro_hive_limit_overrides.sql

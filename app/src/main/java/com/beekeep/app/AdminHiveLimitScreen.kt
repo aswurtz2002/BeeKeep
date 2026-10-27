@@ -1,6 +1,7 @@
 package com.beekeep.app
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -10,9 +11,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -42,6 +43,8 @@ import com.beekeep.app.cloud.SupabaseGateway
 import kotlinx.coroutines.launch
 import java.util.Locale
 
+private const val ADMIN_MAX_CUSTOM_HIVE_LIMIT = 1_000_000
+
 @Composable
 internal fun AdminHiveLimitScreen(
     padding: androidx.compose.foundation.layout.PaddingValues,
@@ -55,11 +58,12 @@ internal fun AdminHiveLimitScreen(
     var authorized by remember { mutableStateOf(false) }
     var accessMessage by remember { mutableStateOf("") }
     var targetEmail by remember { mutableStateOf("") }
-    var limitText by remember { mutableStateOf("11000") }
-    var reasonText by remember { mutableStateOf("Approved support exception: increased Ultimate hive allowance") }
+    var limitText by remember { mutableStateOf("") }
+    var reasonText by remember { mutableStateOf("Approved support exception: increased hive allowance") }
     var accountResult by remember { mutableStateOf<SupportAdminHiveLimitResponse?>(null) }
     var busy by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf("") }
+    var messageIsError by remember { mutableStateOf(false) }
     var pendingAction by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(account.signedIn, account.email) {
@@ -79,54 +83,76 @@ internal fun AdminHiveLimitScreen(
         checkingAccess = false
     }
 
-    fun runLookup() {
+    fun runLookup(email: String = targetEmail.trim()) {
         scope.launch {
             busy = true
             message = ""
+            messageIsError = false
             accountResult = null
             val result = cloud.manageSupportHiveLimit(
                 action = "lookup",
-                email = targetEmail.trim(),
+                email = email,
                 hiveLimit = null,
                 reason = null
             )
             if (result.isSuccess && result.value != null) {
-                accountResult = result.value
-                limitText = (result.value.customHiveLimit ?: 11000).toString()
-                reasonText = result.value.overrideReason
-                    ?: "Approved support exception: increased Ultimate hive allowance"
-                message = "Account found. Review its entitlement before making changes."
+                val found = result.value
+                accountResult = found
+                targetEmail = found.accountEmail.orEmpty()
+                limitText = (found.customHiveLimit ?: suggestedHiveLimit(found.baseHiveLimit)).toString()
+                reasonText = if (found.customHiveLimit == null) {
+                    "Approved support exception: increased hive allowance"
+                } else {
+                    "Support adjustment following review of the existing custom limit"
+                }
+                message = "Account loaded. No changes have been made."
             } else {
                 message = result.error ?: "Could not look up that account."
+                messageIsError = true
             }
             busy = false
         }
     }
 
     fun runMutation(action: String) {
+        val selectedAccount = accountResult ?: return
         scope.launch {
             busy = true
             message = ""
+            messageIsError = false
             val result = cloud.manageSupportHiveLimit(
                 action = action,
-                email = accountResult?.accountEmail ?: targetEmail.trim(),
+                email = selectedAccount.accountEmail ?: targetEmail.trim(),
                 hiveLimit = if (action == "set") limitText.toIntOrNull() else null,
-                reason = if (action == "set") reasonText.trim() else null
+                reason = reasonText.trim().takeIf { it.isNotBlank() }
             )
             if (result.isSuccess && result.value != null) {
-                accountResult = result.value
-                limitText = (result.value.customHiveLimit ?: 11000).toString()
+                val updated = result.value
+                accountResult = updated
+                targetEmail = updated.accountEmail.orEmpty()
+                limitText = (updated.customHiveLimit ?: suggestedHiveLimit(updated.baseHiveLimit)).toString()
                 message = if (action == "set") {
-                    "Custom hive limit saved. The customer's app will pick it up after its cloud entitlement refreshes."
+                    "Saved successfully: ${formatLimit(updated.customHiveLimit ?: limitText.toIntOrNull() ?: updated.baseHiveLimit)} hives. This changes the account's hive ceiling, not its subscription. The customer's device picks up the new limit on its next successful cloud sync."
                 } else {
-                    "Custom override removed. An active Ultimate account returns to the standard 10,000-hive allowance."
+                    "Override removed. The active plan now uses its standard ${formatLimit(updated.baseHiveLimit)}-hive allowance."
                 }
             } else {
                 message = result.error ?: "The support-admin request failed."
+                messageIsError = true
             }
             busy = false
         }
     }
+
+    val current = accountResult
+    val minimumAllowed = current?.let { maxOf(BeeKeepEntitlements.PRO_HIVE_LIMIT, it.baseHiveLimit) }
+        ?: BeeKeepEntitlements.PRO_HIVE_LIMIT
+    val proposedLimit = limitText.toIntOrNull()
+    val canSave = !busy &&
+        current?.isActivePaidPlan == true &&
+        proposedLimit != null &&
+        proposedLimit in minimumAllowed..ADMIN_MAX_CUSTOM_HIVE_LIMIT &&
+        reasonText.trim().length in 3..500
 
     Column(
         Modifier
@@ -142,10 +168,34 @@ internal fun AdminHiveLimitScreen(
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                Text("Support admin", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.ExtraBold)
-                Text("Ultimate hive-limit exceptions", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("BeeKeep Admin", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.ExtraBold)
+                Text("Account access, hive allowances and change history", color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             TextButton(onClick = onBack) { Text("BACK") }
+        }
+
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(20.dp),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+        ) {
+            Row(
+                Modifier.fillMaxWidth().padding(14.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    Text("Support access verified", fontWeight = FontWeight.Bold)
+                    Text(
+                        "Changes are checked by Supabase and recorded with the operator, reason and timestamp.",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+                Surface(shape = RoundedCornerShape(50), color = MaterialTheme.colorScheme.primaryContainer) {
+                    Text("ADMIN", Modifier.padding(horizontal = 10.dp, vertical = 6.dp), color = MaterialTheme.colorScheme.onPrimaryContainer, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelSmall)
+                }
+            }
         }
 
         if (checkingAccess) {
@@ -173,13 +223,12 @@ internal fun AdminHiveLimitScreen(
         } else {
             Card(
                 modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                 shape = RoundedCornerShape(20.dp)
             ) {
                 Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text("Find a customer", fontWeight = FontWeight.ExtraBold, style = MaterialTheme.typography.titleMedium)
                     Text(
-                        "Search by the customer's exact BeeKeep account email. Only one matching account is returned.",
+                        "Use the exact email attached to the customer's BeeKeep account. Search returns one account only.",
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     OutlinedTextField(
@@ -188,6 +237,7 @@ internal fun AdminHiveLimitScreen(
                             targetEmail = it
                             accountResult = null
                             message = ""
+                            messageIsError = false
                         },
                         modifier = Modifier.fillMaxWidth(),
                         label = { Text("Customer email") },
@@ -199,38 +249,65 @@ internal fun AdminHiveLimitScreen(
                         onClick = { runLookup() },
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Text(if (busy) "PLEASE WAIT…" else "LOOK UP ACCOUNT")
+                        Text(if (busy) "PLEASE WAIT…" else if (current != null) "REFRESH ACCOUNT" else "LOOK UP ACCOUNT")
                     }
                 }
             }
 
-            accountResult?.let { result ->
+            current?.let { result ->
+                val tierName = adminTierName(result)
+                val status = when {
+                    result.isActiveUltimate -> "Active Ultimate"
+                    result.isActivePaidPlan -> "Active Pro"
+                    result.planCode?.contains("pro", ignoreCase = true) == true ||
+                        result.planCode?.contains("ultimate", ignoreCase = true) == true -> "Paid plan inactive or expired"
+                    else -> "Free plan"
+                }
+                val effectiveLimit = result.customHiveLimit?.coerceAtLeast(result.baseHiveLimit)
+                    ?: result.baseHiveLimit
+
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(20.dp)
                 ) {
                     Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("Account details", fontWeight = FontWeight.ExtraBold, style = MaterialTheme.typography.titleMedium)
-                        Text(result.accountEmail.orEmpty(), fontWeight = FontWeight.SemiBold)
-                        AdminInfoRow("Plan", (result.planCode ?: "unknown").replace('_', ' ').uppercase(Locale.CANADA))
-                        AdminInfoRow("Active Ultimate", if (result.isActiveUltimate) "Yes" else "No")
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                                Text("Customer overview", fontWeight = FontWeight.ExtraBold, style = MaterialTheme.typography.titleMedium)
+                                Text(result.accountEmail.orEmpty(), fontWeight = FontWeight.SemiBold)
+                            }
+                            Surface(shape = RoundedCornerShape(50), color = if (result.isActivePaidPlan) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant) {
+                                Text(
+                                    status.uppercase(Locale.CANADA),
+                                    Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                    color = if (result.isActivePaidPlan) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    fontWeight = FontWeight.Bold,
+                                    style = MaterialTheme.typography.labelSmall
+                                )
+                            }
+                        }
+                        AdminInfoRow("Plan on account", tierName)
+                        AdminInfoRow("Standard hive allowance", "${formatLimit(result.baseHiveLimit)} hives")
+                        AdminInfoRow("Effective hive ceiling", "${formatLimit(effectiveLimit)} hives")
                         AdminInfoRow(
-                            "Current custom limit",
-                            result.customHiveLimit?.let { String.format(Locale.CANADA, "%,d hives", it) } ?: "None — standard plan limit"
+                            "Custom override",
+                            result.customHiveLimit?.let { "${formatLimit(it)} hives" } ?: "Not set"
                         )
-                        if (!result.expiresAt.isNullOrBlank()) {
-                            AdminInfoRow("Entitlement expiry", result.expiresAt)
-                        }
+                        if (!result.expiresAt.isNullOrBlank()) AdminInfoRow("Entitlement expiry", result.expiresAt)
+                        if (!result.overrideUpdatedAt.isNullOrBlank()) AdminInfoRow("Last override change", result.overrideUpdatedAt)
+                        if (!result.overrideUpdatedBy.isNullOrBlank()) AdminInfoRow("Last updated by (account ID)", result.overrideUpdatedBy)
                         if (!result.overrideReason.isNullOrBlank()) {
-                            AdminInfoRow("Saved reason", result.overrideReason)
+                            Text("Current override reason", fontWeight = FontWeight.SemiBold)
+                            Text(result.overrideReason, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
-                        if (!result.isActiveUltimate) {
+
+                        if (!result.isActivePaidPlan) {
                             Surface(
                                 color = MaterialTheme.colorScheme.errorContainer,
                                 shape = RoundedCornerShape(12.dp)
                             ) {
                                 Text(
-                                    "A custom limit can only be assigned while the account has an active Ultimate entitlement. Lookup and removal remain available.",
+                                    "Custom limits are available only while the trusted server entitlement is active for Pro or Ultimate. This account currently resolves to its standard plan limit; changing a hive allowance does not activate or extend a subscription.",
                                     modifier = Modifier.padding(12.dp),
                                     color = MaterialTheme.colorScheme.onErrorContainer
                                 )
@@ -244,42 +321,95 @@ internal fun AdminHiveLimitScreen(
                     shape = RoundedCornerShape(20.dp)
                 ) {
                     Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Text("Set a custom hive limit", fontWeight = FontWeight.ExtraBold, style = MaterialTheme.typography.titleMedium)
+                        Text("Hive allowance controls", fontWeight = FontWeight.ExtraBold, style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            "Choose a custom ceiling for an active Pro or Ultimate account. The server enforces the same ceiling during cloud sync.",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                         OutlinedTextField(
                             value = limitText,
                             onValueChange = { value -> limitText = value.filter(Char::isDigit).take(7) },
                             modifier = Modifier.fillMaxWidth(),
-                            label = { Text("Hive limit (10,000–1,000,000)") },
+                            label = { Text("Custom limit (${formatLimit(minimumAllowed)}–1,000,000)") },
+                            supportingText = { Text("The minimum is this plan's standard hive allowance.") },
                             singleLine = true,
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
                         )
+                        Text("Quick presets", fontWeight = FontWeight.SemiBold)
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedButton(
+                                onClick = { limitText = suggestedHiveLimit(result.baseHiveLimit).toString() },
+                                enabled = result.isActivePaidPlan && !busy,
+                                modifier = Modifier.weight(1f)
+                            ) { Text("Suggested") }
+                            OutlinedButton(
+                                onClick = { limitText = scaleHiveLimit(minimumAllowed, 2).toString() },
+                                enabled = result.isActivePaidPlan && !busy,
+                                modifier = Modifier.weight(1f)
+                            ) { Text("2× base") }
+                            OutlinedButton(
+                                onClick = { limitText = scaleHiveLimit(minimumAllowed, 5).toString() },
+                                enabled = result.isActivePaidPlan && !busy,
+                                modifier = Modifier.weight(1f)
+                            ) { Text("5× base") }
+                        }
                         OutlinedTextField(
                             value = reasonText,
                             onValueChange = { reasonText = it.take(500) },
                             modifier = Modifier.fillMaxWidth(),
-                            label = { Text("Reason for the exception") },
+                            label = { Text("Reason for this change") },
+                            supportingText = { Text("Required for audit history (3–500 characters).") },
                             minLines = 2,
                             maxLines = 4
                         )
-                        Text(
-                            "The backend independently verifies the active Ultimate entitlement and enforces the allowed range.",
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            style = MaterialTheme.typography.bodySmall
-                        )
                         Button(
-                            enabled = !busy &&
-                                result.isActiveUltimate &&
-                                limitText.toIntOrNull()?.let { it in 10000..1000000 } == true &&
-                                reasonText.trim().length in 3..500,
+                            enabled = canSave,
                             onClick = { pendingAction = "set" },
                             modifier = Modifier.fillMaxWidth()
-                        ) { Text("SAVE CUSTOM LIMIT") }
+                        ) { Text("REVIEW CUSTOM LIMIT") }
                         if (result.customHiveLimit != null) {
                             OutlinedButton(
                                 enabled = !busy,
                                 onClick = { pendingAction = "clear" },
                                 modifier = Modifier.fillMaxWidth()
-                            ) { Text("REMOVE CUSTOM OVERRIDE") }
+                            ) { Text("REMOVE OVERRIDE / RESET TO STANDARD") }
+                        }
+                    }
+                }
+
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(20.dp)
+                ) {
+                    Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("Recent limit activity", fontWeight = FontWeight.ExtraBold, style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            "The latest 10 changes are retained by the server, including removals.",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                        if (result.auditHistory.isEmpty()) {
+                            Text("No custom limit changes recorded for this account yet.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        } else {
+                            result.auditHistory.forEachIndexed { index, entry ->
+                                if (index > 0) {
+                                    androidx.compose.material3.HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                                }
+                                Column(Modifier.fillMaxWidth().padding(vertical = 5.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                                        Text(if (entry.action.equals("clear", ignoreCase = true)) "OVERRIDE REMOVED" else "LIMIT SET", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelMedium)
+                                        Text(entry.createdAt.orEmpty(), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                    Text(
+                                        "${entry.oldHiveLimit?.let(::formatLimit) ?: "No previous override"} → ${entry.newHiveLimit?.let { "${formatLimit(it)} hives" } ?: "Plan default"}",
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                    Text(entry.reason, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+                                    if (!entry.actorUserId.isNullOrBlank()) {
+                                        Text("Operator account: ${entry.actorUserId}", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelSmall)
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -289,13 +419,14 @@ internal fun AdminHiveLimitScreen(
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     colors = CardDefaults.cardColors(
-                        containerColor = if (message.contains("failed", ignoreCase = true) ||
-                            message.contains("could not", ignoreCase = true) ||
-                            message.contains("error", ignoreCase = true)
-                        ) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.secondaryContainer
+                        containerColor = if (messageIsError) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.secondaryContainer
                     )
                 ) {
-                    Text(message, modifier = Modifier.padding(14.dp))
+                    Text(
+                        message,
+                        modifier = Modifier.padding(14.dp),
+                        color = if (messageIsError) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onSecondaryContainer
+                    )
                 }
             }
         }
@@ -305,15 +436,16 @@ internal fun AdminHiveLimitScreen(
 
     pendingAction?.let { action ->
         val isSet = action == "set"
+        val selected = accountResult
         AlertDialog(
             onDismissRequest = { if (!busy) pendingAction = null },
-            title = { Text(if (isSet) "Confirm custom hive limit" else "Remove custom override") },
+            title = { Text(if (isSet) "Confirm custom hive limit" else "Reset to standard limit") },
             text = {
                 Text(
                     if (isSet) {
-                        "Save a limit of ${limitText.toIntOrNull()?.let { String.format(Locale.CANADA, "%,d", it) } ?: limitText} hives for ${accountResult?.accountEmail}?\n\nReason: ${reasonText.trim()}"
+                        "Set the ${adminTierName(selected)} hive ceiling to ${proposedLimit?.let(::formatLimit) ?: limitText} for ${selected?.accountEmail}?\n\nReason: ${reasonText.trim()}\n\nThis will not change the subscription itself."
                     } else {
-                        "Remove the custom hive allowance for ${accountResult?.accountEmail}? If their Ultimate entitlement is active, the standard 10,000-hive limit will apply."
+                        "Remove the custom hive override for ${selected?.accountEmail}? The active plan will fall back to its standard ${selected?.baseHiveLimit?.let(::formatLimit) ?: "default"}-hive allowance.\n\nReason: ${reasonText.trim().ifBlank { "Use the previous override reason" }}"
                     }
                 )
             },
@@ -330,6 +462,25 @@ internal fun AdminHiveLimitScreen(
                 TextButton(enabled = !busy, onClick = { pendingAction = null }) { Text("CANCEL") }
             }
         )
+    }
+}
+
+private fun suggestedHiveLimit(baseLimit: Int): Int =
+    (baseLimit.toLong() + maxOf(500L, baseLimit / 10L))
+        .coerceAtMost(ADMIN_MAX_CUSTOM_HIVE_LIMIT.toLong())
+        .toInt()
+
+private fun scaleHiveLimit(baseLimit: Int, multiplier: Int): Int =
+    (baseLimit.toLong() * multiplier).coerceAtMost(ADMIN_MAX_CUSTOM_HIVE_LIMIT.toLong()).toInt()
+
+private fun formatLimit(value: Int): String = String.format(Locale.CANADA, "%,d", value)
+
+private fun adminTierName(result: SupportAdminHiveLimitResponse?): String {
+    val plan = result?.planCode.orEmpty().lowercase(Locale.ROOT).replace("_", "").replace("-", "")
+    return when {
+        plan.contains("ultimate") -> "Ultimate"
+        plan.contains("pro") -> "Pro"
+        else -> "Free"
     }
 }
 

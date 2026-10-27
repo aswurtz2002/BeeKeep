@@ -66,15 +66,17 @@ Stage 2 creates a team workspace through a role-checked database function and su
 
 Before Stage 3 enables shared sync, test with multiple staging accounts and verify that each account can only see authorized records. Keep a database backup before applying schema migrations to production.
 
-## Individual Ultimate hive-limit exceptions
+## Individual Pro and Ultimate hive-limit exceptions
 
-Migration `20261027062000_beekeep_per_account_hive_limit_overrides.sql` adds a server-controlled per-account hive allowance for special Ultimate customers. The regular Ultimate allowance remains 10,000. A custom value (for example, 11,000) is honored only while that account has an active Ultimate entitlement in trusted `auth.users.raw_app_meta_data`. An expired/downgraded account, or a user-editable profile metadata field, cannot keep the exception active.
+Migration `20261027062000_beekeep_per_account_hive_limit_overrides.sql` introduced per-account overrides; `20261027130000_beekeep_pro_and_ultimate_hive_limit_overrides.sql` extends them to both paid tiers and records a private audit history. Pro's standard hive allowance remains 1,000 and a Pro override cannot be set below 1,000. Ultimate's standard allowance remains 10,000 and an Ultimate override cannot be set below 10,000. The database checks the trusted active subscription in `auth.users.raw_app_meta_data`; expired/downgraded accounts and user-editable profile metadata never retain the extra capacity.
 
-The mobile app reads its own verified exception through `beekeep_my_hive_limit_override()`; it cannot read or write the internal overrides table. Cloud sync also checks hive inserts/undeletes against the resolved cap for personal accounts and shared workspaces, so editing a local value does not bypass the server guard.
+The mobile app reads its own verified allowance through `beekeep_my_hive_limit_override()` and its active plan through `beekeep_my_hive_entitlement()`; neither RPC accepts a target account ID. It cannot read or write the internal override/audit tables. Cloud sync also enforces the resolved cap for personal and shared-workspace hive inserts/undeletes, including offline uploads. The client must refresh its account entitlement during cloud sync before a new custom limit appears on device.
 
-### Granting an exception from the Supabase SQL Editor
+### Managing exceptions
 
-Use the private Supabase SQL Editor as an authorized operator. Verify that the email identifies the intended, active Ultimate account before running this. Replace `customer@example.com` with that customer's exact account email.
+Prefer **More → Support admin tools** in the staging app. It checks the account's paid-plan status, shows standard vs. custom hive limits, supports Pro and Ultimate, offers limit presets, and displays the recent set/remove audit history. It never changes a customer's subscription. The server requires a reason for changes and records the operator, time, and previous/new limits.
+
+A direct SQL override is reserved for emergency support operations by a trusted database operator. Confirm the exact target account and active plan first. Replace `customer@example.com` with the customer's exact account email.
 
 ```sql
 insert into public.beekeep_user_hive_limit_overrides
@@ -82,7 +84,7 @@ insert into public.beekeep_user_hive_limit_overrides
 select
     u.id,
     11000,
-    'Approved support exception: increased Ultimate hive allowance'
+    'Approved support exception: increased hive allowance'
 from auth.users u
 where lower(u.email) = lower('customer@example.com')
 on conflict (user_id) do update
@@ -92,9 +94,9 @@ set hive_limit_override = excluded.hive_limit_override,
 returning user_id, hive_limit_override, reason, updated_at;
 ```
 
-The query must return exactly one row. If it returns none, confirm the email/account first; do not insert an override by guessing a user ID. The database permits custom limits from 10,000 to 1,000,000. A limit takes effect in the app after the signed-in device refreshes/synchronizes its entitlement. The database continues to enforce it when hive records sync.
+The query must return exactly one row. If it returns none, confirm the email/account first; do not insert an override by guessing a user ID. The table permits values from 1,000 to 1,000,000, but application limits are plan-specific: never set Pro below 1,000 or Ultimate below 10,000. For normal support operations, use the protected admin screen so each change is audited. The new value appears on the customer's device after a successful entitlement refresh/cloud sync.
 
-To remove an exception and restore the standard 10,000 limit for that active Ultimate account:
+To remove an exception and restore that active paid plan's standard hive limit:
 
 ```sql
 delete from public.beekeep_user_hive_limit_overrides
@@ -104,9 +106,9 @@ where user_id = (
 );
 ```
 
-The overrides table intentionally has no authenticated-client RLS policy. Do not grant the mobile app permission to write it, and never put Supabase service-role credentials into the Android app. A future private admin screen should call a protected server-side operation rather than running SQL from the client.
+The override and audit tables intentionally have no authenticated-client RLS policies. Do not grant the mobile app permission to write or read them, and never put Supabase service-role credentials into the Android app. The protected Edge Function is the only app-facing route for support operations.
 
-## Private support-admin tools for Ultimate hive-limit exceptions
+## Private support-admin tools for Pro and Ultimate hive-limit exceptions
 
 The app's **More → Support admin tools** entry appears only after the signed-in account passes the server-side admin check. Every lookup, set, and clear request is re-authorized by the `beekeep-admin-hive-limits` Edge Function; hiding the button is not the security boundary. The function is the only component that uses the service-role key, and that key must never be placed in the Android app or public source.
 
@@ -136,6 +138,6 @@ returning id, email, raw_app_meta_data -> 'beekeep_support_admin' as support_adm
 
 ### Use the screen
 
-Open **More → Support admin tools**, look up the customer's exact BeeKeep account email, and verify the returned account and active Ultimate status. A custom limit can be set from 10,000 to 1,000,000 hives, with a required reason. The server rejects non-Ultimate or expired accounts and records the support-admin actor and update time. Removing the override restores the standard 10,000 limit for an active Ultimate customer.
+Open **More → Support admin tools**, look up the customer's exact BeeKeep account email, and verify the returned account and paid-plan status. A custom limit can be set from 1,000 to 1,000,000 for active Pro or active Ultimate, with the server enforcing each plan's standard minimum. Free/expired accounts cannot receive custom capacity. The panel shows account expiry, standard/effective quota, a reasoned change flow, reset-to-standard, and the most recent 10 change/removal audit events.
 
-The customer's app adopts the updated limit after its cloud entitlement refreshes. This initial rollout is for **staging only**. Review and separately configure the production operator flag and production function before enabling this workflow for real customer accounts.
+The customer's app refreshes its trusted plan and custom quota during sign-in and cloud sync, so it can apply the new ceiling instead of continuing to display the old plan default. Ask the customer to tap **More → BeeKeep Cloud → Sync Now** if the previous limit warning remains on screen. This initial rollout is for **staging only**. Review and separately configure the production operator flag and production function before enabling this workflow for real customer accounts.
