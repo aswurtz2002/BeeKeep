@@ -107,6 +107,18 @@ data class WorkspaceRemoveMemberParams(
     val target_user_id: String
 )
 
+/**
+ * Accept the current Bee + six-digit invitation format and older invitations that
+ * were already issued before the format change.
+ */
+internal fun isSupportedWorkspaceInvitationCode(value: String): Boolean {
+    val token = value.trim()
+    val beeCode = token.length == 9 &&
+        token.regionMatches(0, "Bee", 0, 3, ignoreCase = true) &&
+        token.substring(3).all { it in '0'..'9' }
+    return beeCode || token.length == 8 || token.length in 32..128
+}
+
 /** Result wrapper for workspace operations; errors are surfaced as plain, user-safe messages. */
 data class WorkspaceOperationResult<T>(
     val value: T? = null,
