@@ -389,6 +389,7 @@ enum class Screen {
     WORKSPACE,
     SCAN,
     MORE,
+    SUPPORT_ADMIN,
     SETTINGS,
     TAG_MANAGER,
     COLONY_HISTORY,
@@ -2356,8 +2357,14 @@ fun BeeKeepApp(
                 currentPlan = purchasePlan,
                 hiveLimitOverride = cloudHiveLimitOverride,
                 deadCount = deadHives.size,
+                onOpenSupportAdmin = { screen = Screen.SUPPORT_ADMIN },
                 activity = activity,
                 cloud = cloud
+            )
+            Screen.SUPPORT_ADMIN -> AdminHiveLimitScreen(
+                padding = padding,
+                cloud = cloud,
+                onBack = { screen = Screen.MORE }
             )
             Screen.SETTINGS -> SettingsScreen(
                 padding = padding,
@@ -3209,6 +3216,7 @@ private fun MoreScreen(
     onTagManager: () -> Unit,
     onColonyHistory: () -> Unit,
     onUpgrade: () -> Unit,
+    onOpenSupportAdmin: () -> Unit,
     currentPlan: BeeKeepPlan,
     hiveLimitOverride: Int?,
     deadCount: Int,
@@ -3225,6 +3233,7 @@ private fun MoreScreen(
     var savedUsername by rememberSaveable { mutableStateOf("") }
     var authMessage by rememberSaveable { mutableStateOf("") }
     var showSupportEmailFallback by rememberSaveable { mutableStateOf(false) }
+    var supportAdmin by rememberSaveable { mutableStateOf(false) }
 
     fun openSupportEmail() {
         val emailBody = """
@@ -3254,16 +3263,19 @@ private fun MoreScreen(
         }
     }
 
-    androidx.compose.runtime.LaunchedEffect(account.signedIn) {
+    androidx.compose.runtime.LaunchedEffect(account.signedIn, account.email) {
         if (account.signedIn) {
             val result = cloud.getUsername()
             if (result.isSuccess) {
                 username = result.value.orEmpty()
                 savedUsername = username
             }
+            // This is only a navigation affordance. The server re-authorizes every operation.
+            supportAdmin = cloud.checkSupportAdmin().value == true
         } else {
             username = ""
             savedUsername = ""
+            supportAdmin = false
         }
     }
 
@@ -3275,6 +3287,23 @@ private fun MoreScreen(
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text("More", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.ExtraBold)
                 Text("Additional tools and account controls", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+            }
+        }
+
+        if (supportAdmin) {
+            Card(
+                onClick = onOpenSupportAdmin,
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(24.dp),
+                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFD97706))
+            ) {
+                Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                        Text("Support admin tools", fontWeight = FontWeight.ExtraBold, style = MaterialTheme.typography.titleMedium)
+                        Text("Manage approved Ultimate hive-limit exceptions", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Icon(Icons.Rounded.Lock, "Open support admin tools", tint = Color(0xFFB45309), modifier = Modifier.size(28.dp))
+                }
             }
         }
 
