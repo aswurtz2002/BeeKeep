@@ -65,6 +65,62 @@ object BeeKeepEntitlements {
     private const val DEBUG_PRO_EXPIRY_KEY = "debug_pro_expires_at"
     // Keep the existing key to preserve locally simulated subscription history on upgrade.
     private const val PRO_CREATED_HIVE_IDS_KEY = "debug_pro_created_hive_ids"
+    private const val CLOUD_HIVE_OVERRIDE_USER_KEY = "cloud_hive_limit_override_user"
+    private const val CLOUD_HIVE_OVERRIDE_PREFIX = "cloud_hive_limit_override_for_"
+    const val MAX_CUSTOM_HIVE_LIMIT = 1_000_000
+
+    @Volatile
+    private var activeCloudUserId: String? = null
+
+    @Volatile
+    private var activeCloudHiveLimitOverride: Int? = null
+
+    /**
+     * Selects the currently authenticated cloud account and restores only that account's
+     * previously verified, server-returned quota. Overrides are never read from profile metadata.
+     */
+    fun activateCloudHiveLimitOverride(context: Context, userId: String?) {
+        val cleanUserId = userId?.trim()?.takeIf { it.isNotEmpty() }
+        val prefs = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        if (cleanUserId == null) {
+            activeCloudUserId = null
+            activeCloudHiveLimitOverride = null
+            prefs.edit().remove(CLOUD_HIVE_OVERRIDE_USER_KEY).apply()
+            return
+        }
+
+        activeCloudUserId = cleanUserId
+        val cached = prefs.getInt(CLOUD_HIVE_OVERRIDE_PREFIX + cleanUserId, -1)
+            .takeIf { it in ULTIMATE_HIVE_LIMIT..MAX_CUSTOM_HIVE_LIMIT }
+        activeCloudHiveLimitOverride = cached
+        prefs.edit().putString(CLOUD_HIVE_OVERRIDE_USER_KEY, cleanUserId).apply()
+    }
+
+    /** Persists a limit fetched from the authenticated account's trusted server RPC. */
+    fun updateCloudHiveLimitOverride(context: Context, userId: String, limit: Int?) {
+        val cleanUserId = userId.trim()
+        if (cleanUserId.isEmpty()) return
+        val prefs = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val validLimit = limit?.takeIf { it in ULTIMATE_HIVE_LIMIT..MAX_CUSTOM_HIVE_LIMIT }
+        val editor = prefs.edit()
+        if (validLimit == null) {
+            editor.remove(CLOUD_HIVE_OVERRIDE_PREFIX + cleanUserId)
+        } else {
+            editor.putInt(CLOUD_HIVE_OVERRIDE_PREFIX + cleanUserId, validLimit)
+        }
+        editor.apply()
+        if (activeCloudUserId == cleanUserId) activeCloudHiveLimitOverride = validLimit
+    }
+
+    fun cachedCloudHiveLimitOverride(context: Context, userId: String): Int? {
+        val cleanUserId = userId.trim()
+        if (cleanUserId.isEmpty()) return null
+        return context.applicationContext
+            .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .getInt(CLOUD_HIVE_OVERRIDE_PREFIX + cleanUserId, -1)
+            .takeIf { it in ULTIMATE_HIVE_LIMIT..MAX_CUSTOM_HIVE_LIMIT }
+    }
+
 
     fun currentPlan(context: Context): BeeKeepPlan {
         if (!BuildConfig.DEBUG) return BeeKeepPlan.FREE
@@ -154,13 +210,35 @@ object BeeKeepEntitlements {
     internal fun countHivesSubjectToFreeLimit(hiveIds: Collection<Long>, lockedIds: Set<Long>): Int =
         hiveIds.count { it !in lockedIds }
 
-    fun hiveLimit(plan: BeeKeepPlan): Int = when (plan) {
+    private fun standardHiveLimit(plan: BeeKeepPlan): Int = when (plan) {
         BeeKeepPlan.FREE -> FREE_HIVE_LIMIT
         BeeKeepPlan.PRO, BeeKeepPlan.PRO_YEARLY -> PRO_HIVE_LIMIT
         BeeKeepPlan.ULTIMATE, BeeKeepPlan.ULTIMATE_YEARLY -> ULTIMATE_HIVE_LIMIT
     }
 
-    fun hiveLimit(context: Context): Int = hiveLimit(currentPlan(context))
+    internal fun effectiveHiveLimit(plan: BeeKeepPlan, customLimit: Int?): Int {
+        val standardLimit = standardHiveLimit(plan)
+        if (plan != BeeKeepPlan.ULTIMATE && plan != BeeKeepPlan.ULTIMATE_YEARLY) return standardLimit
+        val validCustomLimit = customLimit?.takeIf {
+            it in ULTIMATE_HIVE_LIMIT..MAX_CUSTOM_HIVE_LIMIT
+        } ?: return standardLimit
+        return maxOf(standardLimit, validCustomLimit)
+    }
+
+    fun hiveLimit(plan: BeeKeepPlan): Int =
+        effectiveHiveLimit(plan, activeCloudHiveLimitOverride)
+
+    /** This overload loads the account-scoped cache before making a quota decision. */
+    fun hiveLimit(context: Context): Int {
+        val prefs = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val activeUserId = prefs.getString(CLOUD_HIVE_OVERRIDE_USER_KEY, null)
+        if (!activeUserId.isNullOrBlank() && activeCloudUserId != activeUserId) {
+            activateCloudHiveLimitOverride(context, activeUserId)
+        } else if (activeUserId.isNullOrBlank() && activeCloudUserId != null) {
+            activateCloudHiveLimitOverride(context, null)
+        }
+        return hiveLimit(currentPlan(context))
+    }
 
     /** Free retains its existing uncapped-apiary behavior; paid plans have explicit caps. */
     fun apiaryLimit(plan: BeeKeepPlan): Int = when (plan) {
@@ -171,13 +249,22 @@ object BeeKeepEntitlements {
 
     fun apiaryLimit(context: Context): Int = apiaryLimit(currentPlan(context))
 
-    fun hiveLimitMessage(plan: BeeKeepPlan): String = when (plan) {
-        BeeKeepPlan.FREE ->
-            "Hive limit reached: the Free plan has a 150 hive limit. Upgrade to BeeKeep Pro (1,000 hive limit) or Ultimate (10,000 hive limit) to add more."
-        BeeKeepPlan.PRO, BeeKeepPlan.PRO_YEARLY ->
-            "Hive limit reached: BeeKeep Pro has a 1,000 hive limit. Upgrade to BeeKeep Ultimate for a 10,000 hive limit."
-        BeeKeepPlan.ULTIMATE, BeeKeepPlan.ULTIMATE_YEARLY ->
-            "Hive limit reached: BeeKeep Ultimate has a 10,000 hive limit. Your existing records are safe; contact BeeKeep support if you need a higher limit."
+    fun hiveLimitMessage(plan: BeeKeepPlan): String {
+        val effectiveLimit = hiveLimit(plan)
+        if ((plan == BeeKeepPlan.ULTIMATE || plan == BeeKeepPlan.ULTIMATE_YEARLY) &&
+            effectiveLimit > ULTIMATE_HIVE_LIMIT
+        ) {
+            val formattedLimit = String.format(Locale.CANADA, "%,d", effectiveLimit)
+            return "Hive limit reached: your custom BeeKeep Ultimate hive limit is $formattedLimit. Your existing records are safe; contact BeeKeep support if you need a higher limit."
+        }
+        return when (plan) {
+            BeeKeepPlan.FREE ->
+                "Hive limit reached: the Free plan has a 150 hive limit. Upgrade to BeeKeep Pro (1,000 hive limit) or Ultimate (10,000 hive limit) to add more."
+            BeeKeepPlan.PRO, BeeKeepPlan.PRO_YEARLY ->
+                "Hive limit reached: BeeKeep Pro has a 1,000 hive limit. Upgrade to BeeKeep Ultimate for a 10,000 hive limit."
+            BeeKeepPlan.ULTIMATE, BeeKeepPlan.ULTIMATE_YEARLY ->
+                "Hive limit reached: BeeKeep Ultimate has a 10,000 hive limit. Your existing records are safe; contact BeeKeep support if you need a higher limit."
+        }
     }
 
     fun hiveLimitMessage(context: Context): String = hiveLimitMessage(currentPlan(context))
