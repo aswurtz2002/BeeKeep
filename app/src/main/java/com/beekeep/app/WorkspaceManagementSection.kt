@@ -831,7 +831,7 @@ fun WorkspaceManagementSection(
             ) {
                 OutlinedTextField(
                     value = acceptToken,
-                    onValueChange = { value -> acceptToken = value.filter { it.isLetterOrDigit() }.take(128) },
+                    onValueChange = { value -> acceptToken = value.filter { it in 'A'..'Z' || it in 'a'..'z' || it in '0'..'9' }.take(128) },
                     modifier = Modifier.fillMaxWidth(),
                     label = { Text("Invitation code") },
                     placeholder = { Text("Bee123456") },
