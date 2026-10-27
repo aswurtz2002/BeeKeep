@@ -234,7 +234,7 @@ private fun WorkspaceMetric(
 fun WorkspaceJoinEntry(
     cloud: SupabaseGateway,
     activity: ComponentActivity,
-    onWorkspaceJoined: () -> Unit
+    onWorkspaceJoined: (String) -> Unit
 ) {
     val account by cloud.account.collectAsState()
     val scope = rememberCoroutineScope()
@@ -318,7 +318,7 @@ fun WorkspaceJoinEntry(
                             val activation = cloud.activateWorkspace(joined.workspace_id)
                             message = activation.error
                                 ?: "Joined ${joined.workspace_name}. Opening your workspace…"
-                            onWorkspaceJoined()
+                            onWorkspaceJoined(message)
                         } else {
                             message = result.error ?: "Couldn't accept this invitation. Check the code and invited email."
                         }
