@@ -3263,11 +3263,11 @@ private fun MoreScreen(
                     )
                     Text(
                         if (currentPlan == BeeKeepPlan.FREE) {
-                            "Plans from $5.99 CAD/month • up to 10,000 hives"
+                            "Plans from $2.99 CAD/month • Ultimate: 10,000 hive limit"
                         } else {
                             val hives = String.format(java.util.Locale.CANADA, "%,d", BeeKeepEntitlements.hiveLimit(currentPlan))
                             val apiaries = String.format(java.util.Locale.CANADA, "%,d", BeeKeepEntitlements.apiaryLimit(currentPlan))
-                            "Up to $hives hives • $apiaries apiaries"
+                            "$hives hive limit • $apiaries apiary limit"
                         },
                         color = Color(0xFF78350F),
                         style = MaterialTheme.typography.bodySmall
