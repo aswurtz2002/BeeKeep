@@ -30,7 +30,11 @@ declare
     invitation_id uuid := split_part(invite_record, '|', 1)::uuid;
     token_value text := split_part(invite_record, '|', 2);
 begin
-    if workspace_value is null or invitation_id is null or not ((length(token_value) = 8 and translate(token_value, 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789', '') = '') or (length(token_value) = 64 and translate(token_value, '0123456789abcdef', '') = '')) then
+    if workspace_value is null or invitation_id is null or not (
+        token_value ~ '^Bee[0-9]{6}$'
+        or (length(token_value) = 8 and translate(token_value, 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789', '') = '')
+        or (length(token_value) = 64 and translate(token_value, '0123456789abcdef', '') = '')
+    ) then
         raise exception 'Workspace creation did not return a valid invitation code';
     end if;
 

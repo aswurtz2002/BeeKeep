@@ -83,3 +83,7 @@ jobs:
         run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261020031200_beekeep_ultimate_workspace_entitlement.sql
       - name: Verify Ultimate workspace ownership and invited worker access
         run: psql -v ON_ERROR_STOP=1 -f supabase/tests/ultimate_workspace_entitlement.sql
+      - name: Apply Bee-prefixed invitation code migration
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261027020000_beekeep_bee_invitation_codes.sql
+      - name: Verify Bee code format, case-insensitive acceptance, and legacy compatibility
+        run: psql -v ON_ERROR_STOP=1 -f supabase/tests/workspace_invitation_bee_codes.sql

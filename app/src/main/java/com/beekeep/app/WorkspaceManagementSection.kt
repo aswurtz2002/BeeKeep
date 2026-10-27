@@ -47,6 +47,7 @@ import com.beekeep.app.cloud.BeeKeepWorkspaceInvitation
 import com.beekeep.app.cloud.BeeKeepWorkspaceInvitationCreated
 import com.beekeep.app.cloud.BeeKeepWorkspaceMember
 import com.beekeep.app.cloud.SupabaseGateway
+import com.beekeep.app.cloud.isSupportedWorkspaceInvitationCode
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
 
@@ -830,14 +831,19 @@ fun WorkspaceManagementSection(
             ) {
                 OutlinedTextField(
                     value = acceptToken,
-                    onValueChange = { value -> acceptToken = value.filter { it.isLetterOrDigit() }.uppercase().take(128) },
+                    onValueChange = { value -> acceptToken = value.filter { it in 'A'..'Z' || it in 'a'..'z' || it in '0'..'9' }.take(128) },
                     modifier = Modifier.fillMaxWidth(),
                     label = { Text("Invitation code") },
-                    placeholder = { Text("e.g. A1B2C3D4") },
+                    placeholder = { Text("Bee123456") },
                     singleLine = true
                 )
+                Text(
+                    "Use the BeeKeep account email the invitation was sent to.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
                 Button(
-                    enabled = account.signedIn && !loading && (acceptToken.length == 8 || acceptToken.length in 32..128),
+                    enabled = account.signedIn && !loading && isSupportedWorkspaceInvitationCode(acceptToken),
                     onClick = {
                         scope.launch {
                             loading = true
@@ -867,8 +873,10 @@ fun WorkspaceManagementSection(
             }
 
             if (message.isNotBlank()) {
-                val messageIsError = listOf("couldn't", "could not", "failed", "error", "denied", "not configured")
-                    .any { message.contains(it, ignoreCase = true) }
+                val messageIsError = listOf(
+                    "couldn't", "could not", "failed", "error", "denied", "not configured",
+                    "sign in with", "expired", "invalid", "not active", "too many", "invitation code"
+                ).any { message.contains(it, ignoreCase = true) }
                 Surface(
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(14.dp),
