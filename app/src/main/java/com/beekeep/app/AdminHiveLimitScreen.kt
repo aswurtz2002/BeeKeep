@@ -269,7 +269,7 @@ internal fun AdminHiveLimitScreen(
                         Button(
                             enabled = !busy &&
                                 result.isActiveUltimate &&
-                                limitText.toIntOrNull() in 10000..1000000 &&
+                                limitText.toIntOrNull()?.let { it in 10000..1000000 } == true &&
                                 reasonText.trim().length in 3..500,
                             onClick = { pendingAction = "set" },
                             modifier = Modifier.fillMaxWidth()
