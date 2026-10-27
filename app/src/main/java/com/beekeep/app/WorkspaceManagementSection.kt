@@ -210,7 +210,6 @@ fun WorkspaceManagementSection(
             memberLoadError = null
             invitations = emptyList()
             createdInvite = null
-            onWorkspaceMembershipChanged(false)
             return@LaunchedEffect
         }
         activeWorkspaceId = activity.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
