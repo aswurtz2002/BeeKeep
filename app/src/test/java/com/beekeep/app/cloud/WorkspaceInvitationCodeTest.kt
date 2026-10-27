@@ -16,7 +16,7 @@ class WorkspaceInvitationCodeTest {
     @Test
     fun preservesCompatibilityWithPreviouslyIssuedCodes() {
         assertTrue(isSupportedWorkspaceInvitationCode("ABCD2345"))
-        assertTrue(isSupportedWorkspaceInvitationCode("a1b2c3d4".replace('1', '2')))
+        assertTrue(isSupportedWorkspaceInvitationCode("ab2c3d45"))
         assertTrue(isSupportedWorkspaceInvitationCode("a".repeat(64)))
         assertTrue(isSupportedWorkspaceInvitationCode("b".repeat(32)))
         assertTrue(isSupportedWorkspaceInvitationCode("c".repeat(128)))
