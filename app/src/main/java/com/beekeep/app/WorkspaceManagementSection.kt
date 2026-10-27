@@ -55,6 +55,7 @@ import kotlinx.coroutines.delay
 fun WorkspaceManagementSection(
     cloud: SupabaseGateway,
     activity: ComponentActivity,
+    currentPlan: BeeKeepPlan,
     usernameRefreshKey: Int = 0,
     onUpgrade: () -> Unit
 ) {
@@ -87,6 +88,7 @@ fun WorkspaceManagementSection(
     var invitations by remember { mutableStateOf<List<BeeKeepWorkspaceInvitation>>(emptyList()) }
     var loading by remember { mutableStateOf(false) }
     var hasUltimateEntitlement by remember { mutableStateOf(false) }
+    var entitlementCheckFailed by remember { mutableStateOf(false) }
     var showUltimateRequiredDialog by rememberSaveable { mutableStateOf(false) }
     var message by rememberSaveable { mutableStateOf("") }
     var showCreateDialog by remember { mutableStateOf(false) }
@@ -135,11 +137,71 @@ fun WorkspaceManagementSection(
         }
     }
 
+    /**
+     * Verify entitlement with the server. In debug builds, sync the selected Ultimate
+     * test plan to the isolated staging backend if the server has not recorded it yet.
+     * A sync/verification failure is shown as an error, not a false upgrade prompt.
+     */
+    suspend fun refreshUltimateEntitlement(): Boolean? {
+        val initial = cloud.myActiveUltimateEntitlement()
+        if (initial.isSuccess && initial.value == true) {
+            hasUltimateEntitlement = true
+            entitlementCheckFailed = false
+            message = ""
+            return true
+        }
+
+        val debugUltimateSelected = BuildConfig.DEBUG &&
+            (currentPlan == BeeKeepPlan.ULTIMATE || currentPlan == BeeKeepPlan.ULTIMATE_YEARLY)
+        if (debugUltimateSelected) {
+            val synced = cloud.syncDebugPlanToStaging(currentPlan)
+            if (!synced.isSuccess) {
+                hasUltimateEntitlement = false
+                entitlementCheckFailed = true
+                message = "Ultimate is selected on this device, but its BeeKeep-Staging entitlement sync failed: " +
+                    (synced.error ?: "unknown error") + ". Re-select Ultimate in Plans while online, then retry."
+                return null
+            }
+
+            val verified = cloud.myActiveUltimateEntitlement()
+            if (!verified.isSuccess) {
+                hasUltimateEntitlement = false
+                entitlementCheckFailed = true
+                message = verified.error
+                    ?: "The Ultimate test plan synced, but BeeKeep could not verify it. Check your connection and retry."
+                return null
+            }
+
+            hasUltimateEntitlement = verified.value == true
+            entitlementCheckFailed = !hasUltimateEntitlement
+            if (hasUltimateEntitlement) {
+                message = ""
+                return true
+            }
+
+            message = "The test-plan sync completed, but BeeKeep-Staging still reports no active Ultimate entitlement. Re-select Ultimate in Plans while online, then retry."
+            return null
+        }
+
+        if (!initial.isSuccess) {
+            hasUltimateEntitlement = false
+            entitlementCheckFailed = true
+            message = initial.error
+                ?: "Couldn't verify your Ultimate subscription. Check your connection and try again."
+            return null
+        }
+
+        hasUltimateEntitlement = false
+        entitlementCheckFailed = false
+        return false
+    }
+
     LaunchedEffect(account.signedIn) {
         if (!account.signedIn) {
             activeWorkspaceId = activity.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
                 .getString("active_team_workspace_id", "").orEmpty()
             hasUltimateEntitlement = false
+            entitlementCheckFailed = false
             workspaces = emptyList()
             members = emptyList()
             membersLoadedWorkspaceId = null
@@ -152,6 +214,7 @@ fun WorkspaceManagementSection(
             .getString("active_team_workspace_id", "").orEmpty()
         val entitlement = cloud.myActiveUltimateEntitlement()
         hasUltimateEntitlement = entitlement.value == true
+        entitlementCheckFailed = !entitlement.isSuccess
         loading = true
         val result = cloud.listWorkspaces()
         if (result.isSuccess) {
@@ -242,22 +305,17 @@ fun WorkspaceManagementSection(
                     Button(
                         enabled = !loading,
                         onClick = {
-                            // Recheck the server entitlement at the moment of action.
-                            // A failed entitlement lookup must not be misreported as a need to upgrade.
+                            // Recheck server entitlement. Debug Ultimate plans are synced only
+                            // to BeeKeep-Staging; verification failures are not upgrade denials.
                             scope.launch {
                                 loading = true
-                                val entitlement = cloud.myActiveUltimateEntitlement()
-                                if (entitlement.isSuccess) {
-                                    hasUltimateEntitlement = entitlement.value == true
-                                    if (hasUltimateEntitlement) {
+                                when (refreshUltimateEntitlement()) {
+                                    true -> {
                                         showUltimateRequiredDialog = false
                                         showCreateDialog = true
-                                    } else {
-                                        showUltimateRequiredDialog = true
                                     }
-                                } else {
-                                    message = entitlement.error
-                                        ?: "Couldn't verify your Ultimate subscription. Check your connection and try again."
+                                    false -> showUltimateRequiredDialog = true
+                                    null -> Unit
                                 }
                                 loading = false
                             }
@@ -672,9 +730,42 @@ fun WorkspaceManagementSection(
                         },
                         collapsible = true,
                         expanded = showInvitePanel,
-                        onToggle = { showInvitePanel = !showInvitePanel }
+                        onToggle = {
+                            val opening = !showInvitePanel
+                            showInvitePanel = opening
+                            if (opening && workspace.member_role == "owner") {
+                                scope.launch {
+                                    loading = true
+                                    refreshUltimateEntitlement()
+                                    loading = false
+                                }
+                            }
+                        }
                     ) {
-                        if (workspace.member_role == "owner" && !hasUltimateEntitlement) {
+                        if (workspace.member_role == "owner" && !hasUltimateEntitlement && loading) {
+                            Text(
+                                "Checking your Ultimate subscription…",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        } else if (workspace.member_role == "owner" && !hasUltimateEntitlement && entitlementCheckFailed) {
+                            Text(
+                                "BeeKeep couldn't verify Ultimate access. Check your connection and retry instead of upgrading again.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error
+                            )
+                            OutlinedButton(
+                                enabled = !loading,
+                                onClick = {
+                                    scope.launch {
+                                        loading = true
+                                        refreshUltimateEntitlement()
+                                        loading = false
+                                    }
+                                },
+                                modifier = Modifier.fillMaxWidth()
+                            ) { Text("RETRY ULTIMATE CHECK") }
+                        } else if (workspace.member_role == "owner" && !hasUltimateEntitlement) {
                             Text(
                                 "An active BeeKeep Ultimate subscription is required for workspace owners to invite teammates.",
                                 style = MaterialTheme.typography.bodySmall,
