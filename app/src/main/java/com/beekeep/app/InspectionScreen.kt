@@ -353,6 +353,8 @@ internal fun InspectionScreen(
     voiceReadyBeepEnabled: Boolean,
     autoStartVoice: Boolean,
     autoVoiceEnabled: Boolean,
+    isReadOnlyWorkspace: Boolean,
+    onViewOnlyAttempt: () -> Unit,
     onVoiceAutoStartConsumed: () -> Unit,
     onSaveHiveLocation: (Long, Double, Double, (String?) -> Unit) -> Unit,
     onRecordBeeCountChange: (Long, Double, Double) -> Unit,
@@ -572,6 +574,11 @@ internal fun InspectionScreen(
     }
 
     fun captureAndSaveHiveGps(targetHiveId: Long, latitude: Double, longitude: Double) {
+        if (isReadOnlyWorkspace) {
+            locationStatus = "View-only access"
+            onViewOnlyAttempt()
+            return
+        }
         val coordinates = "${"%.5f".format(Locale.US, latitude)}, ${"%.5f".format(Locale.US, longitude)}"
         if (hive.id == targetHiveId) {
             lat = latitude
@@ -884,7 +891,10 @@ internal fun InspectionScreen(
                             }
                             Button(
                                 onClick = {
-                                    if (!saving) {
+                                    if (isReadOnlyWorkspace) {
+                                        saveError = ""
+                                        onViewOnlyAttempt()
+                                    } else if (!saving) {
                                         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                                         saving = true
                                         saveError = ""
@@ -904,13 +914,19 @@ internal fun InspectionScreen(
                                                     discardSavedFormDraftOnDispose.value = true
                                                     formDraftPrefs.edit { remove("hive_${hive.id}") }
                                                     onSaved()
+                                                } else if (isReadOnlyWorkspace) {
+                                                    onViewOnlyAttempt()
                                                 } else {
                                                     saveError = "Could not save inspection. Your field screen is still open; try again."
                                                 }
                                             } catch (cancelled: kotlinx.coroutines.CancellationException) {
                                                 throw cancelled
                                             } catch (error: Exception) {
-                                                saveError = error.message ?: "Could not save the inspection. Please try again."
+                                                if (isReadOnlyWorkspace || error.message?.contains("view-only", ignoreCase = true) == true) {
+                                                    onViewOnlyAttempt()
+                                                } else {
+                                                    saveError = error.message ?: "Could not save the inspection. Please try again."
+                                                }
                                             } finally {
                                                 saving = false
                                             }
