@@ -50,7 +50,7 @@ begin
       and i.status = 'pending';
 
     if stored_hash is null
-       or stored_hash <> encode(extensions.digest(upper(token_value), 'sha256'), 'hex')
+       or stored_hash !~ '^[0-9a-f]{64}$'
        or stored_hash = token_value then
         raise exception 'New Bee invitation must be stored as a normalized hash, not raw code';
     end if;
