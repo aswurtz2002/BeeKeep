@@ -193,6 +193,7 @@ fun WorkspaceManagementSection(
 
         hasUltimateEntitlement = false
         entitlementCheckFailed = false
+        message = ""
         return false
     }
 
