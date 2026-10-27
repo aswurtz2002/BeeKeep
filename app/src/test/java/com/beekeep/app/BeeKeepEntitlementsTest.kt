@@ -128,6 +128,34 @@ class BeeKeepEntitlementsTest {
     }
 
     @Test
+    fun trustedServerEntitlementMapsActivePaidTiersAndRejectsExpiredPlans() {
+        assertEquals(
+            BeeKeepPlan.PRO_YEARLY,
+            BeeKeepEntitlements.planFromServerEntitlement("pro_yearly", 1_000, isActivePaidPlan = true)
+        )
+        assertEquals(
+            BeeKeepPlan.PRO,
+            BeeKeepEntitlements.planFromServerEntitlement("pro_monthly", 1_000, isActivePaidPlan = true)
+        )
+        assertEquals(
+            BeeKeepPlan.ULTIMATE_YEARLY,
+            BeeKeepEntitlements.planFromServerEntitlement("ultimate_yearly", 10_000, isActivePaidPlan = true)
+        )
+        assertEquals(
+            BeeKeepPlan.ULTIMATE,
+            BeeKeepEntitlements.planFromServerEntitlement("ultimate_monthly", 10_000, isActivePaidPlan = true)
+        )
+        assertEquals(
+            BeeKeepPlan.FREE,
+            BeeKeepEntitlements.planFromServerEntitlement("ultimate_yearly", 150, isActivePaidPlan = false)
+        )
+        assertEquals(
+            BeeKeepPlan.FREE,
+            BeeKeepEntitlements.planFromServerEntitlement("pro_yearly", 1_000, isActivePaidPlan = false)
+        )
+    }
+
+    @Test
     fun eachPlanHasTheRequestedHiveAndApiaryCaps() {
         assertEquals(150, BeeKeepEntitlements.hiveLimit(BeeKeepPlan.FREE))
         assertEquals(1_000, BeeKeepEntitlements.hiveLimit(BeeKeepPlan.PRO))
