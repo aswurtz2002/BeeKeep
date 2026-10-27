@@ -33,6 +33,8 @@ class LocalHiveRepository(context: Context) {
         prefs.getBoolean("active_team_workspace_read_only", false)
     )
     val activeWorkspaceReadOnly: StateFlow<Boolean> = _activeWorkspaceReadOnly.asStateFlow()
+    private val _readOnlyWriteAttempt = MutableStateFlow(0L)
+    val readOnlyWriteAttempt: StateFlow<Long> = _readOnlyWriteAttempt.asStateFlow()
     private val _database = MutableStateFlow(
         BeeKeepRoomDb.getForWorkspace(appContext, initialTeamWorkspaceId)
     )
@@ -1352,8 +1354,11 @@ class LocalHiveRepository(context: Context) {
     }
 
     private fun checkWritable() {
-        check(!_activeWorkspaceReadOnly.value) {
-            "This team workspace is view-only. Ask a workspace owner to change your role before editing."
+        if (_activeWorkspaceReadOnly.value) {
+            _readOnlyWriteAttempt.value = _readOnlyWriteAttempt.value + 1L
+            throw IllegalStateException(
+                "This team workspace is view-only. Ask a workspace owner to change your role before editing."
+            )
         }
     }
 

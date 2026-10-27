@@ -543,6 +543,8 @@ fun BeeKeepApp(
     val deadHives by vm.deadHives.collectAsStateWithLifecycle()
     val account by cloud.account.collectAsStateWithLifecycle()
     val activeWorkspaceId by vm.activeWorkspaceId.collectAsStateWithLifecycle()
+    val activeWorkspaceReadOnly by vm.activeWorkspaceReadOnly.collectAsStateWithLifecycle()
+    val readOnlyWriteAttempt by vm.readOnlyWriteAttempt.collectAsStateWithLifecycle()
     var hasJoinedTeamWorkspace by rememberSaveable {
         mutableStateOf(autoVoicePrefs.getString("selected_team_workspace_id", "").orEmpty().isNotBlank())
     }
@@ -567,6 +569,32 @@ fun BeeKeepApp(
         if (!activeWorkspaceId.isNullOrBlank()) hasJoinedTeamWorkspace = true
     }
     val apiaries by vm.apiaries.collectAsStateWithLifecycle()
+    var showViewOnlyDialog by rememberSaveable { mutableStateOf(false) }
+
+    androidx.compose.runtime.LaunchedEffect(readOnlyWriteAttempt) {
+        if (readOnlyWriteAttempt > 0L) showViewOnlyDialog = true
+    }
+    androidx.compose.runtime.LaunchedEffect(snackbarHostState.currentSnackbarData?.visuals?.message) {
+        val message = snackbarHostState.currentSnackbarData?.visuals?.message
+        if (message?.contains("view-only", ignoreCase = true) == true) {
+            showViewOnlyDialog = true
+            snackbarHostState.currentSnackbarData?.dismiss()
+        }
+    }
+    if (showViewOnlyDialog) {
+        AlertDialog(
+            onDismissRequest = { showViewOnlyDialog = false },
+            title = { Text("VIEW ONLY", fontWeight = androidx.compose.ui.text.font.FontWeight.ExtraBold) },
+            text = {
+                Text(
+                    "Your role in this team is view-only. You can view shared records, but you cannot save inspections or make changes. Ask a workspace owner to update your role if you need editing access."
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { showViewOnlyDialog = false }) { Text("OK") }
+            }
+        )
+    }
     val selected by vm.selected.collectAsStateWithLifecycle()
     val inspections by vm.inspections.collectAsStateWithLifecycle()
     val events by vm.events.collectAsStateWithLifecycle()
@@ -1778,6 +1806,8 @@ fun BeeKeepApp(
             voiceReadyBeepEnabled = autoVoicePrefs.getBoolean("voice_ready_beep", true),
             autoStartVoice = pendingAutoStartVoiceHiveId == hiveForInspection.id,
             autoVoiceEnabled = autoVoiceEnabled,
+            isReadOnlyWorkspace = activeWorkspaceReadOnly,
+            onViewOnlyAttempt = { showViewOnlyDialog = true },
             onVoiceAutoStartConsumed = {
                 if (pendingAutoStartVoiceHiveId == hiveForInspection.id) pendingAutoStartVoiceHiveId = null
             },
@@ -1812,7 +1842,11 @@ fun BeeKeepApp(
                             .edit { putString("hive_${inspection.hiveId}", inspection.notes) }
                         scope.launch { snackbarHostState.showSnackbar("Inspection saved") }
                     } else {
-                        scope.launch { snackbarHostState.showSnackbar("Could not save inspection. Your field screen is still open; try again.") }
+                        if (activeWorkspaceReadOnly) {
+                            showViewOnlyDialog = true
+                        } else {
+                            scope.launch { snackbarHostState.showSnackbar("Could not save inspection. Your field screen is still open; try again.") }
+                        }
                     }
                     saved
                 } else {
@@ -2527,7 +2561,17 @@ private fun androidx.compose.foundation.layout.RowScope.NavItem(label: String, i
         selected = selected,
         onClick = onClick,
         icon = { Icon(icon, label) },
-        label = { Text(label, maxLines = 1) },
+        label = {
+            Text(
+                label,
+                maxLines = 1,
+                softWrap = false,
+                style = MaterialTheme.typography.labelSmall.copy(
+                    fontSize = if (label == "Workspace") 9.sp else 10.sp,
+                    letterSpacing = if (label == "Workspace") (-0.35).sp else 0.sp
+                )
+            )
+        },
         colors = NavigationBarItemDefaults.colors(
             selectedIconColor = Trail.Bark,
             selectedTextColor = OnNavBar,
