@@ -57,7 +57,8 @@ fun WorkspaceManagementSection(
     activity: ComponentActivity,
     currentPlan: BeeKeepPlan,
     usernameRefreshKey: Int = 0,
-    onUpgrade: () -> Unit
+    onUpgrade: () -> Unit,
+    onWorkspaceMembershipChanged: (Boolean) -> Unit = {}
 ) {
     val account by cloud.account.collectAsState()
     val scope = rememberCoroutineScope()
@@ -221,6 +222,7 @@ fun WorkspaceManagementSection(
         if (result.isSuccess) {
             workspaces = result.value.orEmpty()
             val available = workspaces.filterNot { it.is_personal }
+            onWorkspaceMembershipChanged(available.isNotEmpty())
             selectedWorkspaceId = selectedWorkspaceId.takeIf { id -> available.any { it.id == id } }
                 ?: available.firstOrNull()?.id.orEmpty()
             activity.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE).edit()
@@ -491,6 +493,7 @@ fun WorkspaceManagementSection(
                                     .getString("active_team_workspace_id", "").orEmpty()
                                 message = activation.error
                                     ?: "Joined ${joined.workspace_name} as ${joined.workspace_role}. Team data is now active."
+                                onWorkspaceMembershipChanged(true)
                             } else {
                                 message = result.error ?: "Couldn't accept this invitation."
                             }
@@ -1232,6 +1235,7 @@ fun WorkspaceManagementSection(
                                 selectedWorkspaceId = workspace.id
                                 activity.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE).edit()
                                     .putString("selected_team_workspace_id", workspace.id).apply()
+                                onWorkspaceMembershipChanged(true)
                                 message = "Workspace created. Invite team members when ready."
                             } else {
                                 message = result.error ?: "Couldn't create workspace."
