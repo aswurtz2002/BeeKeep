@@ -65,7 +65,6 @@ object BeeKeepEntitlements {
     private const val DEBUG_PRO_EXPIRY_KEY = "debug_pro_expires_at"
     // Keep the existing key to preserve locally simulated subscription history on upgrade.
     private const val PRO_CREATED_HIVE_IDS_KEY = "debug_pro_created_hive_ids"
-    private const val CLOUD_HIVE_OVERRIDE_USER_KEY = "cloud_hive_limit_override_user"
     private const val CLOUD_HIVE_OVERRIDE_PREFIX = "cloud_hive_limit_override_for_"
     const val MAX_CUSTOM_HIVE_LIMIT = 1_000_000
 
@@ -85,7 +84,6 @@ object BeeKeepEntitlements {
         if (cleanUserId == null) {
             activeCloudUserId = null
             activeCloudHiveLimitOverride = null
-            prefs.edit().remove(CLOUD_HIVE_OVERRIDE_USER_KEY).apply()
             return
         }
 
@@ -93,7 +91,6 @@ object BeeKeepEntitlements {
         val cached = prefs.getInt(CLOUD_HIVE_OVERRIDE_PREFIX + cleanUserId, -1)
             .takeIf { it in ULTIMATE_HIVE_LIMIT..MAX_CUSTOM_HIVE_LIMIT }
         activeCloudHiveLimitOverride = cached
-        prefs.edit().putString(CLOUD_HIVE_OVERRIDE_USER_KEY, cleanUserId).apply()
     }
 
     /** Persists a limit fetched from the authenticated account's trusted server RPC. */
@@ -231,17 +228,8 @@ object BeeKeepEntitlements {
     fun hiveLimit(plan: BeeKeepPlan, customLimit: Int?): Int =
         effectiveHiveLimit(plan, customLimit ?: activeCloudHiveLimitOverride)
 
-    /** This overload loads the account-scoped cache before making a quota decision. */
-    fun hiveLimit(context: Context): Int {
-        val prefs = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        val activeUserId = prefs.getString(CLOUD_HIVE_OVERRIDE_USER_KEY, null)
-        if (!activeUserId.isNullOrBlank() && activeCloudUserId != activeUserId) {
-            activateCloudHiveLimitOverride(context, activeUserId)
-        } else if (activeUserId.isNullOrBlank() && activeCloudUserId != null) {
-            activateCloudHiveLimitOverride(context, null)
-        }
-        return hiveLimit(currentPlan(context))
-    }
+    /** Uses only the override activated by the authenticated cloud session. */
+    fun hiveLimit(context: Context): Int = hiveLimit(currentPlan(context))
 
     /** Free retains its existing uncapped-apiary behavior; paid plans have explicit caps. */
     fun apiaryLimit(plan: BeeKeepPlan): Int = when (plan) {
