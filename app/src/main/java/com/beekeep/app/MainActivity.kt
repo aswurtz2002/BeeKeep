@@ -420,6 +420,7 @@ fun BeeKeepApp(
     onDarkModeChange: (Boolean) -> Unit
 ) {
     val context = LocalContext.current
+    val cloudHiveLimitOverride by cloud.hiveLimitOverride.collectAsStateWithLifecycle()
     val autoVoicePrefs = remember(context) {
         context.getSharedPreferences(PREFS, android.content.Context.MODE_PRIVATE)
     }
@@ -485,6 +486,7 @@ fun BeeKeepApp(
         mutableStateOf(BeeKeepEntitlements.currentPlan(context).name)
     }
     val purchasePlan = runCatching { BeeKeepPlan.valueOf(purchasePlanName) }.getOrDefault(BeeKeepPlan.FREE)
+    val effectiveHiveLimit = BeeKeepEntitlements.hiveLimit(purchasePlan, cloudHiveLimitOverride)
     var lockedHiveIds by remember { mutableStateOf(BeeKeepEntitlements.lockedHiveIds(context)) }
     var lockedHivePromptVisible by rememberSaveable { mutableStateOf(false) }
     var lockedHivePromptName by rememberSaveable { mutableStateOf<String?>(null) }
@@ -688,7 +690,7 @@ fun BeeKeepApp(
             (hives + deadHives).map { it.id },
             lockedHiveIds
         )
-        if (addHive && availablePlanHiveCount >= BeeKeepEntitlements.hiveLimit(purchasePlan)) {
+        if (addHive && availablePlanHiveCount >= effectiveHiveLimit) {
             hiveLimitPromptVisible = true
         }
     }
@@ -2168,7 +2170,7 @@ fun BeeKeepApp(
                 )
             } else 0,
             addToExistingWorkspace = isAddingToExistingWorkspace,
-            hiveLimit = BeeKeepEntitlements.hiveLimit(purchasePlan),
+            hiveLimit = effectiveHiveLimit,
             apiaryLimit = BeeKeepEntitlements.apiaryLimit(purchasePlan),
             currentPlan = purchasePlan,
             onBack = {
@@ -2351,6 +2353,7 @@ fun BeeKeepApp(
                     screen = Screen.PURCHASES
                 },
                 currentPlan = purchasePlan,
+                hiveLimitOverride = cloudHiveLimitOverride,
                 deadCount = deadHives.size,
                 activity = activity,
                 cloud = cloud
@@ -3206,6 +3209,7 @@ private fun MoreScreen(
     onColonyHistory: () -> Unit,
     onUpgrade: () -> Unit,
     currentPlan: BeeKeepPlan,
+    hiveLimitOverride: Int?,
     deadCount: Int,
     activity: ComponentActivity,
     cloud: SupabaseGateway
@@ -3294,7 +3298,7 @@ private fun MoreScreen(
                         if (currentPlan == BeeKeepPlan.FREE) {
                             "Plans from $2.99 CAD/month • Ultimate: 10,000 hive limit"
                         } else {
-                            val hives = String.format(java.util.Locale.CANADA, "%,d", BeeKeepEntitlements.hiveLimit(currentPlan))
+                            val hives = String.format(java.util.Locale.CANADA, "%,d", BeeKeepEntitlements.hiveLimit(currentPlan, hiveLimitOverride))
                             val apiaries = String.format(java.util.Locale.CANADA, "%,d", BeeKeepEntitlements.apiaryLimit(currentPlan))
                             "$hives hive limit • $apiaries apiary limit"
                         },
