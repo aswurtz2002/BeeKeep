@@ -3219,6 +3219,35 @@ private fun MoreScreen(
     var username by rememberSaveable { mutableStateOf("") }
     var savedUsername by rememberSaveable { mutableStateOf("") }
     var authMessage by rememberSaveable { mutableStateOf("") }
+    var showSupportEmailFallback by rememberSaveable { mutableStateOf(false) }
+
+    fun openSupportEmail() {
+        val emailBody = """
+            Hello BeeKeep Support,
+
+            Please describe your question or issue below:
+            - What happened?
+            - What did you expect to happen?
+            - Steps to reproduce (if applicable):
+
+            Please do not include passwords or other sensitive account information.
+
+            ---
+            App version: ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})
+            Device: ${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}
+            Android version: ${android.os.Build.VERSION.RELEASE}
+        """.trimIndent()
+        val emailIntent = Intent(Intent.ACTION_SENDTO).apply {
+            data = android.net.Uri.parse("mailto:beekeepinc@gmail.com")
+            putExtra(Intent.EXTRA_SUBJECT, "BeeKeep Support Request")
+            putExtra(Intent.EXTRA_TEXT, emailBody)
+        }
+        try {
+            context.startActivity(emailIntent)
+        } catch (_: android.content.ActivityNotFoundException) {
+            showSupportEmailFallback = true
+        }
+    }
 
     androidx.compose.runtime.LaunchedEffect(account.signedIn) {
         if (account.signedIn) {
@@ -3452,10 +3481,69 @@ private fun MoreScreen(
         }
 
         Card(shape = RoundedCornerShape(24.dp)) {
+            Column(
+                Modifier.fillMaxWidth().padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(9.dp)
+            ) {
+                Text("Contact support", fontWeight = FontWeight.ExtraBold, style = MaterialTheme.typography.titleMedium)
+                Text(
+                    "Need help with hive limits, syncing, NFC tags, or anything else in BeeKeep? Send an email directly to the BeeKeep team.",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text("beekeepinc@gmail.com", fontWeight = FontWeight.SemiBold)
+                Button(
+                    onClick = { openSupportEmail() },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("EMAIL SUPPORT")
+                }
+                Text(
+                    "Your email opens as a draft with app and device details. Review it before sending.",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
+        }
+
+        Card(shape = RoundedCornerShape(24.dp)) {
             Column(Modifier.padding(16.dp)) {
                 Text("Native Android • Kotlin + Compose", fontWeight = FontWeight.Bold)
                 Text("Room offline database • NFC • GPS • Voice • WorkManager • cloud sync outbox", color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
+    }
+
+    if (showSupportEmailFallback) {
+        AlertDialog(
+            onDismissRequest = { showSupportEmailFallback = false },
+            title = { Text("Email app not available") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("No email app was found on this device. Copy the address below and use it in your preferred email service.")
+                    Text("beekeepinc@gmail.com", fontWeight = FontWeight.Bold)
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE)
+                            as? android.content.ClipboardManager
+                        if (clipboard != null) {
+                            clipboard.setPrimaryClip(
+                                android.content.ClipData.newPlainText(
+                                    "BeeKeep support email",
+                                    "beekeepinc@gmail.com"
+                                )
+                            )
+                            android.widget.Toast.makeText(context, "Support email copied", android.widget.Toast.LENGTH_SHORT).show()
+                        }
+                        showSupportEmailFallback = false
+                    }
+                ) { Text("COPY EMAIL") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showSupportEmailFallback = false }) { Text("CLOSE") }
+            }
+        )
     }
 }
