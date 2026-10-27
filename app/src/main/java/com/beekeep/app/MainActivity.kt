@@ -554,7 +554,10 @@ fun BeeKeepApp(
             hasServerUltimateEntitlement = false
         } else {
             val entitlement = cloud.myActiveUltimateEntitlement()
-            hasServerUltimateEntitlement = entitlement.isSuccess && entitlement.value == true
+            // Preserve a previously verified entitlement during transient network failures.
+            if (entitlement.isSuccess) {
+                hasServerUltimateEntitlement = entitlement.value == true
+            }
         }
     }
     val hasUltimateWorkspaceAccess = isUltimatePlan || hasServerUltimateEntitlement
