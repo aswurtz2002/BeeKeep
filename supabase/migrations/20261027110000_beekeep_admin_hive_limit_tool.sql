@@ -40,7 +40,7 @@ begin
     if p_email is null
        or pg_catalog.length(pg_catalog.btrim(p_email)) < 3
        or pg_catalog.length(pg_catalog.btrim(p_email)) > 254
-       or pg_catalog.position('@' in pg_catalog.btrim(p_email)) < 2 then
+       or pg_catalog.strpos(pg_catalog.btrim(p_email), '@') < 2 then
         raise exception 'Enter a valid account email.'
             using errcode = '22023';
     end if;
@@ -61,7 +61,7 @@ begin
     v_is_active_ultimate := public.beekeep_user_has_active_ultimate(v_target_user_id);
 
     if v_action = 'set' then
-        if not v_is_active_ultimate then
+        if v_is_active_ultimate is distinct from true then
             raise exception 'A custom hive limit can only be assigned to an active Ultimate account.'
                 using errcode = '22023';
         end if;
