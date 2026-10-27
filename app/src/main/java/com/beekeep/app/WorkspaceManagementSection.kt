@@ -55,6 +55,7 @@ import kotlinx.coroutines.delay
 fun WorkspaceManagementSection(
     cloud: SupabaseGateway,
     activity: ComponentActivity,
+    currentPlan: BeeKeepPlan,
     usernameRefreshKey: Int = 0,
     onUpgrade: () -> Unit
 ) {
@@ -81,12 +82,13 @@ fun WorkspaceManagementSection(
     var showDangerZone by rememberSaveable { mutableStateOf(false) }
     var showJoinAnotherTeam by rememberSaveable { mutableStateOf(false) }
     var showPendingInvitations by rememberSaveable { mutableStateOf(false) }
-    var showPeople by rememberSaveable { mutableStateOf(false) }
+    var showPeople by rememberSaveable { mutableStateOf(true) }
     var showInvitePanel by rememberSaveable { mutableStateOf(false) }
     var workspaceMenuExpanded by remember { mutableStateOf(false) }
     var invitations by remember { mutableStateOf<List<BeeKeepWorkspaceInvitation>>(emptyList()) }
     var loading by remember { mutableStateOf(false) }
     var hasUltimateEntitlement by remember { mutableStateOf(false) }
+    var entitlementCheckFailed by remember { mutableStateOf(false) }
     var showUltimateRequiredDialog by rememberSaveable { mutableStateOf(false) }
     var message by rememberSaveable { mutableStateOf("") }
     var showCreateDialog by remember { mutableStateOf(false) }
@@ -122,7 +124,11 @@ fun WorkspaceManagementSection(
         if (workspace.member_role == "owner" || workspace.member_role == "admin") {
             val result = cloud.listWorkspaceInvitations(workspace.id)
             if (result.isSuccess) {
-                invitations = result.value.orEmpty()
+                // The server marks accepted invites as accepted. Keep only invitations
+                // that are still actionable in the UI.
+                invitations = result.value.orEmpty().filter {
+                    it.status.equals("pending", ignoreCase = true)
+                }
             } else {
                 message = result.error ?: "Couldn't load invitations."
             }
@@ -131,11 +137,72 @@ fun WorkspaceManagementSection(
         }
     }
 
+    /**
+     * Verify entitlement with the server. In debug builds, sync the selected Ultimate
+     * test plan to the isolated staging backend if the server has not recorded it yet.
+     * A sync/verification failure is shown as an error, not a false upgrade prompt.
+     */
+    suspend fun refreshUltimateEntitlement(): Boolean? {
+        val initial = cloud.myActiveUltimateEntitlement()
+        if (initial.isSuccess && initial.value == true) {
+            hasUltimateEntitlement = true
+            entitlementCheckFailed = false
+            message = ""
+            return true
+        }
+
+        val debugUltimateSelected = BuildConfig.DEBUG &&
+            (currentPlan == BeeKeepPlan.ULTIMATE || currentPlan == BeeKeepPlan.ULTIMATE_YEARLY)
+        if (debugUltimateSelected) {
+            val synced = cloud.syncDebugPlanToStaging(currentPlan)
+            if (!synced.isSuccess) {
+                hasUltimateEntitlement = false
+                entitlementCheckFailed = true
+                message = "Ultimate is selected on this device, but its BeeKeep-Staging entitlement sync failed: " +
+                    (synced.error ?: "unknown error") + ". Re-select Ultimate in Plans while online, then retry."
+                return null
+            }
+
+            val verified = cloud.myActiveUltimateEntitlement()
+            if (!verified.isSuccess) {
+                hasUltimateEntitlement = false
+                entitlementCheckFailed = true
+                message = verified.error
+                    ?: "The Ultimate test plan synced, but BeeKeep could not verify it. Check your connection and retry."
+                return null
+            }
+
+            hasUltimateEntitlement = verified.value == true
+            entitlementCheckFailed = !hasUltimateEntitlement
+            if (hasUltimateEntitlement) {
+                message = ""
+                return true
+            }
+
+            message = "The test-plan sync completed, but BeeKeep-Staging still reports no active Ultimate entitlement. Re-select Ultimate in Plans while online, then retry."
+            return null
+        }
+
+        if (!initial.isSuccess) {
+            hasUltimateEntitlement = false
+            entitlementCheckFailed = true
+            message = initial.error
+                ?: "Couldn't verify your Ultimate subscription. Check your connection and try again."
+            return null
+        }
+
+        hasUltimateEntitlement = false
+        entitlementCheckFailed = false
+        message = ""
+        return false
+    }
+
     LaunchedEffect(account.signedIn) {
         if (!account.signedIn) {
             activeWorkspaceId = activity.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
                 .getString("active_team_workspace_id", "").orEmpty()
             hasUltimateEntitlement = false
+            entitlementCheckFailed = false
             workspaces = emptyList()
             members = emptyList()
             membersLoadedWorkspaceId = null
@@ -148,6 +215,7 @@ fun WorkspaceManagementSection(
             .getString("active_team_workspace_id", "").orEmpty()
         val entitlement = cloud.myActiveUltimateEntitlement()
         hasUltimateEntitlement = entitlement.value == true
+        entitlementCheckFailed = !entitlement.isSuccess
         loading = true
         val result = cloud.listWorkspaces()
         if (result.isSuccess) {
@@ -165,6 +233,10 @@ fun WorkspaceManagementSection(
     }
 
     LaunchedEffect(selectedWorkspaceId, account.signedIn, selectedWorkspace?.member_role, usernameRefreshKey) {
+        // Close anchored popups when their old workspace/member rows are replaced.
+        memberMenuId = null
+        roleMenuExpanded = false
+        workspaceMenuExpanded = false
         if (!account.signedIn || selectedWorkspaceId.isBlank() || selectedWorkspace == null) {
             members = emptyList()
             membersLoadedWorkspaceId = null
@@ -185,8 +257,10 @@ fun WorkspaceManagementSection(
         // Refresh the roster while this screen is open so the People count doesn't stay stale.
         while (true) {
             refreshWorkspacePeople(selectedWorkspaceId)
+            // Invitations can be accepted from another phone, so refresh them alongside
+            // the member list instead of leaving a stale "pending" entry on this screen.
+            refreshWorkspaceInvitations(selectedWorkspace)
             if (firstLoad) {
-                refreshWorkspaceInvitations(selectedWorkspace)
                 loading = false
                 firstLoad = false
             }
@@ -199,8 +273,8 @@ fun WorkspaceManagementSection(
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         WorkspacePanel(
-            title = "Team workspaces",
-            description = "Manage your shared apiaries, hive records, people, and invitations."
+            title = "Your teams",
+            description = "Choose a team, manage its members, or join with an invitation code."
         ) {
             if (!account.signedIn) {
                 Text(
@@ -220,21 +294,37 @@ fun WorkspaceManagementSection(
                             fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold
                         )
                         Text(
-                            "Choose one below to manage it.",
+                            "Choose a team to open its shared records and settings.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
+                    OutlinedButton(
+                        enabled = !loading,
+                        onClick = {
+                            showJoinAnotherTeam = true
+                            createdInvite = null
+                        }
+                    ) { Text("JOIN") }
                     Button(
                         enabled = !loading,
                         onClick = {
-                            if (hasUltimateEntitlement) {
-                                showCreateDialog = true
-                            } else {
-                                showUltimateRequiredDialog = true
+                            // Recheck server entitlement. Debug Ultimate plans are synced only
+                            // to BeeKeep-Staging; verification failures are not upgrade denials.
+                            scope.launch {
+                                loading = true
+                                when (refreshUltimateEntitlement()) {
+                                    true -> {
+                                        showUltimateRequiredDialog = false
+                                        showCreateDialog = true
+                                    }
+                                    false -> showUltimateRequiredDialog = true
+                                    null -> Unit
+                                }
+                                loading = false
                             }
                         }
-                    ) { Text("CREATE") }
+                    ) { Text("CREATE TEAM") }
                 }
 
                 if (sharedWorkspaces.isEmpty()) {
@@ -320,6 +410,8 @@ fun WorkspaceManagementSection(
                                     },
                                     onClick = {
                                         selectedWorkspaceId = workspace.id
+                                        memberMenuId = null
+                                        roleMenuExpanded = false
                                         activity.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE).edit()
                                             .putString("selected_team_workspace_id", workspace.id).apply()
                                         createdInvite = null
@@ -341,12 +433,66 @@ fun WorkspaceManagementSection(
             }
         }
 
+            WorkspacePanel(
+                title = if (sharedWorkspaces.isEmpty()) "Join a team" else "Join another team",
+                description = if (sharedWorkspaces.isEmpty()) {
+                    "Enter the invitation code you received."
+                } else {
+                    "Have an invitation code for another team?"
+                },
+                collapsible = sharedWorkspaces.isNotEmpty(),
+                expanded = showJoinAnotherTeam || sharedWorkspaces.isEmpty(),
+                onToggle = { showJoinAnotherTeam = !showJoinAnotherTeam }
+            ) {
+                OutlinedTextField(
+                    value = acceptToken,
+                    onValueChange = { value -> acceptToken = value.filter { it in 'A'..'Z' || it in 'a'..'z' || it in '0'..'9' }.take(128) },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Invitation code") },
+                    placeholder = { Text("Bee123456") },
+                    singleLine = true
+                )
+                Text(
+                    "Use the BeeKeep account email the invitation was sent to.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Button(
+                    enabled = account.signedIn && !loading && isSupportedWorkspaceInvitationCode(acceptToken),
+                    onClick = {
+                        scope.launch {
+                            loading = true
+                            val result = cloud.acceptWorkspaceInvitation(acceptToken)
+                            if (result.isSuccess && result.value != null) {
+                                val joined = result.value!!
+                                acceptToken = ""
+                                createdInvite = null
+                                val refreshed = cloud.listWorkspaces()
+                                if (refreshed.isSuccess) workspaces = refreshed.value.orEmpty()
+                                selectedWorkspaceId = joined.workspace_id
+                                activity.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE).edit()
+                                    .putString("selected_team_workspace_id", joined.workspace_id).apply()
+                                val activation = cloud.activateWorkspace(joined.workspace_id)
+                                activeWorkspaceId = activity.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
+                                    .getString("active_team_workspace_id", "").orEmpty()
+                                message = activation.error
+                                    ?: "Joined ${joined.workspace_name} as ${joined.workspace_role}. Team data is now active."
+                            } else {
+                                message = result.error ?: "Couldn't accept this invitation."
+                            }
+                            loading = false
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text("JOIN WORKSPACE") }
+            }
+
         if (account.signedIn) {
             selectedWorkspace?.let { workspace ->
                 val isActiveWorkspace = activeWorkspaceId == workspace.id
                 WorkspacePanel(
-                    title = workspace.name,
-                    description = "Workspace overview"
+                    title = "Team status",
+                    description = "${workspace.name} · ${workspace.member_role.replaceFirstChar { it.uppercase() }}"
                 ) {
                     Surface(
                         modifier = Modifier.fillMaxWidth(),
@@ -367,7 +513,7 @@ fun WorkspaceManagementSection(
                                 verticalArrangement = Arrangement.spacedBy(4.dp)
                             ) {
                                 Text(
-                                    if (isActiveWorkspace) "Team data is active" else "Team data is not active",
+                                    if (isActiveWorkspace) "This team is active" else "This team is not active",
                                     style = MaterialTheme.typography.titleSmall,
                                     fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
                                     color = if (isActiveWorkspace) {
@@ -398,15 +544,6 @@ fun WorkspaceManagementSection(
                         }
                     }
 
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Text("Your access", style = MaterialTheme.typography.bodyMedium)
-                        WorkspaceTag(workspace.member_role.replaceFirstChar { it.uppercase() })
-                    }
-
                     if (!isActiveWorkspace) {
                         Button(
                             enabled = !loading,
@@ -422,7 +559,7 @@ fun WorkspaceManagementSection(
                             },
                             modifier = Modifier.fillMaxWidth()
                         ) {
-                            Text(if (workspace.member_role == "viewer") "OPEN TEAM DATA" else "USE THIS WORKSPACE")
+                            Text(if (workspace.member_role == "viewer") "OPEN TEAM" else "SWITCH TO THIS TEAM")
                         }
                     }
 
@@ -448,7 +585,7 @@ fun WorkspaceManagementSection(
                                 }
                             },
                             modifier = Modifier.fillMaxWidth()
-                        ) { Text("SWITCH TO PERSONAL WORKSPACE") }
+                        ) { Text("SWITCH BACK TO PERSONAL DATA") }
                     }
                 }
 
@@ -479,7 +616,7 @@ fun WorkspaceManagementSection(
                 }
 
                 WorkspacePanel(
-                    title = "People",
+                    title = "Team members",
                     description = when {
                         membersLoadedWorkspaceId != workspace.id && memberLoadError != null -> "Couldn't load people"
                         membersLoadedWorkspaceId != workspace.id -> "Loading people…"
@@ -643,7 +780,7 @@ fun WorkspaceManagementSection(
 
                 if (canManage) {
                     WorkspacePanel(
-                        title = "Invite a beekeeper",
+                        title = "Invite team members",
                         description = if (invitations.isEmpty()) {
                             "Create an invitation code for a teammate."
                         } else {
@@ -651,9 +788,42 @@ fun WorkspaceManagementSection(
                         },
                         collapsible = true,
                         expanded = showInvitePanel,
-                        onToggle = { showInvitePanel = !showInvitePanel }
+                        onToggle = {
+                            val opening = !showInvitePanel
+                            showInvitePanel = opening
+                            if (opening && workspace.member_role == "owner") {
+                                scope.launch {
+                                    loading = true
+                                    refreshUltimateEntitlement()
+                                    loading = false
+                                }
+                            }
+                        }
                     ) {
-                        if (workspace.member_role == "owner" && !hasUltimateEntitlement) {
+                        if (workspace.member_role == "owner" && !hasUltimateEntitlement && loading) {
+                            Text(
+                                "Checking your Ultimate subscription…",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        } else if (workspace.member_role == "owner" && !hasUltimateEntitlement && entitlementCheckFailed) {
+                            Text(
+                                "BeeKeep couldn't verify Ultimate access. Check your connection and retry instead of upgrading again.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error
+                            )
+                            OutlinedButton(
+                                enabled = !loading,
+                                onClick = {
+                                    scope.launch {
+                                        loading = true
+                                        refreshUltimateEntitlement()
+                                        loading = false
+                                    }
+                                },
+                                modifier = Modifier.fillMaxWidth()
+                            ) { Text("RETRY ULTIMATE CHECK") }
+                        } else if (workspace.member_role == "owner" && !hasUltimateEntitlement) {
                             Text(
                                 "An active BeeKeep Ultimate subscription is required for workspace owners to invite teammates.",
                                 style = MaterialTheme.typography.bodySmall,
@@ -699,7 +869,7 @@ fun WorkspaceManagementSection(
                                         createdInvite = invite
                                         message = "Invitation created. Share the code with the invited person."
                                         inviteEmail = ""
-                                        invitations = cloud.listWorkspaceInvitations(workspace.id).value.orEmpty()
+                                        refreshWorkspaceInvitations(workspace)
                                         showPendingInvitations = invitations.isNotEmpty()
                                     } else {
                                         message = result.error ?: "Couldn't create the invitation."
@@ -800,7 +970,7 @@ fun WorkspaceManagementSection(
                                             scope.launch {
                                                 val result = cloud.cancelWorkspaceInvitation(invitation.id)
                                                 if (result.isSuccess) {
-                                                    invitations = cloud.listWorkspaceInvitations(workspace.id).value.orEmpty()
+                                                    refreshWorkspaceInvitations(workspace)
                                                     message = "Invitation cancelled."
                                                 } else {
                                                     message = result.error ?: "Couldn't cancel the invitation."
@@ -818,59 +988,7 @@ fun WorkspaceManagementSection(
                 }
             }
 
-            WorkspacePanel(
-                title = if (sharedWorkspaces.isEmpty()) "Join a team" else "Join another team",
-                description = if (sharedWorkspaces.isEmpty()) {
-                    "Enter the invitation code you received."
-                } else {
-                    "Have an invitation code for another team?"
-                },
-                collapsible = sharedWorkspaces.isNotEmpty(),
-                expanded = showJoinAnotherTeam || sharedWorkspaces.isEmpty(),
-                onToggle = { showJoinAnotherTeam = !showJoinAnotherTeam }
-            ) {
-                OutlinedTextField(
-                    value = acceptToken,
-                    onValueChange = { value -> acceptToken = value.filter { it in 'A'..'Z' || it in 'a'..'z' || it in '0'..'9' }.take(128) },
-                    modifier = Modifier.fillMaxWidth(),
-                    label = { Text("Invitation code") },
-                    placeholder = { Text("Bee123456") },
-                    singleLine = true
-                )
-                Text(
-                    "Use the BeeKeep account email the invitation was sent to.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Button(
-                    enabled = account.signedIn && !loading && isSupportedWorkspaceInvitationCode(acceptToken),
-                    onClick = {
-                        scope.launch {
-                            loading = true
-                            val result = cloud.acceptWorkspaceInvitation(acceptToken)
-                            if (result.isSuccess && result.value != null) {
-                                val joined = result.value!!
-                                acceptToken = ""
-                                createdInvite = null
-                                val refreshed = cloud.listWorkspaces()
-                                if (refreshed.isSuccess) workspaces = refreshed.value.orEmpty()
-                                selectedWorkspaceId = joined.workspace_id
-                                activity.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE).edit()
-                                    .putString("selected_team_workspace_id", joined.workspace_id).apply()
-                                val activation = cloud.activateWorkspace(joined.workspace_id)
-                                activeWorkspaceId = activity.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
-                                    .getString("active_team_workspace_id", "").orEmpty()
-                                message = activation.error
-                                    ?: "Joined ${joined.workspace_name} as ${joined.workspace_role}. Team data is now active."
-                            } else {
-                                message = result.error ?: "Couldn't accept this invitation."
-                            }
-                            loading = false
-                        }
-                    },
-                    modifier = Modifier.fillMaxWidth()
-                ) { Text("JOIN WORKSPACE") }
-            }
+
 
             if (message.isNotBlank()) {
                 val messageIsError = listOf(
@@ -1159,7 +1277,7 @@ private fun WorkspacePanel(
                 }
                 if (collapsible) {
                     TextButton(onClick = { onToggle?.invoke() }) {
-                        Text(if (expanded) "HIDE" else "SHOW")
+                        Text(if (expanded) "CLOSE" else "OPEN")
                     }
                 }
             }

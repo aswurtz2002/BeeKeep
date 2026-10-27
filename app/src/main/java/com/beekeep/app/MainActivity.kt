@@ -3209,6 +3209,7 @@ private fun MoreScreen(
         WorkspaceManagementSection(
             cloud = cloud,
             activity = activity,
+            currentPlan = currentPlan,
             usernameRefreshKey = usernameRefreshKey,
             onUpgrade = onUpgrade
         )
