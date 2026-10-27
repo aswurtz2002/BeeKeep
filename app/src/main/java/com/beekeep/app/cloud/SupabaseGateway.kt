@@ -813,6 +813,81 @@ class SupabaseGateway(
         }
     }
 
+    /**
+     * Asks the protected server endpoint whether the current account has the trusted support-admin flag.
+     * The UI may hide the entry point, but the Edge Function independently authorizes every request.
+     */
+    suspend fun checkSupportAdmin(): WorkspaceOperationResult<Boolean> {
+        val supabase = client
+            ?: return WorkspaceOperationResult(error = "BeeKeep Cloud is not configured.")
+        return try {
+            supabase.auth.awaitInitialization()
+            if (supabase.auth.currentSessionOrNull() == null) {
+                return WorkspaceOperationResult(value = false)
+            }
+            val response = supabase.functions.invoke(
+                function = "beekeep-admin-hive-limits",
+                body = buildJsonObject { put("action", "check") }
+            ).body<SupportAdminHiveLimitResponse>()
+            if (!response.success) {
+                WorkspaceOperationResult(error = response.error ?: "Could not verify support-admin access.")
+            } else {
+                WorkspaceOperationResult(value = response.allowed)
+            }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Throwable) {
+            WorkspaceOperationResult(
+                error = error.message ?: "Could not verify support-admin access."
+            )
+        }
+    }
+
+    /** Performs a server-authorized exact-email lookup, set, or clear operation. */
+    suspend fun manageSupportHiveLimit(
+        action: String,
+        email: String,
+        hiveLimit: Int?,
+        reason: String?
+    ): WorkspaceOperationResult<SupportAdminHiveLimitResponse> {
+        val supabase = client
+            ?: return WorkspaceOperationResult(error = "BeeKeep Cloud is not configured.")
+        if (action !in setOf("lookup", "set", "clear")) {
+            return WorkspaceOperationResult(error = "Unsupported support-admin action.")
+        }
+        return try {
+            supabase.auth.awaitInitialization()
+            if (supabase.auth.currentSessionOrNull() == null) {
+                refreshAccount()
+                return WorkspaceOperationResult(error = "Sign in before using support-admin tools.")
+            }
+            val body = buildJsonObject {
+                put("action", action)
+                put("email", email.trim())
+                if (hiveLimit != null) put("hive_limit", hiveLimit)
+                if (reason != null) put("reason", reason.trim())
+            }
+            val response = supabase.functions.invoke(
+                function = "beekeep-admin-hive-limits",
+                body = body
+            ).body<SupportAdminHiveLimitResponse>()
+            if (!response.success || response.accountEmail.isNullOrBlank()) {
+                WorkspaceOperationResult(
+                    error = response.error ?: "The support-admin request did not return an account."
+                )
+            } else {
+                WorkspaceOperationResult(value = response)
+            }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Throwable) {
+            WorkspaceOperationResult(
+                error = error.message
+                    ?: "The support-admin request could not be completed. Verify the deployed server function and admin access."
+            )
+        }
+    }
+
     suspend fun createWorkspace(name: String): WorkspaceOperationResult<BeeKeepWorkspace> =
         workspaceOperation {
             client!!.postgrest.rpc("beekeep_create_workspace", WorkspaceNameParams(name.trim()))
