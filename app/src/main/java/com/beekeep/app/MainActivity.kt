@@ -541,7 +541,6 @@ fun BeeKeepApp(
     val deadHives by vm.deadHives.collectAsStateWithLifecycle()
     val account by cloud.account.collectAsStateWithLifecycle()
     val activeWorkspaceId by vm.activeWorkspaceId.collectAsStateWithLifecycle()
-    val activeWorkspaceReadOnly by vm.activeWorkspaceReadOnly.collectAsStateWithLifecycle()
     val apiaries by vm.apiaries.collectAsStateWithLifecycle()
     val selected by vm.selected.collectAsStateWithLifecycle()
     val inspections by vm.inspections.collectAsStateWithLifecycle()
