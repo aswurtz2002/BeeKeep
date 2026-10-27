@@ -158,112 +158,229 @@ revoke all on function public.beekeep_my_hive_limit_override()
     from public, anon;
 grant execute on function public.beekeep_my_hive_limit_override() to authenticated;
 
--- Enforce limits at cloud sync as well as on-device creation. The existing active hive row
--- may always be updated; the guard applies only when a new active hive record is introduced.
-create or replace function public.beekeep_enforce_personal_hive_limit()
+-- Enforce limits at cloud sync as well as on-device creation. Statement-level transition
+-- tables make bulk offline uploads count every row from that statement. Advisory transaction
+-- locks serialize concurrent statements for the same account/workspace before the count check.
+
+create or replace function public.beekeep_enforce_personal_hive_limit_after_insert()
 returns trigger
 language plpgsql
 security definer
 set search_path = ''
 as $function$
 declare
+    account_row record;
     account_limit integer;
     existing_count bigint;
 begin
-    if new.entity_type <> 'hive' or new.deleted then
-        return new;
-    end if;
+    for account_row in
+        select distinct n.user_id
+          from new_rows n
+         where n.entity_type = 'hive'
+           and not n.deleted
+    loop
+        perform pg_catalog.pg_advisory_xact_lock(
+            pg_catalog.hashtextextended('personal-hive-limit:' || account_row.user_id::text, 0)
+        );
 
-    if tg_op = 'UPDATE'
-       and old.entity_type = 'hive'
-       and not old.deleted
-       and old.user_id = new.user_id
-       and old.entity_id = new.entity_id then
-        return new;
-    end if;
+        account_limit := public.beekeep_resolved_hive_limit(account_row.user_id);
+        select count(*)
+          into existing_count
+          from public.beekeep_documents d
+         where d.user_id = account_row.user_id
+           and d.entity_type = 'hive'
+           and not d.deleted;
 
-    account_limit := public.beekeep_resolved_hive_limit(new.user_id);
-    select count(*)
-      into existing_count
-      from public.beekeep_documents d
-     where d.user_id = new.user_id
-       and d.entity_type = 'hive'
-       and not d.deleted;
+        if existing_count > account_limit then
+            raise exception 'Hive limit reached: this account has a % hive limit.', account_limit
+                using errcode = '23514';
+        end if;
+    end loop;
 
-    if existing_count >= account_limit then
-        raise exception 'Hive limit reached: this account has a % hive limit.', account_limit
-            using errcode = '23514';
-    end if;
-
-    return new;
+    return null;
 end;
 $function$;
 
 drop trigger if exists beekeep_enforce_personal_hive_limit on public.beekeep_documents;
-create trigger beekeep_enforce_personal_hive_limit
-before insert or update on public.beekeep_documents
-for each row execute function public.beekeep_enforce_personal_hive_limit();
+drop trigger if exists beekeep_enforce_personal_hive_limit_after_insert on public.beekeep_documents;
+create trigger beekeep_enforce_personal_hive_limit_after_insert
+after insert on public.beekeep_documents
+referencing new table as new_rows
+for each statement execute function public.beekeep_enforce_personal_hive_limit_after_insert();
 
-revoke all on function public.beekeep_enforce_personal_hive_limit()
-    from public, anon, authenticated;
-
-create or replace function public.beekeep_enforce_workspace_hive_limit()
+create or replace function public.beekeep_enforce_personal_hive_limit_after_update()
 returns trigger
 language plpgsql
 security definer
 set search_path = ''
 as $function$
 declare
+    account_row record;
+    account_limit integer;
+    existing_count bigint;
+begin
+    for account_row in
+        select coalesce(n.user_id, o.user_id) as user_id
+          from old_rows o
+          full join new_rows n
+            using (user_id, entity_type, entity_id)
+         group by coalesce(n.user_id, o.user_id)
+        having count(*) filter (where n.entity_type = 'hive' and not n.deleted)
+             > count(*) filter (where o.entity_type = 'hive' and not o.deleted)
+    loop
+        perform pg_catalog.pg_advisory_xact_lock(
+            pg_catalog.hashtextextended('personal-hive-limit:' || account_row.user_id::text, 0)
+        );
+
+        account_limit := public.beekeep_resolved_hive_limit(account_row.user_id);
+        select count(*)
+          into existing_count
+          from public.beekeep_documents d
+         where d.user_id = account_row.user_id
+           and d.entity_type = 'hive'
+           and not d.deleted;
+
+        if existing_count > account_limit then
+            raise exception 'Hive limit reached: this account has a % hive limit.', account_limit
+                using errcode = '23514';
+        end if;
+    end loop;
+
+    return null;
+end;
+$function$;
+
+drop trigger if exists beekeep_enforce_personal_hive_limit_after_update on public.beekeep_documents;
+create trigger beekeep_enforce_personal_hive_limit_after_update
+after update on public.beekeep_documents
+referencing old table as old_rows new table as new_rows
+for each statement execute function public.beekeep_enforce_personal_hive_limit_after_update();
+
+revoke all on function public.beekeep_enforce_personal_hive_limit_after_insert()
+    from public, anon, authenticated;
+revoke all on function public.beekeep_enforce_personal_hive_limit_after_update()
+    from public, anon, authenticated;
+
+create or replace function public.beekeep_enforce_workspace_hive_limit_after_insert()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $function$
+declare
+    workspace_row record;
     owner_id uuid;
     account_limit integer;
     existing_count bigint;
 begin
-    if new.entity_type <> 'hive' or new.deleted then
-        return new;
-    end if;
+    for workspace_row in
+        select distinct n.workspace_id
+          from new_rows n
+         where n.entity_type = 'hive'
+           and not n.deleted
+    loop
+        select w.owner_user_id
+          into owner_id
+          from public.beekeep_workspaces w
+         where w.id = workspace_row.workspace_id
+           and not w.is_personal;
 
-    if tg_op = 'UPDATE'
-       and old.entity_type = 'hive'
-       and not old.deleted
-       and old.workspace_id = new.workspace_id
-       and old.entity_id = new.entity_id then
-        return new;
-    end if;
+        if not found then
+            -- Personal workspaces use beekeep_documents and its own quota trigger.
+            continue;
+        end if;
 
-    select w.owner_user_id
-      into owner_id
-      from public.beekeep_workspaces w
-     where w.id = new.workspace_id
-       and not w.is_personal;
+        perform pg_catalog.pg_advisory_xact_lock(
+            pg_catalog.hashtextextended('workspace-hive-limit:' || workspace_row.workspace_id::text, 0)
+        );
 
-    if not found then
-        -- Personal workspaces use beekeep_documents and its own trigger.
-        return new;
-    end if;
+        account_limit := public.beekeep_resolved_hive_limit(owner_id);
+        select count(*)
+          into existing_count
+          from public.beekeep_workspace_documents d
+         where d.workspace_id = workspace_row.workspace_id
+           and d.entity_type = 'hive'
+           and not d.deleted;
 
-    account_limit := public.beekeep_resolved_hive_limit(owner_id);
-    select count(*)
-      into existing_count
-      from public.beekeep_workspace_documents d
-     where d.workspace_id = new.workspace_id
-       and d.entity_type = 'hive'
-       and not d.deleted;
+        if existing_count > account_limit then
+            raise exception 'Hive limit reached: this team workspace has a % hive limit.', account_limit
+                using errcode = '23514';
+        end if;
+    end loop;
 
-    if existing_count >= account_limit then
-        raise exception 'Hive limit reached: this team workspace has a % hive limit.', account_limit
-            using errcode = '23514';
-    end if;
-
-    return new;
+    return null;
 end;
 $function$;
 
 drop trigger if exists beekeep_enforce_workspace_hive_limit on public.beekeep_workspace_documents;
-create trigger beekeep_enforce_workspace_hive_limit
-before insert or update on public.beekeep_workspace_documents
-for each row execute function public.beekeep_enforce_workspace_hive_limit();
+drop trigger if exists beekeep_enforce_workspace_hive_limit_after_insert on public.beekeep_workspace_documents;
+create trigger beekeep_enforce_workspace_hive_limit_after_insert
+after insert on public.beekeep_workspace_documents
+referencing new table as new_rows
+for each statement execute function public.beekeep_enforce_workspace_hive_limit_after_insert();
 
-revoke all on function public.beekeep_enforce_workspace_hive_limit()
+create or replace function public.beekeep_enforce_workspace_hive_limit_after_update()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $function$
+declare
+    workspace_row record;
+    owner_id uuid;
+    account_limit integer;
+    existing_count bigint;
+begin
+    for workspace_row in
+        select coalesce(n.workspace_id, o.workspace_id) as workspace_id
+          from old_rows o
+          full join new_rows n
+            using (workspace_id, entity_type, entity_id)
+         group by coalesce(n.workspace_id, o.workspace_id)
+        having count(*) filter (where n.entity_type = 'hive' and not n.deleted)
+             > count(*) filter (where o.entity_type = 'hive' and not o.deleted)
+    loop
+        select w.owner_user_id
+          into owner_id
+          from public.beekeep_workspaces w
+         where w.id = workspace_row.workspace_id
+           and not w.is_personal;
+
+        if not found then
+            continue;
+        end if;
+
+        perform pg_catalog.pg_advisory_xact_lock(
+            pg_catalog.hashtextextended('workspace-hive-limit:' || workspace_row.workspace_id::text, 0)
+        );
+
+        account_limit := public.beekeep_resolved_hive_limit(owner_id);
+        select count(*)
+          into existing_count
+          from public.beekeep_workspace_documents d
+         where d.workspace_id = workspace_row.workspace_id
+           and d.entity_type = 'hive'
+           and not d.deleted;
+
+        if existing_count > account_limit then
+            raise exception 'Hive limit reached: this team workspace has a % hive limit.', account_limit
+                using errcode = '23514';
+        end if;
+    end loop;
+
+    return null;
+end;
+$function$;
+
+drop trigger if exists beekeep_enforce_workspace_hive_limit_after_update on public.beekeep_workspace_documents;
+create trigger beekeep_enforce_workspace_hive_limit_after_update
+after update on public.beekeep_workspace_documents
+referencing old table as old_rows new table as new_rows
+for each statement execute function public.beekeep_enforce_workspace_hive_limit_after_update();
+
+revoke all on function public.beekeep_enforce_workspace_hive_limit_after_insert()
+    from public, anon, authenticated;
+revoke all on function public.beekeep_enforce_workspace_hive_limit_after_update()
     from public, anon, authenticated;
 
 commit;
