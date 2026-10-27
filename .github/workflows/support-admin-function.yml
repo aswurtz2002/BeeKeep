@@ -1,0 +1,23 @@
+name: BeeKeep support admin function check
+on:
+  push:
+    paths:
+      - 'supabase/functions/beekeep-admin-hive-limits/**'
+      - '.github/workflows/support-admin-function.yml'
+  pull_request:
+    paths:
+      - 'supabase/functions/beekeep-admin-hive-limits/**'
+      - '.github/workflows/support-admin-function.yml'
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - name: Type-check support admin Edge Function
+        run: deno check supabase/functions/beekeep-admin-hive-limits/index.ts

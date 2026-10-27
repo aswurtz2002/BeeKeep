@@ -106,3 +106,36 @@ where user_id = (
 
 The overrides table intentionally has no authenticated-client RLS policy. Do not grant the mobile app permission to write it, and never put Supabase service-role credentials into the Android app. A future private admin screen should call a protected server-side operation rather than running SQL from the client.
 
+## Private support-admin tools for Ultimate hive-limit exceptions
+
+The app's **More → Support admin tools** entry appears only after the signed-in account passes the server-side admin check. Every lookup, set, and clear request is re-authorized by the `beekeep-admin-hive-limits` Edge Function; hiding the button is not the security boundary. The function is the only component that uses the service-role key, and that key must never be placed in the Android app or public source.
+
+### Enable one trusted support account in staging
+
+After the admin RPC migration and Edge Function have been deployed to **BeeKeep-Staging**, use the SQL Editor to grant the flag to your own exact staging account email. Do not grant this flag to customers or ordinary testers.
+
+```sql
+update auth.users
+set raw_app_meta_data = coalesce(raw_app_meta_data, '{}'::jsonb)
+    || jsonb_build_object('beekeep_support_admin', true)
+where lower(email) = lower('YOUR_ADMIN_ACCOUNT_EMAIL')
+returning id, email, raw_app_meta_data -> 'beekeep_support_admin' as support_admin;
+```
+
+Confirm it returns exactly one row with `support_admin = true`. If zero rows are returned, check the staging project and exact account email before trying again. This flag is in trusted `raw_app_meta_data`; a mobile user cannot grant it through their editable profile metadata.
+
+To revoke support-admin access from that account:
+
+```sql
+update auth.users
+set raw_app_meta_data = coalesce(raw_app_meta_data, '{}'::jsonb)
+    - 'beekeep_support_admin'
+where lower(email) = lower('YOUR_ADMIN_ACCOUNT_EMAIL')
+returning id, email, raw_app_meta_data -> 'beekeep_support_admin' as support_admin;
+```
+
+### Use the screen
+
+Open **More → Support admin tools**, look up the customer's exact BeeKeep account email, and verify the returned account and active Ultimate status. A custom limit can be set from 10,000 to 1,000,000 hives, with a required reason. The server rejects non-Ultimate or expired accounts and records the support-admin actor and update time. Removing the override restores the standard 10,000 limit for an active Ultimate customer.
+
+The customer's app adopts the updated limit after its cloud entitlement refreshes. This initial rollout is for **staging only**. Review and separately configure the production operator flag and production function before enabling this workflow for real customer accounts.

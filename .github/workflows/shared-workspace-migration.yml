@@ -43,6 +43,23 @@ jobs:
       PGDATABASE: postgres
     steps:
       - uses: actions/checkout@v4
+      - name: Create Supabase-compatible database roles
+        run: |
+          psql -v ON_ERROR_STOP=1 <<'SQL'
+          DO $roles$
+          BEGIN
+            IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN
+              CREATE ROLE anon NOLOGIN;
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN
+              CREATE ROLE authenticated NOLOGIN;
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN
+              CREATE ROLE service_role NOLOGIN BYPASSRLS;
+            END IF;
+          END;
+          $roles$;
+          SQL
       - name: Prepare existing per-user cloud schema and sample data
         run: psql -v ON_ERROR_STOP=1 -f supabase/tests/shared_workspace_pre_migration.sql
       - name: Apply Stage 1 workspace migration
@@ -87,3 +104,12 @@ jobs:
         run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261027020000_beekeep_bee_invitation_codes.sql
       - name: Verify Bee code format, case-insensitive acceptance, and legacy compatibility
         run: psql -v ON_ERROR_STOP=1 -f supabase/tests/workspace_invitation_bee_codes.sql
+
+      - name: Apply per-account Ultimate hive-limit overrides
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261027062000_beekeep_per_account_hive_limit_overrides.sql
+      - name: Verify per-account Ultimate hive-limit authorization and sync guards
+        run: psql -v ON_ERROR_STOP=1 -f supabase/tests/hive_limit_overrides.sql
+      - name: Apply protected support-admin hive-limit RPC
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261027110000_beekeep_admin_hive_limit_tool.sql
+      - name: Verify protected support-admin hive-limit operations
+        run: psql -v ON_ERROR_STOP=1 -f supabase/tests/admin_hive_limit_tool.sql
