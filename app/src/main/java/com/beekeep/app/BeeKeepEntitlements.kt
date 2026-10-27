@@ -252,8 +252,11 @@ object BeeKeepEntitlements {
 
     fun apiaryLimit(context: Context): Int = apiaryLimit(currentPlan(context))
 
-    fun hiveLimitMessage(plan: BeeKeepPlan): String {
-        val effectiveLimit = hiveLimit(plan)
+    fun hiveLimitMessage(plan: BeeKeepPlan): String =
+        hiveLimitMessage(plan, activeCloudHiveLimitOverride)
+
+    internal fun hiveLimitMessage(plan: BeeKeepPlan, customLimit: Int?): String {
+        val effectiveLimit = effectiveHiveLimit(plan, customLimit)
         if ((plan == BeeKeepPlan.ULTIMATE || plan == BeeKeepPlan.ULTIMATE_YEARLY) &&
             effectiveLimit > ULTIMATE_HIVE_LIMIT
         ) {
