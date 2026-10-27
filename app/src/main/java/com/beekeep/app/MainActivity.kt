@@ -2295,6 +2295,9 @@ fun BeeKeepApp(
                     hasJoinedTeamWorkspace = joined
                     if (!joined && activeWorkspaceId.isNullOrBlank()) {
                         autoVoicePrefs.edit { remove("selected_team_workspace_id") }
+                        if (!hasUltimateWorkspaceAccess && screen == Screen.WORKSPACE) {
+                            screen = Screen.MORE
+                        }
                     }
                 }
             )
