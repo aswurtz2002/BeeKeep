@@ -76,6 +76,12 @@ class SupabaseGateway(
     /** A verified override for the signed-in account, or null when none is granted. */
     val hiveLimitOverride: StateFlow<Int?> = _hiveLimitOverride.asStateFlow()
 
+    private val _verifiedPlan = MutableStateFlow<BeeKeepPlan?>(null)
+    /** The current account's paid plan, derived from trusted server metadata. */
+    val verifiedPlan: StateFlow<BeeKeepPlan?> = _verifiedPlan.asStateFlow()
+    @Volatile
+    private var verifiedPlanUserId: String? = null
+
     init { scope.launch { refreshAccount() } }
 
     suspend fun refreshAccount() {
@@ -83,6 +89,8 @@ class SupabaseGateway(
         if (!configured || supabase == null) {
             BeeKeepEntitlements.activateCloudHiveLimitOverride(appContext, null)
             _hiveLimitOverride.value = null
+            _verifiedPlan.value = null
+            verifiedPlanUserId = null
             _account.value = CloudAccountState(configured = false, signedIn = false)
             return
         }
@@ -94,7 +102,10 @@ class SupabaseGateway(
             if (userId == null) {
                 BeeKeepEntitlements.activateCloudHiveLimitOverride(appContext, null)
                 _hiveLimitOverride.value = null
+                _verifiedPlan.value = null
+                verifiedPlanUserId = null
             } else {
+                refreshVerifiedPlanForUser(userId)
                 refreshHiveLimitOverrideForUser(userId)
             }
             _account.value = CloudAccountState(
@@ -107,6 +118,37 @@ class SupabaseGateway(
             throw cancelled
         } catch (error: Throwable) {
             _account.value = CloudAccountState(configured = true, signedIn = false, error = error.message)
+        }
+    }
+
+    /**
+     * Reads the signed-in account's active plan from the trusted entitlement RPC. A new account
+     * never inherits the previous account's paid plan, and failed refreshes don't erase this
+     * account's last verified value while it is offline.
+     */
+    private suspend fun refreshVerifiedPlanForUser(userId: String) {
+        val cleanUserId = userId.trim()
+        if (cleanUserId.isEmpty()) return
+        if (verifiedPlanUserId != cleanUserId) {
+            verifiedPlanUserId = cleanUserId
+            _verifiedPlan.value = null
+        }
+        val supabase = client ?: return
+        try {
+            val response = supabase.postgrest.rpc("beekeep_my_hive_entitlement")
+                .decodeList<BeeKeepServerEntitlement>()
+                .firstOrNull()
+            _verifiedPlan.value = response?.let {
+                BeeKeepEntitlements.planFromServerEntitlement(
+                    planCode = it.planCode,
+                    baseHiveLimit = it.baseHiveLimit,
+                    isActivePaidPlan = it.isActivePaidPlan
+                )
+            } ?: BeeKeepPlan.FREE
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Throwable) {
+            // Keep this account's last verified plan while offline; a different account clears it above.
         }
     }
 
@@ -394,6 +436,7 @@ class SupabaseGateway(
             _account.value = _account.value.copy(syncing = false, signedIn = false, error = "Your cloud session has no user ID. Sign in again.")
             return@withLock CloudResult.NotSignedIn
         }
+        refreshVerifiedPlanForUser(userId)
         refreshHiveLimitOverrideForUser(userId)
         val activeTeamWorkspaceId = appContext
             .getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
