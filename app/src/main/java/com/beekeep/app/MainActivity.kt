@@ -684,7 +684,8 @@ fun BeeKeepApp(
         hives.size,
         deadHives.size,
         lockedHiveIds,
-        purchasePlan
+        purchasePlan,
+        effectiveHiveLimit
     ) {
         val availablePlanHiveCount = BeeKeepEntitlements.countHivesSubjectToFreeLimit(
             (hives + deadHives).map { it.id },
