@@ -314,9 +314,10 @@ fun WorkspaceManagementSection(
                                 showJoinAnotherTeam = true
                                 createdInvite = null
                             },
-                            modifier = Modifier.weight(1f)
+                            modifier = Modifier.weight(1f),
+                            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 4.dp, vertical = 0.dp)
                         ) {
-                            Text("JOIN TEAM", maxLines = 1, softWrap = false)
+                            Text("JOIN TEAM", maxLines = 1, softWrap = false, style = MaterialTheme.typography.labelMedium)
                         }
                         Button(
                             enabled = !loading,
@@ -336,9 +337,10 @@ fun WorkspaceManagementSection(
                                     loading = false
                                 }
                             },
-                            modifier = Modifier.weight(1f)
+                            modifier = Modifier.weight(1f),
+                            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 4.dp, vertical = 0.dp)
                         ) {
-                            Text("CREATE TEAM", maxLines = 1, softWrap = false)
+                            Text("CREATE TEAM", maxLines = 1, softWrap = false, style = MaterialTheme.typography.labelMedium)
                         }
                     }
                 }
