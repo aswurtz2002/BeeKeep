@@ -101,6 +101,55 @@ revoke all on function public.beekeep_my_hive_limit_override()
     from public, anon;
 grant execute on function public.beekeep_my_hive_limit_override() to authenticated;
 
+-- Expose the current user's trusted plan and resolved quota so the mobile UI displays the
+-- same plan/cap that the database enforces. The user cannot select another account ID.
+create or replace function public.beekeep_my_hive_entitlement()
+returns table (
+    plan_code text,
+    base_hive_limit integer,
+    custom_hive_limit integer,
+    effective_hive_limit integer,
+    expires_at text,
+    is_active_paid_plan boolean,
+    is_active_ultimate boolean
+)
+language sql
+stable
+security definer
+set search_path = ''
+as $function$
+    select
+        case
+            when base.base_hive_limit >= 1000
+                then coalesce(nullif(u.raw_app_meta_data ->> 'beekeep_plan', ''), 'free')
+            else 'free'
+        end::text as plan_code,
+        base.base_hive_limit,
+        case
+            when base.base_hive_limit >= 1000 then o.hive_limit_override
+            else null
+        end::integer as custom_hive_limit,
+        public.beekeep_resolved_hive_limit(u.id) as effective_hive_limit,
+        case
+            when base.base_hive_limit >= 1000
+                then nullif(u.raw_app_meta_data ->> 'beekeep_subscription_expires_at', '')
+            else null
+        end::text as expires_at,
+        (base.base_hive_limit >= 1000) as is_active_paid_plan,
+        public.beekeep_user_has_active_ultimate(u.id) as is_active_ultimate
+    from auth.users u
+    cross join lateral (
+        select public.beekeep_server_base_hive_limit(u.id) as base_hive_limit
+    ) base
+    left join public.beekeep_user_hive_limit_overrides o
+        on o.user_id = u.id
+    where u.id = auth.uid()
+$function$;
+
+revoke all on function public.beekeep_my_hive_entitlement()
+    from public, anon;
+grant execute on function public.beekeep_my_hive_entitlement() to authenticated;
+
 -- The return contract expands for Pro support, account status, and audit history. Drop the
 -- prior signature first because PostgreSQL cannot CREATE OR REPLACE a function with new OUT columns.
 drop function if exists public.beekeep_admin_manage_hive_limit_override(text, text, integer, text, uuid);
