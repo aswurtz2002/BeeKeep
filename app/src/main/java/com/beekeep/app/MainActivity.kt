@@ -548,7 +548,17 @@ fun BeeKeepApp(
     }
     val isUltimatePlan = purchasePlan == BeeKeepPlan.ULTIMATE ||
         purchasePlan == BeeKeepPlan.ULTIMATE_YEARLY
-    val showWorkspaceDestination = isUltimatePlan || hasJoinedTeamWorkspace ||
+    var hasServerUltimateEntitlement by rememberSaveable { mutableStateOf(false) }
+    androidx.compose.runtime.LaunchedEffect(account.signedIn, purchasePlan) {
+        if (!account.signedIn) {
+            hasServerUltimateEntitlement = false
+        } else {
+            val entitlement = cloud.myActiveUltimateEntitlement()
+            hasServerUltimateEntitlement = entitlement.isSuccess && entitlement.value == true
+        }
+    }
+    val hasUltimateWorkspaceAccess = isUltimatePlan || hasServerUltimateEntitlement
+    val showWorkspaceDestination = hasUltimateWorkspaceAccess || hasJoinedTeamWorkspace ||
         !activeWorkspaceId.isNullOrBlank()
     androidx.compose.runtime.LaunchedEffect(activeWorkspaceId) {
         if (!activeWorkspaceId.isNullOrBlank()) hasJoinedTeamWorkspace = true
@@ -2269,6 +2279,7 @@ fun BeeKeepApp(
                 activity = activity,
                 cloud = cloud,
                 currentPlan = purchasePlan,
+                hasUltimateAccess = hasUltimateWorkspaceAccess,
                 activeWorkspaceId = activeWorkspaceId,
                 hiveCount = hives.size,
                 apiaryCount = apiaries.size,
