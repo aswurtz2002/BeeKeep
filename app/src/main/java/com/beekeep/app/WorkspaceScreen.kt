@@ -51,6 +51,7 @@ fun WorkspaceScreen(
     activity: ComponentActivity,
     cloud: SupabaseGateway,
     currentPlan: BeeKeepPlan,
+    hasUltimateAccess: Boolean,
     activeWorkspaceId: String?,
     hiveCount: Int,
     apiaryCount: Int,
@@ -150,7 +151,11 @@ fun WorkspaceScreen(
                             tint = MaterialTheme.colorScheme.primary
                         )
                         Text(
-                            if (hasActiveTeam) "TEAM WORKSPACE ACTIVE" else currentPlan.displayName.uppercase(),
+                            when {
+                                hasActiveTeam -> "TEAM WORKSPACE ACTIVE"
+                                hasUltimateAccess -> "ULTIMATE ACCESS"
+                                else -> currentPlan.displayName.uppercase()
+                            },
                             style = MaterialTheme.typography.labelMedium,
                             fontWeight = FontWeight.Bold
                         )
@@ -175,7 +180,7 @@ fun WorkspaceScreen(
                     }
                 } else {
                     Text(
-                        if (currentPlan == BeeKeepPlan.ULTIMATE || currentPlan == BeeKeepPlan.ULTIMATE_YEARLY) {
+                        if (hasUltimateAccess) {
                             "Ultimate includes team creation. You can also join another beekeeper’s workspace with an invitation code."
                         } else {
                             "Joining a team does not require Ultimate. Ultimate is required only to create a new team workspace."
