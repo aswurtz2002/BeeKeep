@@ -119,6 +119,16 @@ begin
     if current_limit <> 1500 then
         raise exception 'The account-level entitlement RPC must return a Pro custom allowance of 1,500.';
     end if;
+    select * into row_value
+      from public.beekeep_my_hive_entitlement();
+    if row_value.plan_code <> 'pro_yearly'
+       or row_value.base_hive_limit <> 1000
+       or row_value.custom_hive_limit <> 1500
+       or row_value.effective_hive_limit <> 1500
+       or row_value.is_active_paid_plan is distinct from true
+       or row_value.is_active_ultimate is distinct from false then
+        raise exception 'The current-account entitlement RPC must expose the trusted Pro tier and resolved 1,500 hive ceiling.';
+    end if;
 
     -- Admin functions and the private audit table remain unavailable to authenticated app users.
     if has_function_privilege(
@@ -130,6 +140,9 @@ begin
     end if;
     if has_table_privilege('authenticated', 'public.beekeep_hive_limit_override_audit', 'SELECT') then
         raise exception 'Authenticated customers must not read the support audit history table directly.';
+    end if;
+    if has_function_privilege('anon', 'public.beekeep_my_hive_entitlement()', 'EXECUTE') then
+        raise exception 'Anonymous users must not execute the current-account entitlement RPC.';
     end if;
     if not has_function_privilege(
         'service_role',
