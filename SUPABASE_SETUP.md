@@ -65,3 +65,44 @@ Stage 2 creates a team workspace through a role-checked database function and su
 **Important boundary:** Stage 2 manages workspace membership only. Hive/apiary records still sync privately per user, even when users belong to a team workspace. Shared-record sync and active workspace selection need a separately tested data model and are not enabled yet; the UI states this explicitly.
 
 Before Stage 3 enables shared sync, test with multiple staging accounts and verify that each account can only see authorized records. Keep a database backup before applying schema migrations to production.
+
+## Individual Ultimate hive-limit exceptions
+
+Migration `20261027062000_beekeep_per_account_hive_limit_overrides.sql` adds a server-controlled per-account hive allowance for special Ultimate customers. The regular Ultimate allowance remains 10,000. A custom value (for example, 11,000) is honored only while that account has an active Ultimate entitlement in trusted `auth.users.raw_app_meta_data`. An expired/downgraded account, or a user-editable profile metadata field, cannot keep the exception active.
+
+The mobile app reads its own verified exception through `beekeep_my_hive_limit_override()`; it cannot read or write the internal overrides table. Cloud sync also checks hive inserts/undeletes against the resolved cap for personal accounts and shared workspaces, so editing a local value does not bypass the server guard.
+
+### Granting an exception from the Supabase SQL Editor
+
+Use the private Supabase SQL Editor as an authorized operator. Verify that the email identifies the intended, active Ultimate account before running this. Replace `customer@example.com` with that customer's exact account email.
+
+```sql
+insert into public.beekeep_user_hive_limit_overrides
+    (user_id, hive_limit_override, reason)
+select
+    u.id,
+    11000,
+    'Approved support exception: increased Ultimate hive allowance'
+from auth.users u
+where lower(u.email) = lower('customer@example.com')
+on conflict (user_id) do update
+set hive_limit_override = excluded.hive_limit_override,
+    reason = excluded.reason,
+    updated_at = now()
+returning user_id, hive_limit_override, reason, updated_at;
+```
+
+The query must return exactly one row. If it returns none, confirm the email/account first; do not insert an override by guessing a user ID. The database permits custom limits from 10,000 to 1,000,000. A limit takes effect in the app after the signed-in device refreshes/synchronizes its entitlement. The database continues to enforce it when hive records sync.
+
+To remove an exception and restore the standard 10,000 limit for that active Ultimate account:
+
+```sql
+delete from public.beekeep_user_hive_limit_overrides
+where user_id = (
+    select id from auth.users
+    where lower(email) = lower('customer@example.com')
+);
+```
+
+The overrides table intentionally has no authenticated-client RLS policy. Do not grant the mobile app permission to write it, and never put Supabase service-role credentials into the Android app. A future private admin screen should call a protected server-side operation rather than running SQL from the client.
+
