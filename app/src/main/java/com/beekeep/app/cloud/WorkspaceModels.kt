@@ -85,6 +85,11 @@ data class BeeKeepUsernameAvailability(val available: Boolean)
 data class BeeKeepUltimateEntitlement(val active: Boolean)
 
 @Serializable
+data class BeeKeepHiveLimitOverride(
+    val hive_limit_override: Int? = null
+)
+
+@Serializable
 data class DebugEntitlementSyncResponse(
     val success: Boolean,
     val active: Boolean,
