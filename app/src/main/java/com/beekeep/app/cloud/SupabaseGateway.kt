@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import com.beekeep.app.BuildConfig
 import com.beekeep.app.BeeKeepPlan
+import com.beekeep.app.BeeKeepEntitlements
 import com.beekeep.app.data.LocalHiveRepository
 import io.github.jan.supabase.auth.auth
 import io.github.jan.supabase.auth.handleDeeplinks
@@ -71,11 +72,17 @@ class SupabaseGateway(
     )
     val account: StateFlow<CloudAccountState> = _account.asStateFlow()
 
+    private val _hiveLimitOverride = MutableStateFlow<Int?>(null)
+    /** A verified override for the signed-in account, or null when none is granted. */
+    val hiveLimitOverride: StateFlow<Int?> = _hiveLimitOverride.asStateFlow()
+
     init { scope.launch { refreshAccount() } }
 
     suspend fun refreshAccount() {
         val supabase = client
         if (!configured || supabase == null) {
+            BeeKeepEntitlements.activateCloudHiveLimitOverride(appContext, null)
+            _hiveLimitOverride.value = null
             _account.value = CloudAccountState(configured = false, signedIn = false)
             return
         }
@@ -83,6 +90,13 @@ class SupabaseGateway(
             // Wait until stored credentials have been restored before showing signed-out UI.
             supabase.auth.awaitInitialization()
             val session = supabase.auth.currentSessionOrNull()
+            val userId = session?.user?.id
+            if (userId == null) {
+                BeeKeepEntitlements.activateCloudHiveLimitOverride(appContext, null)
+                _hiveLimitOverride.value = null
+            } else {
+                refreshHiveLimitOverrideForUser(userId)
+            }
             _account.value = CloudAccountState(
                 configured = true,
                 signedIn = session != null,
@@ -93,6 +107,32 @@ class SupabaseGateway(
             throw cancelled
         } catch (error: Throwable) {
             _account.value = CloudAccountState(configured = true, signedIn = false, error = error.message)
+        }
+    }
+
+    /**
+     * Refreshes the current account's entitlement from a SECURITY DEFINER RPC. If the network
+     * is unavailable, retain only this account's previously verified cache so offline work
+     * continues without ever carrying another account's override across sign-in.
+     */
+    private suspend fun refreshHiveLimitOverrideForUser(userId: String) {
+        val supabase = client ?: return
+        BeeKeepEntitlements.activateCloudHiveLimitOverride(appContext, userId)
+        _hiveLimitOverride.value = BeeKeepEntitlements.cachedCloudHiveLimitOverride(appContext, userId)
+        try {
+            val response = supabase.postgrest.rpc("beekeep_my_hive_limit_override")
+                .decodeList<BeeKeepHiveLimitOverride>()
+                .firstOrNull()
+            val limit = response?.hive_limit_override?.takeIf {
+                it in BeeKeepEntitlements.ULTIMATE_HIVE_LIMIT..BeeKeepEntitlements.MAX_CUSTOM_HIVE_LIMIT
+            }
+            BeeKeepEntitlements.updateCloudHiveLimitOverride(appContext, userId, limit)
+            _hiveLimitOverride.value = limit
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Throwable) {
+            // The entitlement RPC is additive to sync; a transient failure must not sign users
+            // out or discard their last verified, account-scoped quota cache.
         }
     }
 
@@ -354,6 +394,7 @@ class SupabaseGateway(
             _account.value = _account.value.copy(syncing = false, signedIn = false, error = "Your cloud session has no user ID. Sign in again.")
             return@withLock CloudResult.NotSignedIn
         }
+        refreshHiveLimitOverrideForUser(userId)
         val activeTeamWorkspaceId = appContext
             .getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
             .getString("active_team_workspace_id", "")
