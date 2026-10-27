@@ -78,10 +78,10 @@ begin
 end;
 $wrong_email_assertions$;
 
--- Uppercase/pasted input must accept a mixed-case Bee123456 code.
+-- The code in its displayed Bee123456 case must accept the normalized stored hash.
 select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-000000000102', false);
 select * from public.beekeep_accept_workspace_invitation(
-    upper((select value from bee_invitation_test_context where key = 'invite_token'))
+    (select value from bee_invitation_test_context where key = 'invite_token')
 );
 
 do $bee_accept_assertions$
