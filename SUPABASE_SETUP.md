@@ -70,7 +70,7 @@ Before Stage 3 enables shared sync, test with multiple staging accounts and veri
 
 Migration `20261027062000_beekeep_per_account_hive_limit_overrides.sql` introduced per-account overrides; `20261027130000_beekeep_pro_and_ultimate_hive_limit_overrides.sql` extends them to both paid tiers and records a private audit history. Pro's standard hive allowance remains 1,000 and a Pro override cannot be set below 1,000. Ultimate's standard allowance remains 10,000 and an Ultimate override cannot be set below 10,000. The database checks the trusted active subscription in `auth.users.raw_app_meta_data`; expired/downgraded accounts and user-editable profile metadata never retain the extra capacity.
 
-The mobile app reads only its own verified allowance through `beekeep_my_hive_limit_override()`; it cannot read or write the internal override/audit tables. Cloud sync also enforces the resolved cap for personal and shared-workspace hive inserts/undeletes, including offline uploads. The client must refresh its account entitlement during cloud sync before a new custom limit appears on device.
+The mobile app reads its own verified allowance through `beekeep_my_hive_limit_override()` and its active plan through `beekeep_my_hive_entitlement()`; neither RPC accepts a target account ID. It cannot read or write the internal override/audit tables. Cloud sync also enforces the resolved cap for personal and shared-workspace hive inserts/undeletes, including offline uploads. The client must refresh its account entitlement during cloud sync before a new custom limit appears on device.
 
 ### Managing exceptions
 
@@ -84,7 +84,7 @@ insert into public.beekeep_user_hive_limit_overrides
 select
     u.id,
     11000,
-    'Approved support exception: increased Ultimate hive allowance'
+    'Approved support exception: increased hive allowance'
 from auth.users u
 where lower(u.email) = lower('customer@example.com')
 on conflict (user_id) do update
@@ -140,4 +140,4 @@ returning id, email, raw_app_meta_data -> 'beekeep_support_admin' as support_adm
 
 Open **More → Support admin tools**, look up the customer's exact BeeKeep account email, and verify the returned account and paid-plan status. A custom limit can be set from 1,000 to 1,000,000 for active Pro or active Ultimate, with the server enforcing each plan's standard minimum. Free/expired accounts cannot receive custom capacity. The panel shows account expiry, standard/effective quota, a reasoned change flow, reset-to-standard, and the most recent 10 change/removal audit events.
 
-The customer's app adopts the updated limit after its cloud entitlement refreshes. This initial rollout is for **staging only**. Review and separately configure the production operator flag and production function before enabling this workflow for real customer accounts.
+The customer's app refreshes its trusted plan and custom quota during sign-in and cloud sync, so it can apply the new ceiling instead of continuing to display the old plan default. Ask the customer to tap **More → BeeKeep Cloud → Sync Now** if the previous limit warning remains on screen. This initial rollout is for **staging only**. Review and separately configure the production operator flag and production function before enabling this workflow for real customer accounts.
