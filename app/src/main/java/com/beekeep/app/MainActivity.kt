@@ -62,6 +62,7 @@ import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.GpsFixed
 import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.Home
+import androidx.compose.material.icons.rounded.Groups
 import androidx.compose.material.icons.rounded.LocationOn
 import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.MyLocation
@@ -385,6 +386,7 @@ enum class Screen {
     APIARIES,
     APIARY_HIVES,
     MAP,
+    WORKSPACE,
     SCAN,
     MORE,
     SETTINGS,
@@ -541,6 +543,16 @@ fun BeeKeepApp(
     val deadHives by vm.deadHives.collectAsStateWithLifecycle()
     val account by cloud.account.collectAsStateWithLifecycle()
     val activeWorkspaceId by vm.activeWorkspaceId.collectAsStateWithLifecycle()
+    var hasJoinedTeamWorkspace by rememberSaveable {
+        mutableStateOf(autoVoicePrefs.getString("selected_team_workspace_id", "").orEmpty().isNotBlank())
+    }
+    val isUltimatePlan = purchasePlan == BeeKeepPlan.ULTIMATE ||
+        purchasePlan == BeeKeepPlan.ULTIMATE_YEARLY
+    val showWorkspaceDestination = isUltimatePlan || hasJoinedTeamWorkspace ||
+        !activeWorkspaceId.isNullOrBlank()
+    androidx.compose.runtime.LaunchedEffect(activeWorkspaceId) {
+        if (!activeWorkspaceId.isNullOrBlank()) hasJoinedTeamWorkspace = true
+    }
     val apiaries by vm.apiaries.collectAsStateWithLifecycle()
     val selected by vm.selected.collectAsStateWithLifecycle()
     val inspections by vm.inspections.collectAsStateWithLifecycle()
@@ -2191,6 +2203,11 @@ fun BeeKeepApp(
                     mapFocusApiaryId = null
                     screen = Screen.MAP
                 }
+                if (showWorkspaceDestination) {
+                    NavItem("Workspace", Icons.Rounded.Groups, screen == Screen.WORKSPACE) {
+                        screen = Screen.WORKSPACE
+                    }
+                }
                 NavItem("Settings", Icons.Rounded.Settings, screen == Screen.MORE || screen == Screen.SETTINGS) { screen = Screen.SETTINGS }
             }
             }
@@ -2247,9 +2264,33 @@ fun BeeKeepApp(
                 locationController = locationController,
                 onBack = { screen = mapOrigin; mapFocusApiaryId = null }
             )
+            Screen.WORKSPACE -> WorkspaceScreen(
+                padding = padding,
+                activity = activity,
+                cloud = cloud,
+                currentPlan = purchasePlan,
+                activeWorkspaceId = activeWorkspaceId,
+                hiveCount = hives.size,
+                apiaryCount = apiaries.size,
+                onUpgrade = {
+                    purchaseBackScreen = Screen.WORKSPACE
+                    purchaseSuccessScreen = Screen.WORKSPACE
+                    screen = Screen.PURCHASES
+                },
+                onWorkspaceMembershipChanged = { joined ->
+                    hasJoinedTeamWorkspace = joined
+                    if (!joined && activeWorkspaceId.isNullOrBlank()) {
+                        autoVoicePrefs.edit { remove("selected_team_workspace_id") }
+                    }
+                }
+            )
             Screen.MORE -> MoreScreen(
                 padding = padding,
                 onBack = { screen = Screen.SETTINGS },
+                onWorkspaceJoined = {
+                    hasJoinedTeamWorkspace = true
+                    screen = Screen.WORKSPACE
+                },
                 onTagManager = { tagManagerReturnScreen = Screen.MORE; screen = Screen.TAG_MANAGER },
                 onColonyHistory = { screen = Screen.COLONY_HISTORY },
                 onUpgrade = {
@@ -3098,6 +3139,7 @@ private fun TagManagementScreen(
 private fun MoreScreen(
     padding: PaddingValues,
     onBack: () -> Unit,
+    onWorkspaceJoined: () -> Unit,
     onTagManager: () -> Unit,
     onColonyHistory: () -> Unit,
     onUpgrade: () -> Unit,
@@ -3114,7 +3156,6 @@ private fun MoreScreen(
     var password by rememberSaveable { mutableStateOf("") }
     var username by rememberSaveable { mutableStateOf("") }
     var savedUsername by rememberSaveable { mutableStateOf("") }
-    var usernameRefreshKey by remember { mutableIntStateOf(0) }
     var authMessage by rememberSaveable { mutableStateOf("") }
 
     androidx.compose.runtime.LaunchedEffect(account.signedIn) {
@@ -3174,12 +3215,10 @@ private fun MoreScreen(
             }
         }
 
-        WorkspaceManagementSection(
+        WorkspaceJoinEntry(
             cloud = cloud,
             activity = activity,
-            currentPlan = currentPlan,
-            usernameRefreshKey = usernameRefreshKey,
-            onUpgrade = onUpgrade
+            onWorkspaceJoined = onWorkspaceJoined
         )
 
         Card(onClick = onTagManager, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(24.dp)) {
@@ -3302,7 +3341,6 @@ private fun MoreScreen(
                                 if (result.isSuccess && result.value != null) {
                                     username = result.value
                                     savedUsername = result.value
-                                    usernameRefreshKey++
                                     authMessage = "Username saved. Your team roster will show it."
                                 } else {
                                     authMessage = result.error ?: "Couldn't save your username."
