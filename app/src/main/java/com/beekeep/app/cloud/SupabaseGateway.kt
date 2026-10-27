@@ -868,7 +868,7 @@ class SupabaseGateway(
                 "beekeep_accept_workspace_invitation",
                 WorkspaceInvitationTokenParams(token.trim())
             ).decodeList<BeeKeepWorkspaceJoinResult>().firstOrNull()
-                ?: error("The invitation could not be accepted")
+                ?: error("No matching invitation was accepted. Check the code, confirm it has not expired, and make sure you are signed in with the email address the invitation was sent to. Too many failed attempts can temporarily block code entry.")
         }
 
     suspend fun cancelWorkspaceInvitation(invitationId: String): WorkspaceOperationResult<Unit> =
