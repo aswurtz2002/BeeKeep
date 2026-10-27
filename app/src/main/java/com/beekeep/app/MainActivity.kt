@@ -2287,9 +2287,10 @@ fun BeeKeepApp(
             Screen.MORE -> MoreScreen(
                 padding = padding,
                 onBack = { screen = Screen.SETTINGS },
-                onWorkspaceJoined = {
+                onWorkspaceJoined = { joinedMessage ->
                     hasJoinedTeamWorkspace = true
                     screen = Screen.WORKSPACE
+                    scope.launch { snackbarHostState.showSnackbar(joinedMessage) }
                 },
                 onTagManager = { tagManagerReturnScreen = Screen.MORE; screen = Screen.TAG_MANAGER },
                 onColonyHistory = { screen = Screen.COLONY_HISTORY },
@@ -3139,7 +3140,7 @@ private fun TagManagementScreen(
 private fun MoreScreen(
     padding: PaddingValues,
     onBack: () -> Unit,
-    onWorkspaceJoined: () -> Unit,
+    onWorkspaceJoined: (String) -> Unit,
     onTagManager: () -> Unit,
     onColonyHistory: () -> Unit,
     onUpgrade: () -> Unit,
