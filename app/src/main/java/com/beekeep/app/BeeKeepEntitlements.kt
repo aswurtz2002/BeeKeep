@@ -22,10 +22,10 @@ enum class BeeKeepPlan(
 
 /** Pricing labels are CAD; real charges remain disabled until Google Play Billing is integrated. */
 internal object BeeKeepPricing {
-    const val PRO_MONTHLY_CAD = 5.99
-    const val PRO_YEARLY_CAD = 49.99
-    const val ULTIMATE_MONTHLY_CAD = 9.99
-    const val ULTIMATE_YEARLY_CAD = 79.99
+    const val PRO_MONTHLY_CAD = 2.99
+    const val PRO_YEARLY_CAD = 24.99
+    const val ULTIMATE_MONTHLY_CAD = 6.99
+    const val ULTIMATE_YEARLY_CAD = 59.99
 
     val proYearlySavingsCad: Double
         get() = PRO_MONTHLY_CAD * 12 - PRO_YEARLY_CAD
@@ -173,11 +173,11 @@ object BeeKeepEntitlements {
 
     fun hiveLimitMessage(plan: BeeKeepPlan): String = when (plan) {
         BeeKeepPlan.FREE ->
-            "Hive limit reached: the Free plan supports up to 150 hives. Upgrade to BeeKeep Pro (1,000 hives) or Ultimate (10,000 hives) to add more."
+            "Hive limit reached: the Free plan has a 150 hive limit. Upgrade to BeeKeep Pro (1,000 hive limit) or Ultimate (10,000 hive limit) to add more."
         BeeKeepPlan.PRO, BeeKeepPlan.PRO_YEARLY ->
-            "Hive limit reached: BeeKeep Pro supports up to 1,000 hives. Upgrade to BeeKeep Ultimate for up to 10,000 hives."
+            "Hive limit reached: BeeKeep Pro has a 1,000 hive limit. Upgrade to BeeKeep Ultimate for a 10,000 hive limit."
         BeeKeepPlan.ULTIMATE, BeeKeepPlan.ULTIMATE_YEARLY ->
-            "Hive limit reached: BeeKeep Ultimate supports up to 10,000 hives. Your existing records are safe; contact BeeKeep support if you need a higher limit."
+            "Hive limit reached: BeeKeep Ultimate has a 10,000 hive limit. Your existing records are safe; contact BeeKeep support if you need a higher limit."
     }
 
     fun hiveLimitMessage(context: Context): String = hiveLimitMessage(currentPlan(context))
@@ -185,9 +185,9 @@ object BeeKeepEntitlements {
     fun apiaryLimitMessage(plan: BeeKeepPlan): String = when (plan) {
         BeeKeepPlan.FREE -> "The Free plan has no apiary limit."
         BeeKeepPlan.PRO, BeeKeepPlan.PRO_YEARLY ->
-            "Apiary limit reached: BeeKeep Pro supports up to 100 apiaries. Upgrade to Ultimate to manage up to 1,000 apiaries."
+            "Apiary limit reached: BeeKeep Pro has a 100 apiary limit. Upgrade to Ultimate for a 1,000 apiary limit."
         BeeKeepPlan.ULTIMATE, BeeKeepPlan.ULTIMATE_YEARLY ->
-            "Apiary limit reached: BeeKeep Ultimate supports up to 1,000 apiaries. Your existing records are safe; contact BeeKeep support if you need a higher limit."
+            "Apiary limit reached: BeeKeep Ultimate has a 1,000 apiary limit. Your existing records are safe; contact BeeKeep support if you need a higher limit."
     }
 
     fun apiaryLimitMessage(context: Context): String = apiaryLimitMessage(currentPlan(context))
