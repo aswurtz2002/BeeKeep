@@ -81,7 +81,7 @@ fun WorkspaceManagementSection(
     var showDangerZone by rememberSaveable { mutableStateOf(false) }
     var showJoinAnotherTeam by rememberSaveable { mutableStateOf(false) }
     var showPendingInvitations by rememberSaveable { mutableStateOf(false) }
-    var showPeople by rememberSaveable { mutableStateOf(false) }
+    var showPeople by rememberSaveable { mutableStateOf(true) }
     var showInvitePanel by rememberSaveable { mutableStateOf(false) }
     var workspaceMenuExpanded by remember { mutableStateOf(false) }
     var invitations by remember { mutableStateOf<List<BeeKeepWorkspaceInvitation>>(emptyList()) }
@@ -122,7 +122,11 @@ fun WorkspaceManagementSection(
         if (workspace.member_role == "owner" || workspace.member_role == "admin") {
             val result = cloud.listWorkspaceInvitations(workspace.id)
             if (result.isSuccess) {
-                invitations = result.value.orEmpty()
+                // The server marks accepted invites as accepted. Keep only invitations
+                // that are still actionable in the UI.
+                invitations = result.value.orEmpty().filter {
+                    it.status.equals("pending", ignoreCase = true)
+                }
             } else {
                 message = result.error ?: "Couldn't load invitations."
             }
@@ -165,6 +169,10 @@ fun WorkspaceManagementSection(
     }
 
     LaunchedEffect(selectedWorkspaceId, account.signedIn, selectedWorkspace?.member_role, usernameRefreshKey) {
+        // Close anchored popups when their old workspace/member rows are replaced.
+        memberMenuId = null
+        roleMenuExpanded = false
+        workspaceMenuExpanded = false
         if (!account.signedIn || selectedWorkspaceId.isBlank() || selectedWorkspace == null) {
             members = emptyList()
             membersLoadedWorkspaceId = null
@@ -185,8 +193,10 @@ fun WorkspaceManagementSection(
         // Refresh the roster while this screen is open so the People count doesn't stay stale.
         while (true) {
             refreshWorkspacePeople(selectedWorkspaceId)
+            // Invitations can be accepted from another phone, so refresh them alongside
+            // the member list instead of leaving a stale "pending" entry on this screen.
+            refreshWorkspaceInvitations(selectedWorkspace)
             if (firstLoad) {
-                refreshWorkspaceInvitations(selectedWorkspace)
                 loading = false
                 firstLoad = false
             }
@@ -199,8 +209,8 @@ fun WorkspaceManagementSection(
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         WorkspacePanel(
-            title = "Team workspaces",
-            description = "Manage your shared apiaries, hive records, people, and invitations."
+            title = "Your teams",
+            description = "Choose a team, manage its members, or join with an invitation code."
         ) {
             if (!account.signedIn) {
                 Text(
@@ -220,21 +230,39 @@ fun WorkspaceManagementSection(
                             fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold
                         )
                         Text(
-                            "Choose one below to manage it.",
+                            "Choose a team to open its shared records and settings.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
+                    OutlinedButton(
+                        enabled = !loading,
+                        onClick = { showJoinAnotherTeam = true }
+                    ) { Text("JOIN") }
                     Button(
                         enabled = !loading,
                         onClick = {
-                            if (hasUltimateEntitlement) {
-                                showCreateDialog = true
-                            } else {
-                                showUltimateRequiredDialog = true
+                            // Recheck the server entitlement at the moment of action.
+                            // A failed entitlement lookup must not be misreported as a need to upgrade.
+                            scope.launch {
+                                loading = true
+                                val entitlement = cloud.myActiveUltimateEntitlement()
+                                if (entitlement.isSuccess) {
+                                    hasUltimateEntitlement = entitlement.value == true
+                                    if (hasUltimateEntitlement) {
+                                        showUltimateRequiredDialog = false
+                                        showCreateDialog = true
+                                    } else {
+                                        showUltimateRequiredDialog = true
+                                    }
+                                } else {
+                                    message = entitlement.error
+                                        ?: "Couldn't verify your Ultimate subscription. Check your connection and try again."
+                                }
+                                loading = false
                             }
                         }
-                    ) { Text("CREATE") }
+                    ) { Text("CREATE TEAM") }
                 }
 
                 if (sharedWorkspaces.isEmpty()) {
@@ -320,6 +348,8 @@ fun WorkspaceManagementSection(
                                     },
                                     onClick = {
                                         selectedWorkspaceId = workspace.id
+                                        memberMenuId = null
+                                        roleMenuExpanded = false
                                         activity.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE).edit()
                                             .putString("selected_team_workspace_id", workspace.id).apply()
                                         createdInvite = null
@@ -345,8 +375,8 @@ fun WorkspaceManagementSection(
             selectedWorkspace?.let { workspace ->
                 val isActiveWorkspace = activeWorkspaceId == workspace.id
                 WorkspacePanel(
-                    title = workspace.name,
-                    description = "Workspace overview"
+                    title = "Team status",
+                    description = "${workspace.name} · ${workspace.member_role.replaceFirstChar { it.uppercase() }}"
                 ) {
                     Surface(
                         modifier = Modifier.fillMaxWidth(),
@@ -367,7 +397,7 @@ fun WorkspaceManagementSection(
                                 verticalArrangement = Arrangement.spacedBy(4.dp)
                             ) {
                                 Text(
-                                    if (isActiveWorkspace) "Team data is active" else "Team data is not active",
+                                    if (isActiveWorkspace) "This team is active" else "This team is not active",
                                     style = MaterialTheme.typography.titleSmall,
                                     fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
                                     color = if (isActiveWorkspace) {
@@ -398,15 +428,6 @@ fun WorkspaceManagementSection(
                         }
                     }
 
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Text("Your access", style = MaterialTheme.typography.bodyMedium)
-                        WorkspaceTag(workspace.member_role.replaceFirstChar { it.uppercase() })
-                    }
-
                     if (!isActiveWorkspace) {
                         Button(
                             enabled = !loading,
@@ -422,7 +443,7 @@ fun WorkspaceManagementSection(
                             },
                             modifier = Modifier.fillMaxWidth()
                         ) {
-                            Text(if (workspace.member_role == "viewer") "OPEN TEAM DATA" else "USE THIS WORKSPACE")
+                            Text(if (workspace.member_role == "viewer") "OPEN TEAM" else "SWITCH TO THIS TEAM")
                         }
                     }
 
@@ -448,7 +469,7 @@ fun WorkspaceManagementSection(
                                 }
                             },
                             modifier = Modifier.fillMaxWidth()
-                        ) { Text("SWITCH TO PERSONAL WORKSPACE") }
+                        ) { Text("SWITCH BACK TO PERSONAL DATA") }
                     }
                 }
 
@@ -479,7 +500,7 @@ fun WorkspaceManagementSection(
                 }
 
                 WorkspacePanel(
-                    title = "People",
+                    title = "Team members",
                     description = when {
                         membersLoadedWorkspaceId != workspace.id && memberLoadError != null -> "Couldn't load people"
                         membersLoadedWorkspaceId != workspace.id -> "Loading people…"
@@ -643,7 +664,7 @@ fun WorkspaceManagementSection(
 
                 if (canManage) {
                     WorkspacePanel(
-                        title = "Invite a beekeeper",
+                        title = "Invite team members",
                         description = if (invitations.isEmpty()) {
                             "Create an invitation code for a teammate."
                         } else {
@@ -699,7 +720,7 @@ fun WorkspaceManagementSection(
                                         createdInvite = invite
                                         message = "Invitation created. Share the code with the invited person."
                                         inviteEmail = ""
-                                        invitations = cloud.listWorkspaceInvitations(workspace.id).value.orEmpty()
+                                        refreshWorkspaceInvitations(workspace)
                                         showPendingInvitations = invitations.isNotEmpty()
                                     } else {
                                         message = result.error ?: "Couldn't create the invitation."
@@ -800,7 +821,7 @@ fun WorkspaceManagementSection(
                                             scope.launch {
                                                 val result = cloud.cancelWorkspaceInvitation(invitation.id)
                                                 if (result.isSuccess) {
-                                                    invitations = cloud.listWorkspaceInvitations(workspace.id).value.orEmpty()
+                                                    refreshWorkspaceInvitations(workspace)
                                                     message = "Invitation cancelled."
                                                 } else {
                                                     message = result.error ?: "Couldn't cancel the invitation."
@@ -1159,7 +1180,7 @@ private fun WorkspacePanel(
                 }
                 if (collapsible) {
                     TextButton(onClick = { onToggle?.invoke() }) {
-                        Text(if (expanded) "HIDE" else "SHOW")
+                        Text(if (expanded) "CLOSE" else "OPEN")
                     }
                 }
             }
