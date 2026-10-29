@@ -1088,7 +1088,10 @@ class LocalHiveRepository(context: Context) {
             .apply()
     }
 
-    suspend fun applyCloudDocument(\n        doc: CloudDocumentRow,\n        ignoreLegacyNfcProfileSnapshot: Boolean = false\n    ) = withContext(Dispatchers.IO) {
+    suspend fun applyCloudDocument(
+        doc: CloudDocumentRow,
+        ignoreLegacyNfcProfileSnapshot: Boolean = false
+    ) = withContext(Dispatchers.IO) {
         if (doc.deleted) {
             when (doc.entity_type) {
                 "inspection_note_draft" -> clearLocalInspectionNoteDraft(doc.entity_id, doc.updated_at)
