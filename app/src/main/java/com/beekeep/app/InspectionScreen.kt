@@ -155,7 +155,10 @@ internal fun clearInspectionDraftsForHives(
         InspectionFormDraftStore.markDeleted(formPrefs, workspaceId, hiveId)
     }
     formPrefs.edit {
-        validHiveIds.forEach { hiveId -> remove("bee_count_history_start_$hiveId") }
+        validHiveIds.forEach { hiveId ->
+            remove(InspectionFormDraftStore.beeCountHistoryStartKey(workspaceId, hiveId))
+            remove(InspectionFormDraftStore.legacyBeeCountHistoryStartKey(hiveId))
+        }
     }
     com.beekeep.app.cloud.CloudSyncScheduler.runNow(context)
 }
@@ -215,7 +218,10 @@ internal fun clearAllInspectionDrafts(context: android.content.Context) {
         InspectionFormDraftStore.markDeleted(formPrefs, workspaceId, hiveId)
     }
     formPrefs.edit {
-        (activeFormIds + legacyFormIds).forEach { hiveId -> remove("bee_count_history_start_$hiveId") }
+        (activeFormIds + legacyFormIds).forEach { hiveId ->
+            remove(InspectionFormDraftStore.beeCountHistoryStartKey(workspaceId, hiveId))
+            remove(InspectionFormDraftStore.legacyBeeCountHistoryStartKey(hiveId))
+        }
     }
     if (activeFormIds.isNotEmpty() || legacyFormIds.isNotEmpty()) {
         com.beekeep.app.cloud.CloudSyncScheduler.runNow(context)
@@ -501,7 +507,7 @@ internal fun InspectionScreen(
         }
     }
 
-    var strength by rememberSaveable(hive.id, formStateKey, lastInspection?.id) {
+    var strength by rememberSaveable(hive.id, cleanDraftWorkspaceId, formStateKey, lastInspection?.id) {
         mutableIntStateOf(
             ColonyStrength.gradeFromStored(
                 formDraft?.strength
@@ -518,23 +524,30 @@ internal fun InspectionScreen(
             ?: previousFrames?.let { (it * 2.0).roundToInt() }
             ?: 1).coerceIn(1, 20)
     }
-    val beeCountHistoryStartKey = remember(hive.id) { "bee_count_history_start_${hive.id}" }
+    val beeCountHistoryStartKey = remember(cleanDraftWorkspaceId, hive.id) {
+        InspectionFormDraftStore.beeCountHistoryStartKey(cleanDraftWorkspaceId, hive.id)
+    }
+    val legacyBeeCountHistoryStartKey = remember(hive.id) {
+        InspectionFormDraftStore.legacyBeeCountHistoryStartKey(hive.id)
+    }
     val savedBeeCountHistoryStart = formDraftPrefs.getInt(
         beeCountHistoryStartKey,
-        initialBeeCountHalfSteps
+        if (cleanDraftWorkspaceId == null) {
+            formDraftPrefs.getInt(legacyBeeCountHistoryStartKey, initialBeeCountHalfSteps)
+        } else initialBeeCountHalfSteps
     ).coerceIn(1, 20)
-    var beeCountHalfSteps by rememberSaveable(hive.id, formStateKey) {
+    var beeCountHalfSteps by rememberSaveable(hive.id, cleanDraftWorkspaceId, formStateKey) {
         mutableIntStateOf(initialBeeCountHalfSteps)
     }
-    var beeCountHistoryStartHalfSteps by rememberSaveable(hive.id, formStateKey) {
+    var beeCountHistoryStartHalfSteps by rememberSaveable(hive.id, cleanDraftWorkspaceId, formStateKey) {
         mutableIntStateOf(savedBeeCountHistoryStart)
     }
     // Hold the latest values in per-hive state objects so lifecycle/disposal callbacks
     // can finalize safely even if an NFC scan switches the displayed hive.
-    val latestBeeCountForHistory = remember(hive.id, formStateKey) {
+    val latestBeeCountForHistory = remember(hive.id, cleanDraftWorkspaceId, formStateKey) {
         mutableIntStateOf(beeCountHalfSteps)
     }
-    val latestBeeCountStartForHistory = remember(hive.id, formStateKey) {
+    val latestBeeCountStartForHistory = remember(hive.id, cleanDraftWorkspaceId, formStateKey) {
         mutableIntStateOf(beeCountHistoryStartHalfSteps)
     }
     val latestBeeCountRecorder = rememberUpdatedState(onRecordBeeCountChange)
@@ -542,7 +555,7 @@ internal fun InspectionScreen(
         latestBeeCountForHistory.intValue = beeCountHalfSteps
         latestBeeCountStartForHistory.intValue = beeCountHistoryStartHalfSteps
     }
-    val finalizeBeeCountHistory = remember(hive.id, formStateKey) {
+    val finalizeBeeCountHistory = remember(hive.id, cleanDraftWorkspaceId, formStateKey) {
         {
             val startingValue = latestBeeCountStartForHistory.intValue
             val finalValue = latestBeeCountForHistory.intValue
@@ -561,13 +574,13 @@ internal fun InspectionScreen(
             }
         }
     }
-    var queen by rememberSaveable(hive.id, formStateKey, lastInspection?.id) {
+    var queen by rememberSaveable(hive.id, cleanDraftWorkspaceId, formStateKey, lastInspection?.id) {
         mutableStateOf(formDraft?.queenStatus ?: (if (rememberLastInspectionValues) lastInspection?.queenStatus else null) ?: hive.queenStatus)
     }
-    var mites by rememberSaveable(hive.id, formStateKey, lastInspection?.id) {
+    var mites by rememberSaveable(hive.id, cleanDraftWorkspaceId, formStateKey, lastInspection?.id) {
         mutableIntStateOf(formDraft?.miteCount ?: (if (rememberLastInspectionValues) lastInspection?.miteCount else null) ?: 0)
     }
-    var sample by rememberSaveable(hive.id, formStateKey, lastInspection?.id) {
+    var sample by rememberSaveable(hive.id, cleanDraftWorkspaceId, formStateKey, lastInspection?.id) {
         mutableIntStateOf(formDraft?.sampleSize ?: (if (rememberLastInspectionValues) lastInspection?.sampleSize else null) ?: defaultMiteSampleSize.coerceIn(1, 10000))
     }
     var notes by rememberSaveable(noteDraftKey, hive.id) { mutableStateOf(startingNotes) }
@@ -625,38 +638,38 @@ internal fun InspectionScreen(
         noteDraftPrefs.registerOnSharedPreferenceChangeListener(listener)
         onDispose { noteDraftPrefs.unregisterOnSharedPreferenceChangeListener(listener) }
     }
-    var eggs by rememberSaveable(hive.id, formStateKey, lastInspection?.id) {
+    var eggs by rememberSaveable(hive.id, cleanDraftWorkspaceId, formStateKey, lastInspection?.id) {
         mutableDoubleStateOf(normalizeBroodStoresGauge(formDraft?.eggs ?: (if (rememberLastInspectionValues) lastInspection?.eggs else null) ?: 0.0))
     }
-    var openBrood by rememberSaveable(hive.id, formStateKey, lastInspection?.id) {
+    var openBrood by rememberSaveable(hive.id, cleanDraftWorkspaceId, formStateKey, lastInspection?.id) {
         mutableDoubleStateOf(normalizeBroodStoresGauge(formDraft?.openBrood ?: (if (rememberLastInspectionValues) lastInspection?.openBrood else null) ?: 0.0))
     }
-    var cappedBrood by rememberSaveable(hive.id, formStateKey, lastInspection?.id) {
+    var cappedBrood by rememberSaveable(hive.id, cleanDraftWorkspaceId, formStateKey, lastInspection?.id) {
         mutableDoubleStateOf(normalizeBroodStoresGauge(formDraft?.cappedBrood ?: (if (rememberLastInspectionValues) lastInspection?.cappedBrood else null) ?: 0.0))
     }
-    var honey by rememberSaveable(hive.id, formStateKey, lastInspection?.id) {
+    var honey by rememberSaveable(hive.id, cleanDraftWorkspaceId, formStateKey, lastInspection?.id) {
         mutableDoubleStateOf(normalizeBroodStoresGauge(formDraft?.honeyStores ?: (if (rememberLastInspectionValues) lastInspection?.honeyStores else null) ?: 0.0))
     }
-    var pollen by rememberSaveable(hive.id, formStateKey, lastInspection?.id) {
+    var pollen by rememberSaveable(hive.id, cleanDraftWorkspaceId, formStateKey, lastInspection?.id) {
         mutableDoubleStateOf(normalizeBroodStoresGauge(formDraft?.pollen ?: (if (rememberLastInspectionValues) lastInspection?.pollen else null) ?: 0.0))
     }
-    var emptyComb by rememberSaveable(hive.id, formStateKey, lastInspection?.id) {
+    var emptyComb by rememberSaveable(hive.id, cleanDraftWorkspaceId, formStateKey, lastInspection?.id) {
         mutableDoubleStateOf(normalizeBroodStoresGauge(formDraft?.emptyDrawnComb ?: (if (rememberLastInspectionValues) lastInspection?.emptyDrawnComb else null) ?: 0.0))
     }
-    var emergency by rememberSaveable(hive.id, formStateKey, lastInspection?.id) {
+    var emergency by rememberSaveable(hive.id, cleanDraftWorkspaceId, formStateKey, lastInspection?.id) {
         mutableIntStateOf(formDraft?.emergencyCells ?: (if (rememberLastInspectionValues) lastInspection?.emergencyCells else null) ?: 0)
     }
-    var supercedure by rememberSaveable(hive.id, formStateKey, lastInspection?.id) {
+    var supercedure by rememberSaveable(hive.id, cleanDraftWorkspaceId, formStateKey, lastInspection?.id) {
         mutableIntStateOf(formDraft?.supercedureCells ?: (if (rememberLastInspectionValues) lastInspection?.supercedureCells else null) ?: 0)
     }
-    var swarm by rememberSaveable(hive.id, formStateKey, lastInspection?.id) {
+    var swarm by rememberSaveable(hive.id, cleanDraftWorkspaceId, formStateKey, lastInspection?.id) {
         mutableIntStateOf(formDraft?.swarmCells ?: (if (rememberLastInspectionValues) lastInspection?.swarmCells else null) ?: 0)
     }
-    var diseasesCsv by rememberSaveable(hive.id, formStateKey, lastInspection?.id) {
+    var diseasesCsv by rememberSaveable(hive.id, cleanDraftWorkspaceId, formStateKey, lastInspection?.id) {
         mutableStateOf(formDraft?.diseaseFlags ?: (if (rememberLastInspectionValues) lastInspection?.diseaseFlags else null).orEmpty())
     }
-    var lat by rememberSaveable(hive.id, formStateKey) { mutableStateOf(formDraft?.latitude) }
-    var lon by rememberSaveable(hive.id, formStateKey) { mutableStateOf(formDraft?.longitude) }
+    var lat by rememberSaveable(hive.id, cleanDraftWorkspaceId, formStateKey) { mutableStateOf(formDraft?.latitude) }
+    var lon by rememberSaveable(hive.id, cleanDraftWorkspaceId, formStateKey) { mutableStateOf(formDraft?.longitude) }
     var locationStatus by rememberSaveable(hive.id) { mutableStateOf("No GPS captured") }
     var pendingGpsHiveId by rememberSaveable { mutableStateOf<Long?>(null) }
     var voiceStatus by rememberSaveable(hive.id) { mutableStateOf("") }
@@ -698,38 +711,43 @@ internal fun InspectionScreen(
     }
 
     androidx.compose.runtime.LaunchedEffect(
-        hive.id, cleanDraftWorkspaceId, strength, beeCountHalfSteps, queen, mites, sample, eggs, openBrood, cappedBrood,
+        hive.id, cleanDraftWorkspaceId, isReadOnlyWorkspace, strength, beeCountHalfSteps, queen, mites, sample, eggs, openBrood, cappedBrood,
         honey, pollen, emptyComb, emergency, supercedure, swarm, diseasesCsv, lat, lon
     ) {
-        if (discardSavedFormDraftOnDispose.value) return@LaunchedEffect
+        if (isReadOnlyWorkspace || discardSavedFormDraftOnDispose.value) return@LaunchedEffect
         val changed = saveInspectionFormDraft(formDraftPrefs, cleanDraftWorkspaceId, hive.id, currentFormDraft)
         if (changed) {
             delay(600)
-            if (!discardSavedFormDraftOnDispose.value) {
+            if (!isReadOnlyWorkspace && !discardSavedFormDraftOnDispose.value) {
                 com.beekeep.app.cloud.CloudSyncScheduler.runNow(context)
             }
         }
     }
-    androidx.compose.runtime.LaunchedEffect(hive.id, beeCountHistoryStartHalfSteps) {
+    androidx.compose.runtime.LaunchedEffect(cleanDraftWorkspaceId, hive.id, beeCountHistoryStartHalfSteps) {
         formDraftPrefs.edit {
             putInt(beeCountHistoryStartKey, beeCountHistoryStartHalfSteps)
         }
     }
 
     val latestFinalizeBeeCountHistory = rememberUpdatedState(finalizeBeeCountHistory)
-    DisposableEffect(hive.id, cleanDraftWorkspaceId) {
+    DisposableEffect(hive.id, cleanDraftWorkspaceId, isReadOnlyWorkspace) {
         val hiveIdForDraft = hive.id
         val formDraftForThisHive = latestFormDraft
         val finalizeThisHiveBeeCount = latestFinalizeBeeCountHistory
+        val historyStartKeyForThisHive = beeCountHistoryStartKey
+        val legacyHistoryStartKeyForThisHive = legacyBeeCountHistoryStartKey
         onDispose {
             if (discardSavedFormDraftOnDispose.value) {
-                formDraftPrefs.edit { remove("bee_count_history_start_${hiveIdForDraft}") }
-            } else {
+                formDraftPrefs.edit {
+                    remove(historyStartKeyForThisHive)
+                    remove(legacyHistoryStartKeyForThisHive)
+                }
+            } else if (!isReadOnlyWorkspace) {
                 if (saveInspectionFormDraft(formDraftPrefs, cleanDraftWorkspaceId, hiveIdForDraft, formDraftForThisHive.value)) {
                     com.beekeep.app.cloud.CloudSyncScheduler.runNow(context)
                 }
             }
-            finalizeThisHiveBeeCount.value()
+            if (!isReadOnlyWorkspace) finalizeThisHiveBeeCount.value()
         }
     }
 
