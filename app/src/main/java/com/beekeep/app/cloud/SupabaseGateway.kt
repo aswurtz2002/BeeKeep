@@ -455,7 +455,7 @@ class SupabaseGateway(
         if (activeTeamWorkspaceId.isNotEmpty()) {
             return syncSharedWorkspace(activeTeamWorkspaceId, userId, session.user?.email.orEmpty())
         }
-        try {
+        return try {
 
             // Recover a local note edit if the screen was closed before its debounce queued the outbox row.
             repository.queuePendingInspectionNoteDrafts()
