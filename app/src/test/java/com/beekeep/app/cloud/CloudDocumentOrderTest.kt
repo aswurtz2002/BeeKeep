@@ -31,7 +31,7 @@ class CloudDocumentOrderTest {
             workspaceRow("nfc_assignment", 3)
         )
         assertEquals(
-            listOf("apiary", "hive", "nfc_assignment", "inspection", "feeding", "inspection_form_draft"),
+            listOf("apiary", "hive", "nfc_assignment", "feeding", "inspection", "inspection_form_draft"),
             CloudDocumentOrder.workspace(unordered).map { it.entity_type }
         )
     }
