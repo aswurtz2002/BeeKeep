@@ -388,7 +388,7 @@ class BeeKeepViewModel(
         viewModelScope.launch {
             runCatching {
                 repo.recordBeeCountChange(hiveId, previousFrames, newFrames, changedAt)
-            }
+            }.onSuccess { requestCloudSync() }
         }
     }
 
