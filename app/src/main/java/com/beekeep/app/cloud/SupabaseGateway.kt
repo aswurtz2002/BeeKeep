@@ -477,7 +477,7 @@ class SupabaseGateway(
         return LegacyNfcProfileSnapshotGuard.legacyHiveIds(profiles, mutations)
     }
 
-    private fun legacyNfcOnlyHiveSnapshotIds(
+    private fun legacyNfcOnlyPersonalHiveSnapshotIds(
         documents: Collection<CloudDocumentRow>
     ): Set<Long> = legacyNfcOnlyHiveSnapshotIds(documents.map {
         LegacyNfcSnapshotDocument(it.entity_type, it.entity_id, it.payload, it.updated_at)
@@ -576,7 +576,7 @@ class SupabaseGateway(
             // Find legacy NFC-only hive snapshots from the complete cloud batch before applying
             // hive rows; the matching assignment can arrive in this same sync.
             val documents = loadAllPersonalDocuments()
-            val legacyNfcHiveIds = legacyNfcOnlyHiveSnapshotIds(documents)
+            val legacyNfcHiveIds = legacyNfcOnlyPersonalHiveSnapshotIds(documents)
             CloudDocumentOrder.personal(documents).forEach { document ->
                 repository.applyCloudDocument(
                     document,
