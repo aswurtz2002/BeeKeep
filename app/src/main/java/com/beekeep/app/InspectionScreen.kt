@@ -157,7 +157,7 @@ internal fun clearInspectionDraftsForHives(
     formPrefs.edit {
         validHiveIds.forEach { hiveId ->
             remove(InspectionFormDraftStore.beeCountHistoryStartKey(workspaceId, hiveId))
-            remove(InspectionFormDraftStore.legacyBeeCountHistoryStartKey(hiveId))
+            if (workspaceId == null) remove(InspectionFormDraftStore.legacyBeeCountHistoryStartKey(hiveId))
         }
     }
     com.beekeep.app.cloud.CloudSyncScheduler.runNow(context)
@@ -220,7 +220,7 @@ internal fun clearAllInspectionDrafts(context: android.content.Context) {
     formPrefs.edit {
         (activeFormIds + legacyFormIds).forEach { hiveId ->
             remove(InspectionFormDraftStore.beeCountHistoryStartKey(workspaceId, hiveId))
-            remove(InspectionFormDraftStore.legacyBeeCountHistoryStartKey(hiveId))
+            if (workspaceId == null) remove(InspectionFormDraftStore.legacyBeeCountHistoryStartKey(hiveId))
         }
     }
     if (activeFormIds.isNotEmpty() || legacyFormIds.isNotEmpty()) {
@@ -670,17 +670,17 @@ internal fun InspectionScreen(
     }
     var lat by rememberSaveable(hive.id, cleanDraftWorkspaceId, formStateKey) { mutableStateOf(formDraft?.latitude) }
     var lon by rememberSaveable(hive.id, cleanDraftWorkspaceId, formStateKey) { mutableStateOf(formDraft?.longitude) }
-    var locationStatus by rememberSaveable(hive.id) { mutableStateOf("No GPS captured") }
+    var locationStatus by rememberSaveable(hive.id, cleanDraftWorkspaceId) { mutableStateOf("No GPS captured") }
     var pendingGpsHiveId by rememberSaveable { mutableStateOf<Long?>(null) }
-    var voiceStatus by rememberSaveable(hive.id) { mutableStateOf("") }
-    var voiceListeningRequested by rememberSaveable(hive.id) { mutableStateOf(false) }
-    var voicePartialText by rememberSaveable(hive.id) { mutableStateOf("") }
-    var saving by rememberSaveable(hive.id) { mutableStateOf(false) }
-    var saveError by rememberSaveable(hive.id) { mutableStateOf("") }
+    var voiceStatus by rememberSaveable(hive.id, cleanDraftWorkspaceId) { mutableStateOf("") }
+    var voiceListeningRequested by rememberSaveable(hive.id, cleanDraftWorkspaceId) { mutableStateOf(false) }
+    var voicePartialText by rememberSaveable(hive.id, cleanDraftWorkspaceId) { mutableStateOf("") }
+    var saving by rememberSaveable(hive.id, cleanDraftWorkspaceId) { mutableStateOf(false) }
+    var saveError by rememberSaveable(hive.id, cleanDraftWorkspaceId) { mutableStateOf("") }
     // This mutable state object is captured directly by onDispose so a successful-save
     // transition is visible immediately, even if the parent removes this screen right away.
-    val discardSavedFormDraftOnDispose = remember(hive.id) { mutableStateOf(false) }
-    var showBeeCountHistory by rememberSaveable(hive.id) { mutableStateOf(false) }
+    val discardSavedFormDraftOnDispose = remember(hive.id, cleanDraftWorkspaceId) { mutableStateOf(false) }
+    var showBeeCountHistory by rememberSaveable(hive.id, cleanDraftWorkspaceId) { mutableStateOf(false) }
 
     val currentFormDraft = InspectionFormDraft(
         strength = strength,
@@ -740,7 +740,7 @@ internal fun InspectionScreen(
             if (discardSavedFormDraftOnDispose.value) {
                 formDraftPrefs.edit {
                     remove(historyStartKeyForThisHive)
-                    remove(legacyHistoryStartKeyForThisHive)
+                    if (cleanDraftWorkspaceId == null) remove(legacyHistoryStartKeyForThisHive)
                 }
             } else if (!isReadOnlyWorkspace) {
                 if (saveInspectionFormDraft(formDraftPrefs, cleanDraftWorkspaceId, hiveIdForDraft, formDraftForThisHive.value)) {
