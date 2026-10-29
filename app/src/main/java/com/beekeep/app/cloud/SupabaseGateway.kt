@@ -458,7 +458,7 @@ class SupabaseGateway(
             // Pull first. This prevents an older offline outbox entry from overwriting a newer cloud record.
             val remoteBefore = loadAllPersonalDocuments()
             val remoteByKey = remoteBefore.associateBy { "${it.entity_type}:${it.entity_id}" }
-            val pending = repository.pendingSync(100)
+            val pending = repository.pendingSync(500)
             val uploadable = mutableListOf<CloudDocumentRow>()
             val uploadableIds = mutableSetOf<Long>()
 
@@ -680,13 +680,18 @@ class SupabaseGateway(
             }
 
             val isWritable = workspace.member_role in setOf("owner", "admin", "member")
-            if (repository.activeWorkspaceReadOnly.value == isWritable) {
+            // Reconcile both workspace identity and access mode. Comparing only the
+            // read-only flag can leave this gateway writing Team B records into Team A's
+            // local Room database when both memberships have the same role.
+            if (repository.activeWorkspaceId.value != workspaceId ||
+                repository.activeWorkspaceReadOnly.value != (!isWritable)
+            ) {
                 repository.switchWorkspace(workspaceId, readOnly = !isWritable)
             }
             if (isWritable) repository.queuePendingInspectionNoteDrafts()
             val remoteBefore = loadAllWorkspaceDocuments(workspaceId)
             val remoteByKey = remoteBefore.associateBy { "${it.entity_type}:${it.entity_id}" }.toMutableMap()
-            val pending = repository.pendingSync(100)
+            val pending = repository.pendingSync(500)
             val uploadable = mutableListOf<CloudWorkspaceDocumentRow>()
             val uploadableIds = mutableSetOf<Long>()
 

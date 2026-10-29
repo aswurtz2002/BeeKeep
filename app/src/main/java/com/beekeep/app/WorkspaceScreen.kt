@@ -19,10 +19,12 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Groups
+import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.Yard
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -44,6 +46,7 @@ import androidx.compose.ui.unit.sp
 import com.beekeep.app.cloud.SupabaseGateway
 import com.beekeep.app.cloud.isSupportedWorkspaceInvitationCode
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
 
 @Composable
 fun WorkspaceScreen(
@@ -59,6 +62,82 @@ fun WorkspaceScreen(
     onWorkspaceMembershipChanged: (Boolean) -> Unit
 ) {
     val hasActiveTeam = !activeWorkspaceId.isNullOrBlank()
+    val account by cloud.account.collectAsState()
+    val scope = rememberCoroutineScope()
+    var hasOwnedTeamWorkspace by rememberSaveable { mutableStateOf(false) }
+    var ownerUltimateEntitlementActive by rememberSaveable { mutableStateOf<Boolean?>(null) }
+    var ownerAccessCheckComplete by rememberSaveable { mutableStateOf(false) }
+    var ownerAccessCheckMessage by rememberSaveable { mutableStateOf("") }
+    var ownerAccessActionBusy by rememberSaveable { mutableStateOf(false) }
+
+    // Only a team owner is gated by their own Ultimate entitlement. Teammates who
+    // joined someone else's workspace do not need to subscribe to Ultimate themselves.
+    suspend fun refreshOwnerWorkspaceAccess() {
+        if (!account.signedIn) {
+            hasOwnedTeamWorkspace = false
+            ownerUltimateEntitlementActive = null
+            ownerAccessCheckMessage = ""
+            ownerAccessCheckComplete = true
+            return
+        }
+
+        val workspaceResult = cloud.listWorkspaces()
+        if (!workspaceResult.isSuccess) {
+            ownerAccessCheckMessage = workspaceResult.error
+                ?: "Couldn't verify workspace ownership. Check your connection and retry."
+            ownerUltimateEntitlementActive = null
+            ownerAccessCheckComplete = true
+            return
+        }
+
+        hasOwnedTeamWorkspace = workspaceResult.value.orEmpty().any {
+            !it.is_personal && it.member_role == "owner"
+        }
+        if (!hasOwnedTeamWorkspace) {
+            ownerUltimateEntitlementActive = null
+            ownerAccessCheckMessage = ""
+            ownerAccessCheckComplete = true
+            return
+        }
+
+        val entitlement = cloud.myActiveUltimateEntitlement()
+        if (entitlement.isSuccess) {
+            ownerUltimateEntitlementActive = entitlement.value == true
+            ownerAccessCheckMessage = if (entitlement.value == true) "" else
+                "The server reports that this account has no active Ultimate entitlement."
+        } else {
+            // A network error is not proof that a plan expired. Keep the page available
+            // on verification errors; server-side row-level security still protects writes.
+            ownerUltimateEntitlementActive = null
+            ownerAccessCheckMessage = entitlement.error
+                ?: "Couldn't verify Ultimate access. Check your connection and retry."
+        }
+        ownerAccessCheckComplete = true
+    }
+
+    androidx.compose.runtime.LaunchedEffect(account.signedIn, currentPlan) {
+        ownerAccessCheckComplete = false
+        refreshOwnerWorkspaceAccess()
+    }
+    androidx.compose.runtime.LaunchedEffect(account.signedIn, hasOwnedTeamWorkspace) {
+        if (account.signedIn && hasOwnedTeamWorkspace) {
+            while (true) {
+                delay(60_000)
+                val entitlement = cloud.myActiveUltimateEntitlement()
+                // Refresh periodically while the app stays open so expiry takes effect
+                // without deleting or resetting the selected team's local database.
+                if (entitlement.isSuccess) {
+                    ownerUltimateEntitlementActive = entitlement.value == true
+                    ownerAccessCheckMessage = if (entitlement.value == true) "" else
+                        "The server reports that this account has no active Ultimate entitlement."
+                }
+            }
+        }
+    }
+    val workspaceAccessPaused = account.signedIn &&
+        ownerAccessCheckComplete &&
+        hasOwnedTeamWorkspace &&
+        ownerUltimateEntitlementActive == false
 
     Column(
         modifier = Modifier
@@ -193,13 +272,102 @@ fun WorkspaceScreen(
             }
         }
 
-        WorkspaceManagementSection(
-            cloud = cloud,
-            activity = activity,
-            currentPlan = currentPlan,
-            onUpgrade = onUpgrade,
-            onWorkspaceMembershipChanged = onWorkspaceMembershipChanged
-        )
+        WorkspaceCloudSyncSection(cloud = cloud)
+
+        if (account.signedIn && !ownerAccessCheckComplete) {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(24.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+            ) {
+                Text(
+                    "Checking workspace access…",
+                    modifier = Modifier.padding(18.dp),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        } else if (workspaceAccessPaused) {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(24.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+            ) {
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(18.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Rounded.Lock,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.size(28.dp)
+                        )
+                        Column(
+                            modifier = Modifier.weight(1f).padding(start = 10.dp),
+                            verticalArrangement = Arrangement.spacedBy(2.dp)
+                        ) {
+                            Text("Workspace access paused", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.ExtraBold)
+                            Text("An active Ultimate entitlement is required for the owner of a team workspace.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                    Text(
+                        "Your team's databases, hives, apiaries, inspection history, and queued local edits are retained. BeeKeep will not delete or reset records because a plan expired. Team cloud writes may remain blocked until Ultimate is active again.",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    Button(
+                        onClick = onUpgrade,
+                        modifier = Modifier.fillMaxWidth(),
+                        enabled = !ownerAccessActionBusy
+                    ) { Text("RENEW ULTIMATE") }
+                    OutlinedButton(
+                        onClick = {
+                            scope.launch {
+                                ownerAccessActionBusy = true
+                                refreshOwnerWorkspaceAccess()
+                                ownerAccessActionBusy = false
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        enabled = !ownerAccessActionBusy
+                    ) { Text(if (ownerAccessActionBusy) "CHECKING…" else "CHECK ACCESS AGAIN") }
+                    if (hasActiveTeam) {
+                        OutlinedButton(
+                            onClick = {
+                                scope.launch {
+                                    ownerAccessActionBusy = true
+                                    val result = cloud.activateWorkspace(null)
+                                    ownerAccessCheckMessage = result.error
+                                        ?: "Switched to your personal data. Your team data remains saved."
+                                    ownerAccessActionBusy = false
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            enabled = !ownerAccessActionBusy
+                        ) { Text("SWITCH TO PERSONAL DATA") }
+                    }
+                    if (ownerAccessCheckMessage.isNotBlank()) {
+                        Text(ownerAccessCheckMessage, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            }
+        } else {
+            if (hasOwnedTeamWorkspace && ownerUltimateEntitlementActive == null && ownerAccessCheckMessage.isNotBlank()) {
+                Text(
+                    ownerAccessCheckMessage,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error
+                )
+            }
+            WorkspaceManagementSection(
+                cloud = cloud,
+                activity = activity,
+                currentPlan = currentPlan,
+                onUpgrade = onUpgrade,
+                onWorkspaceMembershipChanged = onWorkspaceMembershipChanged
+            )
+        }
 
         Spacer(Modifier.height(8.dp))
     }

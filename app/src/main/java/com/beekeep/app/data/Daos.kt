@@ -215,7 +215,23 @@ interface OutboxDao {
     suspend fun allPendingForReset(): List<SyncOutboxEntity>
     @Query("DELETE FROM sync_outbox")
     suspend fun clearAll()
-    @Query("SELECT * FROM sync_outbox WHERE state = 'pending' ORDER BY created_at, id LIMIT :limit")
+    @Query("""
+        SELECT * FROM sync_outbox
+        WHERE state = 'pending'
+        ORDER BY CASE entity_type
+            WHEN 'inspection_note_draft' THEN 0
+            WHEN 'inspection' THEN 1
+            WHEN 'feeding' THEN 1
+            WHEN 'treatment' THEN 1
+            WHEN 'harvest' THEN 1
+            WHEN 'event' THEN 1
+            WHEN 'apiary' THEN 2
+            WHEN 'nfc_assignment' THEN 3
+            WHEN 'hive' THEN 4
+            ELSE 5
+        END, created_at, id
+        LIMIT :limit
+    """)
     suspend fun pending(limit: Int = 50): List<SyncOutboxEntity>
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun enqueue(entity: SyncOutboxEntity)
