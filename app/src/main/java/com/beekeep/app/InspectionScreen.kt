@@ -79,7 +79,8 @@ import com.beekeep.app.data.IdGenerator
 import com.beekeep.app.data.inspectionNoteDraftKey
 import com.beekeep.app.data.inspectionNoteDraftRecordedAtKey
 import com.beekeep.app.data.inspectionNoteDraftUpdatedAtKey
-import com.beekeep.app.data.migrateLegacyInspectionNoteDraft
+import com.beekeep.app.data.migrateLegacyInspectionNoteDraftForContext
+import com.beekeep.app.data.inspectionNoteDraftKeyForContext
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.onFocusChanged
@@ -388,15 +389,14 @@ internal fun InspectionScreen(
     val noteDraftPrefs = remember(context) {
         context.getSharedPreferences(INSPECTION_NOTE_DRAFTS, android.content.Context.MODE_PRIVATE)
     }
-    val cleanDraftWorkspaceId = workspaceId?.trim()?.takeIf { it.isNotEmpty() }
-    val legacyDraftNeedsSync = remember(cleanDraftWorkspaceId, hive.id, noteDraftPrefs) {
-        migrateLegacyInspectionNoteDraft(noteDraftPrefs, cleanDraftWorkspaceId, hive.id)
+    val noteDraftKey = remember(context, hive.id) {
+        inspectionNoteDraftKeyForContext(context, hive.id)
+    }
+    val legacyDraftNeedsSync = remember(noteDraftKey, hive.id, noteDraftPrefs) {
+        migrateLegacyInspectionNoteDraftForContext(noteDraftPrefs, context, hive.id)
     }
     val formDraftPrefs = remember(context) {
         context.getSharedPreferences(INSPECTION_FORM_DRAFTS, android.content.Context.MODE_PRIVATE)
-    }
-    val noteDraftKey = remember(cleanDraftWorkspaceId, hive.id) {
-        inspectionNoteDraftKey(cleanDraftWorkspaceId, hive.id)
     }
     val noteDraftTimestampKey = remember(noteDraftKey) { inspectionNoteDraftRecordedAtKey(noteDraftKey) }
     val noteDraftUpdatedAtKey = remember(noteDraftKey) { inspectionNoteDraftUpdatedAtKey(noteDraftKey) }
@@ -411,7 +411,7 @@ internal fun InspectionScreen(
     // Load unfinished field values for this specific hive; if none exist, use the last saved inspection.
     val formDraft = remember(hive.id) { readInspectionFormDraft(formDraftPrefs, hive.id) }
     val formStateKey = formDraft?.updatedAt ?: 0L
-    val hasSavedNoteDraft = remember(cleanDraftWorkspaceId, hive.id) { noteDraftPrefs.contains(noteDraftKey) }
+    val hasSavedNoteDraft = remember(noteDraftKey, hive.id) { noteDraftPrefs.contains(noteDraftKey) }
     val savedNoteDraft = remember(cleanDraftWorkspaceId, hive.id) { noteDraftPrefs.getString(noteDraftKey, "").orEmpty() }
     // A stored empty string means the beekeeper deliberately cleared the notes; don't restore older text.
     val startingNotes = remember(cleanDraftWorkspaceId, hive.id, hasSavedNoteDraft, savedNoteDraft, lastInspection?.id, lastInspection?.notes) {
