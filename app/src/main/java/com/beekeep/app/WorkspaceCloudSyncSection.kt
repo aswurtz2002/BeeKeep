@@ -97,15 +97,20 @@ fun WorkspaceCloudSyncSection(cloud: SupabaseGateway) {
                 enabled = account.configured && account.signedIn && !account.syncing
             ) { Text(if (account.syncing) "SYNCING…" else "SYNC NOW") }
 
-            if (message.isNotBlank()) {
+            val displayMessage = message.ifBlank { account.error.orEmpty() }
+            if (displayMessage.isNotBlank()) {
                 Text(
-                    message,
+                    displayMessage,
+                    maxLines = 4,
                     style = MaterialTheme.typography.bodySmall,
-                    color = if (message.contains("failed", true) || message.contains("blocked", true) || message.contains("couldn't", true)) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant
+                    color = if (
+                        displayMessage.contains("failed", true) ||
+                        displayMessage.contains("blocked", true) ||
+                        displayMessage.contains("couldn't", true) ||
+                        displayMessage.contains("without its required", true) ||
+                        displayMessage.contains("technical error", true)
+                    ) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant
                 )
-            }
-            account.error?.let {
-                Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
             }
             account.lastSyncAt?.let { timestamp ->
                 Text(

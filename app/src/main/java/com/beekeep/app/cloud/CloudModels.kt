@@ -1,5 +1,6 @@
 package com.beekeep.app.cloud
 
+import kotlinx.serialization.EncodeDefault
 import kotlinx.serialization.Serializable
 
 @Serializable
@@ -9,6 +10,7 @@ data class CloudDocumentRow(
     val entity_id: Long,
     val payload: String,
     val updated_at: Long,
+    @EncodeDefault(EncodeDefault.Mode.ALWAYS)
     val deleted: Boolean = false,
     val device_id: String = "android"
 )
@@ -20,6 +22,7 @@ data class CloudWorkspaceDocumentRow(
     val entity_id: Long,
     val payload: String,
     val updated_at: Long,
+    @EncodeDefault(EncodeDefault.Mode.ALWAYS)
     val deleted: Boolean = false,
     val device_id: String = "android",
     val updated_by: String?
