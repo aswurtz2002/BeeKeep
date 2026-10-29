@@ -190,8 +190,10 @@ class LocalHiveRepository(context: Context) {
                 formDraftEditor.remove(key)
                     .remove(InspectionFormDraftStore.pendingKey(key))
                     .remove(InspectionFormDraftStore.beeCountHistoryStartKey(activeDraftWorkspaceId, hiveId))
-                    .remove(InspectionFormDraftStore.legacyBeeCountHistoryStartKey(hiveId))
-                if (activeDraftWorkspaceId == null) formDraftEditor.remove(InspectionFormDraftStore.legacyKey(hiveId))
+                if (activeDraftWorkspaceId == null) {
+                    formDraftEditor.remove(InspectionFormDraftStore.legacyBeeCountHistoryStartKey(hiveId))
+                        .remove(InspectionFormDraftStore.legacyKey(hiveId))
+                }
             }
             formDraftEditor.apply()
 
