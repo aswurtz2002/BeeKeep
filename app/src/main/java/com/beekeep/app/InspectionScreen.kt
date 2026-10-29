@@ -134,11 +134,18 @@ internal fun clearInspectionDraftsForHives(
 
     // Batch a whole apiary's cleanup into one edit per preference store, instead
     // of scheduling a full XML rewrite for every hive in a large yard.
+    val workspaceId = context.getSharedPreferences("beekeep_prefs", android.content.Context.MODE_PRIVATE)
+        .getString("active_team_workspace_id", "").orEmpty().trim().takeIf { it.isNotEmpty() }
     context.getSharedPreferences(INSPECTION_NOTE_DRAFTS, android.content.Context.MODE_PRIVATE).edit {
         validHiveIds.forEach { hiveId ->
-            val hiveKey = "hive_$hiveId"
+            val hiveKey = inspectionNoteDraftKey(workspaceId, hiveId)
             remove(hiveKey)
-            remove("${hiveKey}_recorded_at")
+            remove(inspectionNoteDraftRecordedAtKey(hiveKey))
+            remove(inspectionNoteDraftUpdatedAtKey(hiveKey))
+            if (workspaceId == null) {
+                remove("hive_$hiveId")
+                remove("hive_${hiveId}_recorded_at")
+            }
         }
     }
     context.getSharedPreferences(INSPECTION_FORM_DRAFTS, android.content.Context.MODE_PRIVATE).edit {
