@@ -157,7 +157,14 @@ internal object InspectionFormDraftStore {
         val leftKeys = contentKeys(existing)
         val rightKeys = contentKeys(incoming)
         if (leftKeys != rightKeys) return false
-        return leftKeys.all { key -> existing.opt(key).toString() == incoming.opt(key).toString() }
+        return leftKeys.all { key -> sameJsonValue(existing.opt(key), incoming.opt(key)) }
+    }
+
+    private fun sameJsonValue(left: Any?, right: Any?): Boolean {
+        if (left is Number && right is Number) {
+            return left.toDouble() == right.toDouble()
+        }
+        return left?.toString() == right?.toString()
     }
 
     private fun contentKeys(json: JSONObject): List<String> =
