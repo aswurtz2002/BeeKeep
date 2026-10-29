@@ -41,15 +41,6 @@ class BeeKeepViewModel(
     val activeWorkspaceId: StateFlow<String?> = repo.activeWorkspaceId
     val activeWorkspaceReadOnly: StateFlow<Boolean> = repo.activeWorkspaceReadOnly
     val readOnlyWriteAttempt: StateFlow<Long> = repo.readOnlyWriteAttempt
-    val inspectionNoteDraftUpdates = repo.inspectionNoteDraftUpdates
-
-    suspend fun saveInspectionNoteDraft(
-        hiveId: Long,
-        notes: String,
-        recordedAt: Long?,
-        updatedAt: Long
-    ): Long = repo.saveInspectionNoteDraft(hiveId, notes, recordedAt, updatedAt)
-
     private var detailJob: Job? = null
     private var selectionRequestGeneration = 0L
 

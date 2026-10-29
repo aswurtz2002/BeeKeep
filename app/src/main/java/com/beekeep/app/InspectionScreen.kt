@@ -79,6 +79,7 @@ import com.beekeep.app.data.IdGenerator
 import com.beekeep.app.data.inspectionNoteDraftKey
 import com.beekeep.app.data.inspectionNoteDraftRecordedAtKey
 import com.beekeep.app.data.inspectionNoteDraftUpdatedAtKey
+import com.beekeep.app.data.inspectionNoteDraftPendingKey
 import com.beekeep.app.data.migrateLegacyInspectionNoteDraft
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -100,7 +101,6 @@ import com.beekeep.app.data.Hive
 import com.beekeep.app.data.Inspection
 import com.beekeep.app.location.LocationController
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import java.text.DateFormat
 import java.util.Date
@@ -376,10 +376,7 @@ internal fun InspectionScreen(
     onHome: () -> Unit,
     onSave: suspend (Inspection) -> Boolean,
     onSaveNoteDraft: suspend (Long, String, Long?, Long) -> Long = { hiveId, draftNotes, recordedAt, updatedAt ->
-        val draftRepository = com.beekeep.app.data.LocalHiveRepository(activity.applicationContext)
-        val queuedAt = draftRepository.saveInspectionNoteDraft(hiveId, draftNotes, recordedAt, updatedAt)
-        com.beekeep.app.cloud.CloudSyncScheduler.runNow(activity)
-        queuedAt
+        queueInspectionNoteDraft(activity.applicationContext, hiveId, draftNotes, recordedAt, updatedAt)
     },
     onSaved: () -> Unit
 ) {
@@ -502,8 +499,9 @@ internal fun InspectionScreen(
     var noteRevision by rememberSaveable(noteDraftKey, hive.id) {
         mutableLongStateOf(noteDraftPrefs.getLong(noteDraftUpdatedAtKey, 0L))
     }
+    val noteDraftPendingKey = remember(noteDraftKey) { inspectionNoteDraftPendingKey(noteDraftKey) }
     var needsCloudSave by rememberSaveable(noteDraftKey, hive.id) {
-        mutableStateOf(legacyDraftNeedsSync)
+        mutableStateOf(legacyDraftNeedsSync || noteDraftPrefs.getBoolean(noteDraftPendingKey, false))
     }
     var noteSaveStatus by rememberSaveable(noteDraftKey, hive.id) {
         mutableStateOf(
@@ -519,12 +517,21 @@ internal fun InspectionScreen(
     // Observe those writes so an already-open inspection refreshes without reopening the hive.
     DisposableEffect(noteDraftPrefs, noteDraftKey, noteDraftUpdatedAtKey) {
         val listener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, changedKey ->
-            if (changedKey == noteDraftKey || changedKey == noteDraftUpdatedAtKey) {
+            if (changedKey == noteDraftKey || changedKey == noteDraftUpdatedAtKey ||
+                changedKey == noteDraftPendingKey
+            ) {
                 scope.launch {
                     val incomingExists = noteDraftPrefs.contains(noteDraftKey)
                     val incoming = noteDraftPrefs.getString(noteDraftKey, "").orEmpty()
                     val incomingRevision = noteDraftPrefs.getLong(noteDraftUpdatedAtKey, 0L)
-                    if (!needsCloudSave && !incomingExists) {
+                    val localQueuePending = noteDraftPrefs.getBoolean(noteDraftPendingKey, false)
+                    if (needsCloudSave && !localQueuePending && incomingExists &&
+                        incoming == notes && incomingRevision >= noteRevision
+                    ) {
+                        noteRevision = incomingRevision
+                        needsCloudSave = false
+                        noteSaveStatus = if (incoming.isBlank()) "" else "Saved locally - cloud sync queued"
+                    } else if (!needsCloudSave && !incomingExists) {
                         // A cloud tombstone (or workspace reset) removes the draft keys.
                         // Clear the open editor too, without turning that deletion into a new cloud write.
                         notes = ""
@@ -724,6 +731,7 @@ internal fun InspectionScreen(
                 putString(noteDraftKey, updatedNotes)
                 putLong(noteDraftUpdatedAtKey, nextRevision)
                 putLong(noteDraftTimestampKey, recordedAt)
+                putBoolean(noteDraftPendingKey, true)
             }
             noteSaveStatus = if (isReadOnlyWorkspace) "View-only workspace" else "Saved locally"
             voicePartialText = ""
@@ -876,6 +884,7 @@ internal fun InspectionScreen(
         noteDraftPrefs.edit {
             putString(noteDraftKey, capturedNotes)
             putLong(noteDraftUpdatedAtKey, capturedRevision)
+            if (needsCloudSave && !isReadOnlyWorkspace) putBoolean(noteDraftPendingKey, true)
             if (recordedAt != null) putLong(noteDraftTimestampKey, recordedAt)
             else remove(noteDraftTimestampKey)
         }
@@ -891,6 +900,7 @@ internal fun InspectionScreen(
                 throw cancelled
             } catch (_: Throwable) {
                 noteSaveStatus = "Saved locally - sync pending"
+                com.beekeep.app.cloud.CloudSyncScheduler.runNow(context)
             }
         } else if (capturedNotes.isNotBlank() && noteSaveStatus.isBlank()) {
             noteSaveStatus = if (isReadOnlyWorkspace) "View-only workspace" else "Saved on device"
@@ -1104,6 +1114,7 @@ internal fun InspectionScreen(
                                     noteDraftPrefs.edit {
                                         putString(noteDraftKey, updatedNotes)
                                         putLong(noteDraftUpdatedAtKey, nextRevision)
+                                        putBoolean(noteDraftPendingKey, true)
                                         if (updatedNotes.isBlank()) {
                                             remove(noteDraftTimestampKey)
                                         } else if (!noteDraftPrefs.contains(noteDraftTimestampKey)) {

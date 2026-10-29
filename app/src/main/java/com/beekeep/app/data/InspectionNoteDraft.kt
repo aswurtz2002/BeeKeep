@@ -1,6 +1,5 @@
 package com.beekeep.app.data
 
-import android.content.Context
 import android.content.SharedPreferences
 import org.json.JSONObject
 
@@ -10,15 +9,6 @@ import org.json.JSONObject
  */
 internal const val INSPECTION_NOTE_DRAFTS = "beekeep_inspection_note_drafts"
 
-internal data class InspectionNoteDraftUpdate(
-    val workspaceId: String?,
-    val hiveId: Long,
-    val notes: String,
-    val recordedAt: Long?,
-    val updatedAt: Long,
-    val deleted: Boolean = false
-)
-
 internal fun inspectionNoteDraftScope(workspaceId: String?): String =
     workspaceId?.trim()?.takeIf { it.isNotEmpty() } ?: "personal"
 
@@ -27,24 +17,8 @@ internal fun inspectionNoteDraftKey(workspaceId: String?, hiveId: Long): String 
 
 internal fun inspectionNoteDraftRecordedAtKey(draftKey: String): String = "${draftKey}_recorded_at"
 
-/** Read the locally selected workspace without exposing its identifier in UI code. */
-internal fun inspectionNoteDraftKeyForContext(context: Context, hiveId: Long): String {
-    val workspaceId = context.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
-        .getString("active_team_workspace_id", "").orEmpty().trim().takeIf { it.isNotEmpty() }
-    return inspectionNoteDraftKey(workspaceId, hiveId)
-}
-
-internal fun migrateLegacyInspectionNoteDraftForContext(
-    prefs: SharedPreferences,
-    context: Context,
-    hiveId: Long
-): Boolean {
-    val workspaceId = context.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
-        .getString("active_team_workspace_id", "").orEmpty().trim().takeIf { it.isNotEmpty() }
-    return migrateLegacyInspectionNoteDraft(prefs, workspaceId, hiveId)
-}
-
 internal fun inspectionNoteDraftUpdatedAtKey(draftKey: String): String = "${draftKey}_updated_at"
+internal fun inspectionNoteDraftPendingKey(draftKey: String): String = "${draftKey}_sync_pending"
 
 /**
  * Move the old device-only personal draft into the personal namespace on first use.
@@ -64,11 +38,14 @@ internal fun migrateLegacyInspectionNoteDraft(
     val targetUpdatedAtKey = inspectionNoteDraftUpdatedAtKey(targetKey)
 
     if (prefs.contains(targetKey)) {
-        if (prefs.contains(targetUpdatedAtKey)) return false
+        if (prefs.contains(targetUpdatedAtKey)) {
+            return prefs.getBoolean(inspectionNoteDraftPendingKey(targetKey), false)
+        }
         val recordedAt = prefs.getLong(targetRecordedAtKey, 0L).takeIf { it > 0L }
         val updatedAt = maxOf(System.currentTimeMillis(), recordedAt ?: 0L)
         prefs.edit()
             .putLong(targetUpdatedAtKey, updatedAt)
+            .putBoolean(inspectionNoteDraftPendingKey(targetKey), true)
             .apply()
         return true
     }
@@ -84,6 +61,7 @@ internal fun migrateLegacyInspectionNoteDraft(
     val editor = prefs.edit()
         .putString(targetKey, notes)
         .putLong(targetUpdatedAtKey, updatedAt)
+        .putBoolean(inspectionNoteDraftPendingKey(targetKey), true)
         .remove(legacyKey)
         .remove("${legacyKey}_recorded_at")
     if (recordedAt != null) editor.putLong(targetRecordedAtKey, recordedAt)

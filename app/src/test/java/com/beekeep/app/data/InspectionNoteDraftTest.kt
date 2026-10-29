@@ -19,6 +19,7 @@ class InspectionNoteDraftTest {
         val key = inspectionNoteDraftKey("workspace-a", 42L)
         assertEquals("workspace-a_hive_42_recorded_at", inspectionNoteDraftRecordedAtKey(key))
         assertEquals("workspace-a_hive_42_updated_at", inspectionNoteDraftUpdatedAtKey(key))
+        assertEquals("workspace-a_hive_42_sync_pending", inspectionNoteDraftPendingKey(key))
     }
 
     @Test
