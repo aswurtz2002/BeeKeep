@@ -1,5 +1,6 @@
 package com.beekeep.app.data
 
+import android.content.Context
 import android.content.SharedPreferences
 import org.json.JSONObject
 
@@ -25,6 +26,23 @@ internal fun inspectionNoteDraftKey(workspaceId: String?, hiveId: Long): String 
     "${inspectionNoteDraftScope(workspaceId)}_hive_$hiveId"
 
 internal fun inspectionNoteDraftRecordedAtKey(draftKey: String): String = "${draftKey}_recorded_at"
+
+/** Read the locally selected workspace without exposing its identifier in UI code. */
+internal fun inspectionNoteDraftKeyForContext(context: Context, hiveId: Long): String {
+    val workspaceId = context.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
+        .getString("active_team_workspace_id", "").orEmpty().trim().takeIf { it.isNotEmpty() }
+    return inspectionNoteDraftKey(workspaceId, hiveId)
+}
+
+internal fun migrateLegacyInspectionNoteDraftForContext(
+    prefs: SharedPreferences,
+    context: Context,
+    hiveId: Long
+): Boolean {
+    val workspaceId = context.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
+        .getString("active_team_workspace_id", "").orEmpty().trim().takeIf { it.isNotEmpty() }
+    return migrateLegacyInspectionNoteDraft(prefs, workspaceId, hiveId)
+}
 
 internal fun inspectionNoteDraftUpdatedAtKey(draftKey: String): String = "${draftKey}_updated_at"
 
