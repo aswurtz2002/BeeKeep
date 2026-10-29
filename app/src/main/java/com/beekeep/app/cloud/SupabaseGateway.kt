@@ -630,7 +630,7 @@ class SupabaseGateway(
         if (!configured || supabase == null) {
             return@withLock WorkspaceOperationResult(error = "BeeKeep Cloud is not configured.")
         }
-        return try {
+        try {
             supabase.auth.awaitInitialization()
             if (supabase.auth.currentSessionOrNull() == null) {
                 refreshAccount()
