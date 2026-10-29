@@ -412,9 +412,9 @@ internal fun InspectionScreen(
     val formDraft = remember(hive.id) { readInspectionFormDraft(formDraftPrefs, hive.id) }
     val formStateKey = formDraft?.updatedAt ?: 0L
     val hasSavedNoteDraft = remember(noteDraftKey, hive.id) { noteDraftPrefs.contains(noteDraftKey) }
-    val savedNoteDraft = remember(cleanDraftWorkspaceId, hive.id) { noteDraftPrefs.getString(noteDraftKey, "").orEmpty() }
+    val savedNoteDraft = remember(noteDraftKey, hive.id) { noteDraftPrefs.getString(noteDraftKey, "").orEmpty() }
     // A stored empty string means the beekeeper deliberately cleared the notes; don't restore older text.
-    val startingNotes = remember(cleanDraftWorkspaceId, hive.id, hasSavedNoteDraft, savedNoteDraft, lastInspection?.id, lastInspection?.notes) {
+    val startingNotes = remember(noteDraftKey, hive.id, hasSavedNoteDraft, savedNoteDraft, lastInspection?.id, lastInspection?.notes) {
         val loadedNotes = if (hasSavedNoteDraft) savedNoteDraft else lastInspection?.notes.orEmpty()
         if (loadedNotes.isBlank() || hasInlineInspectionNoteDate(loadedNotes)) {
             loadedNotes
@@ -497,14 +497,14 @@ internal fun InspectionScreen(
     var sample by rememberSaveable(hive.id, formStateKey, lastInspection?.id) {
         mutableIntStateOf(formDraft?.sampleSize ?: (if (rememberLastInspectionValues) lastInspection?.sampleSize else null) ?: defaultMiteSampleSize.coerceIn(1, 10000))
     }
-    var notes by rememberSaveable(cleanDraftWorkspaceId, hive.id) { mutableStateOf(startingNotes) }
-    var noteRevision by rememberSaveable(cleanDraftWorkspaceId, hive.id) {
+    var notes by rememberSaveable(noteDraftKey, hive.id) { mutableStateOf(startingNotes) }
+    var noteRevision by rememberSaveable(noteDraftKey, hive.id) {
         mutableLongStateOf(noteDraftPrefs.getLong(noteDraftUpdatedAtKey, 0L))
     }
-    var needsCloudSave by rememberSaveable(cleanDraftWorkspaceId, hive.id) {
+    var needsCloudSave by rememberSaveable(noteDraftKey, hive.id) {
         mutableStateOf(legacyDraftNeedsSync)
     }
-    var noteSaveStatus by rememberSaveable(cleanDraftWorkspaceId, hive.id) {
+    var noteSaveStatus by rememberSaveable(noteDraftKey, hive.id) {
         mutableStateOf(
             when {
                 legacyDraftNeedsSync -> "Restored local note - syncing to workspace"
@@ -837,7 +837,7 @@ internal fun InspectionScreen(
     }
 
     androidx.compose.runtime.LaunchedEffect(
-        hive.id, cleanDraftWorkspaceId, notes, noteRevision, needsCloudSave, isReadOnlyWorkspace
+        hive.id, noteDraftKey, notes, noteRevision, needsCloudSave, isReadOnlyWorkspace
     ) {
         delay(400)
         val capturedRevision = noteRevision
