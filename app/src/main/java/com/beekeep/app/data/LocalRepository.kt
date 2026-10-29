@@ -8,6 +8,8 @@ import com.beekeep.app.BeeKeepEntitlements
 import android.content.Context
 import androidx.room.withTransaction
 import com.beekeep.app.cloud.CloudDocumentRow
+import com.beekeep.app.cloud.LegacyNfcProfileSnapshotGuard
+import com.beekeep.app.cloud.NfcMutationSyncTimestamp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
@@ -1016,6 +1018,52 @@ class LocalHiveRepository(context: Context) {
         queued
     }
 
+    /**
+     * Drop old full-hive writes queued by builds where assigning/removing an NFC tag also
+     * bumped the hive profile timestamp. Publishing those rows can replace newer queen,
+     * strength, and location details with an outdated whole-profile snapshot.
+     */
+    suspend fun discardLegacyNfcProfileSnapshots(): Int = withContext(Dispatchers.IO) {
+        if (_activeWorkspaceReadOnly.value) return@withContext 0
+
+        val mutations = mutableListOf<NfcMutationSyncTimestamp>()
+        db.nfcTagAssignments().allForBackup().forEach { assignment ->
+            if (assignment.assignedAt > 0L) {
+                mutations += NfcMutationSyncTimestamp(assignment.hiveId, assignment.assignedAt)
+            }
+            assignment.unassignedAt?.takeIf { it > 0L }?.let {
+                mutations += NfcMutationSyncTimestamp(assignment.hiveId, it)
+            }
+        }
+        db.events().allForBackup()
+            .filter {
+                it.type.equals("tag", ignoreCase = true) &&
+                    it.title.startsWith("NFC tag ", ignoreCase = true)
+            }
+            .forEach { event ->
+                if (event.createdAt > 0L) {
+                    mutations += NfcMutationSyncTimestamp(event.hiveId, event.createdAt)
+                }
+            }
+
+        var discarded = 0
+        db.outbox().allPendingForReset()
+            .filter { it.entityType == "hive" && it.operation == "upsert" }
+            .forEach { item ->
+                val updatedAt = runCatching {
+                    JSONObject(item.payload).optLong("updated_at", item.createdAt)
+                }.getOrDefault(item.createdAt)
+                if (LegacyNfcProfileSnapshotGuard.isLegacyNfcOnlyHiveSnapshot(
+                        item.entityId, updatedAt, mutations
+                    )
+                ) {
+                    db.outbox().setState(item.id, "done")
+                    discarded++
+                }
+            }
+        discarded
+    }
+
     suspend fun pendingSync(limit: Int = 50): List<SyncOutboxEntity> = db.outbox().pending(limit)
     suspend fun markSyncDone(id: Long) = db.outbox().setState(id, "done")
     suspend fun markSyncError(id: Long, message: String) = db.outbox().setState(id, "pending", message.take(500))
@@ -1040,7 +1088,10 @@ class LocalHiveRepository(context: Context) {
             .apply()
     }
 
-    suspend fun applyCloudDocument(doc: CloudDocumentRow) = withContext(Dispatchers.IO) {
+    suspend fun applyCloudDocument(
+        doc: CloudDocumentRow,
+        ignoreLegacyNfcProfileSnapshot: Boolean = false
+    ) = withContext(Dispatchers.IO) {
         if (doc.deleted) {
             when (doc.entity_type) {
                 "inspection_note_draft" -> clearLocalInspectionNoteDraft(doc.entity_id, doc.updated_at)
@@ -1083,6 +1134,13 @@ class LocalHiveRepository(context: Context) {
             }
             return@withContext
         }
+        // Older clients published a complete hive profile just to assign/remove its NFC tag.
+        // If the batch identifies that legacy snapshot, keep an existing local profile intact;
+        // the canonical assignment/event rows are still applied and refresh the tag cache.
+        if (doc.entity_type == "hive" && ignoreLegacyNfcProfileSnapshot &&
+            db.hives().get(doc.entity_id) != null
+        ) return@withContext
+
         val json = runCatching { JSONObject(doc.payload) }.getOrNull() ?: return@withContext
         when (doc.entity_type) {
             "inspection_note_draft" -> {

@@ -422,6 +422,73 @@ class SupabaseGateway(
         return documents
     }
 
+    private data class LegacyNfcSnapshotDocument(
+        val entityType: String,
+        val entityId: Long,
+        val payload: String,
+        val updatedAt: Long
+    )
+
+    /**
+     * Old builds stamped full-hive payloads with the exact timestamp used by NFC assignment or
+     * release. Inspect the full batch so the related assignment/event is visible even if it
+     * hasn't been applied to Room yet.
+     */
+    private fun legacyNfcOnlyHiveSnapshotIds(
+        documents: Collection<LegacyNfcSnapshotDocument>
+    ): Set<Long> {
+        val mutations = mutableListOf<NfcMutationSyncTimestamp>()
+        documents.forEach { document ->
+            val payload = runCatching { JSONObject(document.payload) }.getOrNull() ?: return@forEach
+            when (document.entityType) {
+                "nfc_assignment" -> {
+                    val hiveId = payload.optLong("hive_id", -1L)
+                    if (hiveId <= 0L) return@forEach
+                    payload.optLong("assigned_at", 0L).takeIf { it > 0L }?.let {
+                        mutations += NfcMutationSyncTimestamp(hiveId, it)
+                    }
+                    if (payload.has("unassigned_at") && !payload.isNull("unassigned_at")) {
+                        payload.optLong("unassigned_at", 0L).takeIf { it > 0L }?.let {
+                            mutations += NfcMutationSyncTimestamp(hiveId, it)
+                        }
+                    }
+                }
+                "event" -> {
+                    if (!payload.optString("type").equals("tag", ignoreCase = true) ||
+                        !payload.optString("title").startsWith("NFC tag ", ignoreCase = true)
+                    ) return@forEach
+                    val hiveId = payload.optLong("hive_id", -1L)
+                    val createdAt = payload.optLong("created_at", document.updatedAt)
+                    if (hiveId > 0L && createdAt > 0L) {
+                        mutations += NfcMutationSyncTimestamp(hiveId, createdAt)
+                    }
+                }
+            }
+        }
+        val profiles = documents.asSequence()
+            .filter { it.entityType == "hive" }
+            .map { document ->
+                val profileTimestamp = runCatching {
+                    JSONObject(document.payload).optLong("updated_at", document.updatedAt)
+                }.getOrDefault(document.updatedAt)
+                HiveProfileSyncTimestamp(document.entityId, profileTimestamp)
+            }
+            .toList()
+        return LegacyNfcProfileSnapshotGuard.legacyHiveIds(profiles, mutations)
+    }
+
+    private fun legacyNfcOnlyPersonalHiveSnapshotIds(
+        documents: Collection<CloudDocumentRow>
+    ): Set<Long> = legacyNfcOnlyHiveSnapshotIds(documents.map {
+        LegacyNfcSnapshotDocument(it.entity_type, it.entity_id, it.payload, it.updated_at)
+    })
+
+    private fun legacyNfcOnlyWorkspaceHiveSnapshotIds(
+        documents: Collection<CloudWorkspaceDocumentRow>
+    ): Set<Long> = legacyNfcOnlyHiveSnapshotIds(documents.map {
+        LegacyNfcSnapshotDocument(it.entity_type, it.entity_id, it.payload, it.updated_at)
+    })
+
     suspend fun syncNow(): CloudResult = syncMutex.withLock { syncNowUnlocked() }
 
     private suspend fun syncNowUnlocked(): CloudResult {
@@ -460,6 +527,8 @@ class SupabaseGateway(
         }
         return try {
 
+            // Remove legacy NFC-only hive snapshots before they can overwrite newer cloud data.
+            repository.discardLegacyNfcProfileSnapshots()
             // Recover note edits saved locally before their debounce queued an outbox row.
             repository.queuePendingInspectionNoteDrafts()
             repository.queuePendingInspectionFormDrafts()
@@ -504,10 +573,17 @@ class SupabaseGateway(
                 }
             }
 
-            // Server order is alphabetical by entity type, not dependency order.
-            // Apply parents first or child rows can be silently ignored by Room.
-            CloudDocumentOrder.personal(loadAllPersonalDocuments())
-                .forEach { repository.applyCloudDocument(it) }
+            // Find legacy NFC-only hive snapshots from the complete cloud batch before applying
+            // hive rows; the matching assignment can arrive in this same sync.
+            val documents = loadAllPersonalDocuments()
+            val legacyNfcHiveIds = legacyNfcOnlyPersonalHiveSnapshotIds(documents)
+            CloudDocumentOrder.personal(documents).forEach { document ->
+                repository.applyCloudDocument(
+                    document,
+                    ignoreLegacyNfcProfileSnapshot =
+                        document.entity_type == "hive" && document.entity_id in legacyNfcHiveIds
+                )
+            }
 
             repository.pruneSync()
             val now = System.currentTimeMillis()
@@ -708,7 +784,11 @@ class SupabaseGateway(
             ) {
                 repository.switchWorkspace(workspaceId, readOnly = !isWritable)
             }
-            if (isWritable) repository.queuePendingInspectionNoteDrafts()
+            if (isWritable) {
+                // Remove legacy NFC-only hive snapshots before they can overwrite team profiles.
+                repository.discardLegacyNfcProfileSnapshots()
+                repository.queuePendingInspectionNoteDrafts()
+            }
             repository.queuePendingInspectionFormDrafts()
             val remoteBefore = loadAllWorkspaceDocuments(workspaceId)
             val remoteByKey = remoteBefore.associateBy { "${it.entity_type}:${it.entity_id}" }.toMutableMap()
@@ -755,7 +835,9 @@ class SupabaseGateway(
                 }
             }
 
-            CloudDocumentOrder.workspace(remoteByKey.values).forEach { document ->
+            val workspaceDocuments = remoteByKey.values.toList()
+            val legacyNfcHiveIds = legacyNfcOnlyWorkspaceHiveSnapshotIds(workspaceDocuments)
+            CloudDocumentOrder.workspace(workspaceDocuments).forEach { document ->
                 repository.applyCloudDocument(
                     CloudDocumentRow(
                         user_id = userId,
@@ -765,7 +847,9 @@ class SupabaseGateway(
                         updated_at = document.updated_at,
                         deleted = document.deleted,
                         device_id = document.device_id
-                    )
+                    ),
+                    ignoreLegacyNfcProfileSnapshot =
+                        document.entity_type == "hive" && document.entity_id in legacyNfcHiveIds
                 )
             }
 
