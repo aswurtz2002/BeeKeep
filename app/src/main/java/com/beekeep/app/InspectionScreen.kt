@@ -141,6 +141,7 @@ internal fun clearInspectionDraftsForHives(
             remove(hiveKey)
             remove(inspectionNoteDraftRecordedAtKey(hiveKey))
             remove(inspectionNoteDraftUpdatedAtKey(hiveKey))
+            remove(inspectionNoteDraftPendingKey(hiveKey))
             if (workspaceId == null) {
                 remove("hive_$hiveId")
                 remove("hive_${hiveId}_recorded_at")
