@@ -7,6 +7,7 @@ class CloudDocumentOrderTest {
     @Test
     fun personalDocumentsApplyParentsBeforeAssignmentsAndHistory() {
         val unordered = listOf(
+            row("inspection_form_draft", 6),
             row("event", 5),
             row("inspection", 4),
             row("nfc_assignment", 3),
@@ -14,7 +15,7 @@ class CloudDocumentOrderTest {
             row("apiary", 1)
         )
         assertEquals(
-            listOf("apiary", "hive", "nfc_assignment", "inspection", "event"),
+            listOf("apiary", "hive", "nfc_assignment", "inspection", "event", "inspection_form_draft"),
             CloudDocumentOrder.personal(unordered).map { it.entity_type }
         )
     }
@@ -22,13 +23,15 @@ class CloudDocumentOrderTest {
     @Test
     fun workspaceDocumentsUseTheSameDependencyOrder() {
         val unordered = listOf(
+            workspaceRow("inspection_form_draft", 5),
             workspaceRow("feeding", 4),
+            workspaceRow("inspection", 6),
             workspaceRow("hive", 2),
             workspaceRow("apiary", 1),
             workspaceRow("nfc_assignment", 3)
         )
         assertEquals(
-            listOf("apiary", "hive", "nfc_assignment", "feeding"),
+            listOf("apiary", "hive", "nfc_assignment", "feeding", "inspection", "inspection_form_draft"),
             CloudDocumentOrder.workspace(unordered).map { it.entity_type }
         )
     }

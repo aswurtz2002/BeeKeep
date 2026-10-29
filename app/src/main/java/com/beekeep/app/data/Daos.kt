@@ -111,11 +111,11 @@ interface NfcTagAssignmentDao {
 interface InspectionDao {
     @Query("SELECT * FROM inspections ORDER BY id")
     suspend fun allForBackup(): List<InspectionEntity>
-    @Query("SELECT * FROM inspections WHERE hive_id = :hiveId ORDER BY created_at DESC")
+    @Query("SELECT * FROM inspections WHERE hive_id = :hiveId ORDER BY created_at DESC, id DESC")
     fun observeForHive(hiveId: Long): Flow<List<InspectionEntity>>
-    @Query("SELECT * FROM inspections ORDER BY created_at DESC")
+    @Query("SELECT * FROM inspections ORDER BY created_at DESC, id DESC")
     fun observeAll(): Flow<List<InspectionEntity>>
-    @Query("SELECT * FROM inspections WHERE hive_id = :hiveId ORDER BY created_at DESC LIMIT 1")
+    @Query("SELECT * FROM inspections WHERE hive_id = :hiveId ORDER BY created_at DESC, id DESC LIMIT 1")
     suspend fun latest(hiveId: Long): InspectionEntity?
     @Query("SELECT * FROM inspections WHERE id = :id")
     suspend fun get(id: Long): InspectionEntity?

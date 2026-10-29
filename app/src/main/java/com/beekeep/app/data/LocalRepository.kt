@@ -26,6 +26,7 @@ class LocalHiveRepository(context: Context) {
     private val appContext = context.applicationContext
     private val prefs = appContext.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
     private val inspectionNoteDraftPrefs = appContext.getSharedPreferences(INSPECTION_NOTE_DRAFTS, Context.MODE_PRIVATE)
+    private val inspectionFormDraftPrefs = appContext.getSharedPreferences(InspectionFormDraftStore.PREFERENCES_NAME, Context.MODE_PRIVATE)
     private val initialTeamWorkspaceId = prefs.getString("active_team_workspace_id", null)
         ?.trim()?.takeIf { it.isNotEmpty() }
     private val _activeWorkspaceId = MutableStateFlow(initialTeamWorkspaceId)
@@ -102,11 +103,28 @@ class LocalHiveRepository(context: Context) {
                     .filter { it > 0L }
                     .toList()
             } else emptyList()
+            val formDraftScopePrefix = InspectionFormDraftStore.keyPrefix(activeDraftWorkspaceId)
+            val scopedFormDraftIds = inspectionFormDraftPrefs.all.keys.asSequence()
+                .filter { it.startsWith(formDraftScopePrefix) }
+                .mapNotNull { it.removePrefix(formDraftScopePrefix).toLongOrNull() }
+                .filter { it > 0L }
+                .toList()
+            val legacyPersonalFormDraftIds = if (activeDraftWorkspaceId == null) {
+                inspectionFormDraftPrefs.all.keys.asSequence()
+                    .filter { it.startsWith("hive_") }
+                    .mapNotNull { it.removePrefix("hive_").toLongOrNull() }
+                    .filter { it > 0L }
+                    .toList()
+            } else emptyList()
 
             val resetAt = System.currentTimeMillis()
             val recordsToDelete = linkedSetOf<Pair<String, Long>>()
             apiaries.forEach { recordsToDelete.add("apiary" to it.id) }
-            hives.forEach { recordsToDelete.add("hive" to it.id) }
+            hives.forEach {
+                recordsToDelete.add("hive" to it.id)
+                // Also remove unfinished inspection state on every synced device.
+                recordsToDelete.add("inspection_form_draft" to it.id)
+            }
             inspections.forEach { recordsToDelete.add("inspection" to it.id) }
             feedings.forEach { recordsToDelete.add("feeding" to it.id) }
             treatments.forEach { recordsToDelete.add("treatment" to it.id) }
@@ -118,6 +136,9 @@ class LocalHiveRepository(context: Context) {
             pendingOutbox.forEach { recordsToDelete.add(it.entityType to it.entityId) }
             (scopedDraftIds + legacyPersonalDraftIds).distinct().forEach {
                 recordsToDelete.add("inspection_note_draft" to it)
+            }
+            (scopedFormDraftIds + legacyPersonalFormDraftIds).distinct().forEach {
+                recordsToDelete.add("inspection_form_draft" to it)
             }
 
             // Delete children before parent records to respect all Room foreign keys.
@@ -134,13 +155,23 @@ class LocalHiveRepository(context: Context) {
 
             recordsToDelete.forEach { (type, id) ->
                 val draftKey = inspectionNoteDraftKey(activeDraftWorkspaceId, id)
-                val tombstoneAt = if (type == "inspection_note_draft") {
-                    maxOf(resetAt, inspectionNoteDraftPrefs.getLong(inspectionNoteDraftUpdatedAtKey(draftKey), 0L) + 1L)
-                } else resetAt
+                val tombstoneAt = when (type) {
+                    "inspection_note_draft" -> maxOf(
+                        resetAt, inspectionNoteDraftPrefs.getLong(inspectionNoteDraftUpdatedAtKey(draftKey), 0L) + 1L
+                    )
+                    "inspection_form_draft" -> maxOf(
+                        resetAt,
+                        InspectionFormDraftStore.updatedAt(
+                            InspectionFormDraftStore.readRaw(inspectionFormDraftPrefs, activeDraftWorkspaceId, id)
+                        ) + 1L
+                    )
+                    else -> resetAt
+                }
                 val payload = JSONObject()
                     .put("id", id)
                     .put("updated_at", tombstoneAt)
                     .put("deleted", true)
+                if (type == "inspection_form_draft") payload.put("hive_id", id)
                 db.outbox().enqueue(
                     SyncOutboxEntity(
                         id = IdGenerator.nextLong(),
@@ -152,6 +183,19 @@ class LocalHiveRepository(context: Context) {
                     )
                 )
             }
+
+            val formDraftEditor = inspectionFormDraftPrefs.edit()
+            (scopedFormDraftIds + legacyPersonalFormDraftIds + hives.map { it.id }).distinct().forEach { hiveId ->
+                val key = InspectionFormDraftStore.key(activeDraftWorkspaceId, hiveId)
+                formDraftEditor.remove(key)
+                    .remove(InspectionFormDraftStore.pendingKey(key))
+                    .remove(InspectionFormDraftStore.beeCountHistoryStartKey(activeDraftWorkspaceId, hiveId))
+                if (activeDraftWorkspaceId == null) {
+                    formDraftEditor.remove(InspectionFormDraftStore.legacyBeeCountHistoryStartKey(hiveId))
+                        .remove(InspectionFormDraftStore.legacyKey(hiveId))
+                }
+            }
+            formDraftEditor.apply()
 
             val draftEditor = inspectionNoteDraftPrefs.edit()
             (scopedDraftIds + legacyPersonalDraftIds).distinct().forEach { hiveId ->
@@ -500,7 +544,16 @@ class LocalHiveRepository(context: Context) {
         db.nfcTagAssignments().listForHiveForDelete(hiveId).forEach {
             enqueue("nfc_assignment", it.id, "delete", tombstone(it.id))
         }
-        // The live field-note buffer is a separate cloud document from saved inspections.
+        // In-progress inspection fields and the live field-note buffer are separate cloud documents.
+        InspectionFormDraftStore.markDeleted(inspectionFormDraftPrefs, _activeWorkspaceId.value, hiveId)
+        val formDraftKey = InspectionFormDraftStore.key(_activeWorkspaceId.value, hiveId)
+        val formDraftTombstone = InspectionFormDraftStore.readRaw(
+            inspectionFormDraftPrefs, _activeWorkspaceId.value, hiveId
+        ) ?: tombstone(hiveId)
+        enqueue("inspection_form_draft", hiveId, "delete", formDraftTombstone)
+        inspectionFormDraftPrefs.edit()
+            .putBoolean(InspectionFormDraftStore.pendingKey(formDraftKey), false)
+            .apply()
         enqueue("inspection_note_draft", hiveId, "delete", tombstone(hiveId))
     }
 
@@ -756,17 +809,9 @@ class LocalHiveRepository(context: Context) {
                 beeCountFrames = safeBeeCountFrames
             )
             db.inspections().upsert(entity)
-            db.hives().get(i.hiveId)?.let {
-                // The inspection timestamp describes the observation, not when the hive record was edited.
-                // Use wall-clock update time so backfilled inspections cannot make the hive look stale during sync.
-                db.hives().upsert(it.copy(
-                    strength = entity.strength,
-                    queenStatus = entity.queenStatus,
-                    mitePercent = entity.mitePercent,
-                    beeCountFrames = entity.beeCountFrames,
-                    updatedAt = System.currentTimeMillis()
-                ))
-            }
+            // Refresh from the newest saved inspection, not necessarily the one just inserted
+            // (a backfilled inspection can be older than the existing latest entry).
+            refreshHiveInspectionSummary(i.hiveId, touchUpdatedAt = true)
             val event = ActivityEventEntity(i.id, i.hiveId, i.createdAt, "inspection", "Inspection", "Strength ${ColonyStrength.gradeFromStored(entity.strength)}/5 • ${ColonyStrength.labelFromStored(entity.strength)} • Mites ${String.format(java.util.Locale.US, "%.2f", entity.mitePercent)}%")
             db.events().upsert(event)
             enqueue("inspection", i.id, "upsert", inspectionPayload(entity))
@@ -931,10 +976,66 @@ class LocalHiveRepository(context: Context) {
         queued
     }
 
+    /**
+     * Recompute the hive's inspection-derived summary without changing its other profile
+     * fields. The optional timestamp bump is for a locally-entered inspection whose
+     * summary must be propagated as a normal hive update.
+     */
+    private suspend fun refreshHiveInspectionSummary(
+        hiveId: Long,
+        touchUpdatedAt: Boolean = false
+    ) {
+        val hive = db.hives().get(hiveId) ?: return
+        val latest = db.inspections().latest(hiveId) ?: return
+        var merged = hive.withInspectionSummary(latest)
+        if (touchUpdatedAt) {
+            merged = merged.copy(updatedAt = maxOf(System.currentTimeMillis(), hive.updatedAt + 1L))
+        }
+        if (merged != hive) db.hives().upsert(merged)
+    }
+
+    /**
+     * Recover unfinished inspection fields that were persisted locally before a process
+     * death or before the debounced cloud sync ran. Mirrors the notes-draft recovery path.
+     */
+    suspend fun queuePendingInspectionFormDrafts(): Int = withContext(Dispatchers.IO) {
+        if (_activeWorkspaceReadOnly.value) return@withContext 0
+        val workspaceId = _activeWorkspaceId.value
+        val prefix = InspectionFormDraftStore.keyPrefix(workspaceId)
+        val hiveIds = inspectionFormDraftPrefs.all.keys.asSequence()
+            .filter { it.startsWith(prefix) }
+            .mapNotNull { it.removePrefix(prefix).toLongOrNull() }
+            .filter { it > 0L }
+            .distinct()
+            .toList()
+        var queued = 0
+        for (hiveId in hiveIds) {
+            if (!InspectionFormDraftStore.isPending(inspectionFormDraftPrefs, workspaceId, hiveId)) continue
+            val raw = InspectionFormDraftStore.readRaw(inspectionFormDraftPrefs, workspaceId, hiveId) ?: continue
+            val payload = runCatching { JSONObject(raw) }.getOrNull() ?: continue
+            val updatedAt = InspectionFormDraftStore.updatedAt(raw)
+            if (updatedAt <= 0L) continue
+            payload.put("id", hiveId).put("hive_id", hiveId).put("updated_at", updatedAt).put("updatedAt", updatedAt)
+            val operation = if (payload.optBoolean("deleted", false)) "delete" else "upsert"
+            enqueue("inspection_form_draft", hiveId, operation, payload.toString())
+            inspectionFormDraftPrefs.edit()
+                .putBoolean(InspectionFormDraftStore.pendingKey(InspectionFormDraftStore.key(workspaceId, hiveId)), false)
+                .apply()
+            queued++
+        }
+        queued
+    }
+
     suspend fun pendingSync(limit: Int = 50): List<SyncOutboxEntity> = db.outbox().pending(limit)
     suspend fun markSyncDone(id: Long) = db.outbox().setState(id, "done")
     suspend fun markSyncError(id: Long, message: String) = db.outbox().setState(id, "pending", message.take(500))
     suspend fun pruneSync() = db.outbox().pruneDone(System.currentTimeMillis() - 7 * 24 * 60 * 60 * 1000)
+
+    private fun clearLocalInspectionFormDraft(hiveId: Long, deletedAt: Long) {
+        InspectionFormDraftStore.clearRemote(
+            inspectionFormDraftPrefs, _activeWorkspaceId.value, hiveId, deletedAt
+        )
+    }
 
     private fun clearLocalInspectionNoteDraft(hiveId: Long, deletedAt: Long) {
         val workspaceId = _activeWorkspaceId.value
@@ -953,6 +1054,7 @@ class LocalHiveRepository(context: Context) {
         if (doc.deleted) {
             when (doc.entity_type) {
                 "inspection_note_draft" -> clearLocalInspectionNoteDraft(doc.entity_id, doc.updated_at)
+                "inspection_form_draft" -> clearLocalInspectionFormDraft(doc.entity_id, doc.updated_at)
                 "apiary" -> db.apiaries().get(doc.entity_id)?.let {
                     // A newer cloud tombstone removes the row locally as well, freeing
                     // the apiary name and ensuring the map pin disappears on this device.
@@ -962,8 +1064,11 @@ class LocalHiveRepository(context: Context) {
                     // A remote permanent delete only wins over genuinely newer local edits.
                     if (doc.updated_at >= it.updatedAt) db.withTransaction { permanentlyDeleteHiveLocal(doc.entity_id) }
                 }
-                "inspection" -> db.inspections().get(doc.entity_id)?.let {
-                    if (doc.updated_at >= it.updatedAt) db.withTransaction { db.inspections().hardDelete(doc.entity_id) }
+                "inspection" -> db.inspections().get(doc.entity_id)?.let { existing ->
+                    if (doc.updated_at >= existing.updatedAt) {
+                        db.withTransaction { db.inspections().hardDelete(doc.entity_id) }
+                        refreshHiveInspectionSummary(existing.hiveId)
+                    }
                 }
                 "feeding" -> db.feedings().get(doc.entity_id)?.let {
                     if (doc.updated_at >= it.createdAt) db.withTransaction { db.feedings().hardDelete(doc.entity_id) }
@@ -1009,6 +1114,29 @@ class LocalHiveRepository(context: Context) {
                 if (recordedAt != null) editor.putLong(inspectionNoteDraftRecordedAtKey(key), recordedAt)
                 else editor.remove(inspectionNoteDraftRecordedAtKey(key))
                 editor.apply()
+            }
+            "inspection_form_draft" -> {
+                val workspaceId = _activeWorkspaceId.value
+                val hiveId = json.optLong("hive_id", doc.entity_id)
+                if (!db.hives().exists(hiveId)) return@withContext
+                if (InspectionFormDraftStore.isPending(inspectionFormDraftPrefs, workspaceId, hiveId)) return@withContext
+
+                val incomingUpdatedAt = json.optLong("updated_at", doc.updated_at)
+                val existingRaw = InspectionFormDraftStore.readRaw(inspectionFormDraftPrefs, workspaceId, hiveId)
+                if (incomingUpdatedAt <= InspectionFormDraftStore.updatedAt(existingRaw)) return@withContext
+
+                // A completed inspection wins over an older unfinished form. A genuinely
+                // newer draft may still be restored on another device.
+                val latestInspection = db.inspections().latest(hiveId)
+                if (latestInspection != null && latestInspection.createdAt >= incomingUpdatedAt) {
+                    InspectionFormDraftStore.clearRemote(
+                        inspectionFormDraftPrefs, workspaceId, hiveId, latestInspection.createdAt
+                    )
+                    return@withContext
+                }
+                InspectionFormDraftStore.applyRemote(
+                    inspectionFormDraftPrefs, workspaceId, hiveId, doc.payload
+                )
             }
             "apiary" -> {
                 val existing = db.apiaries().get(doc.entity_id)
@@ -1107,13 +1235,42 @@ class LocalHiveRepository(context: Context) {
                 )
                 if (incoming.tagUid.isNotBlank() && db.hives().exists(incoming.hiveId)) applyAssignment(incoming)
             }
-            "inspection" -> if (db.hives().exists(json.optLong("hive_id"))) db.inspections().upsert(InspectionEntity(
-                id=json.optLong("id",doc.entity_id), hiveId=json.optLong("hive_id"), createdAt=json.optLong("created_at",doc.updated_at),
-                strength=json.optInt("strength").coerceIn(0, 10), queenStatus=json.optString("queen_status"), miteCount=json.optInt("mite_count").coerceAtLeast(0), sampleSize=json.optInt("sample_size",1).coerceAtLeast(1),
-                notes=json.optString("notes"), latitude=json.doubleOrNull("latitude"), longitude=json.doubleOrNull("longitude"),
-                emergencyCells=json.optInt("emergency_cells").coerceAtLeast(0), supercedureCells=json.optInt("supercedure_cells").coerceAtLeast(0), swarmCells=json.optInt("swarm_cells").coerceAtLeast(0), eggs=json.optDouble("eggs", 0.0).coerceAtLeast(0.0), openBrood=json.optDouble("open_brood", 0.0).coerceAtLeast(0.0), cappedBrood=json.optDouble("capped_brood", 0.0).coerceAtLeast(0.0), honeyStores=json.optDouble("honey_stores", 0.0).coerceAtLeast(0.0), pollen=json.optDouble("pollen", 0.0).coerceAtLeast(0.0), emptyDrawnComb=json.optDouble("empty_drawn_comb", 0.0).coerceAtLeast(0.0), diseaseFlags=json.optString("disease_flags"), updatedAt=json.optLong("updated_at",doc.updated_at),
-                beeCountFrames=json.doubleOrNull("bee_count_frames")?.let { (it * 2.0).roundToInt().coerceIn(1, 20) / 2.0 }
-            )) else Unit
+            "inspection" -> {
+                val hiveId = json.optLong("hive_id")
+                if (!db.hives().exists(hiveId)) return@withContext
+                val incoming = InspectionEntity(
+                    id = json.optLong("id", doc.entity_id),
+                    hiveId = hiveId,
+                    createdAt = json.optLong("created_at", doc.updated_at),
+                    strength = json.optInt("strength").coerceIn(0, 10),
+                    queenStatus = json.optString("queen_status"),
+                    miteCount = json.optInt("mite_count").coerceAtLeast(0),
+                    sampleSize = json.optInt("sample_size", 1).coerceAtLeast(1),
+                    notes = json.optString("notes"),
+                    latitude = json.doubleOrNull("latitude"),
+                    longitude = json.doubleOrNull("longitude"),
+                    emergencyCells = json.optInt("emergency_cells").coerceAtLeast(0),
+                    supercedureCells = json.optInt("supercedure_cells").coerceAtLeast(0),
+                    swarmCells = json.optInt("swarm_cells").coerceAtLeast(0),
+                    eggs = json.optDouble("eggs", 0.0).coerceAtLeast(0.0),
+                    openBrood = json.optDouble("open_brood", 0.0).coerceAtLeast(0.0),
+                    cappedBrood = json.optDouble("capped_brood", 0.0).coerceAtLeast(0.0),
+                    honeyStores = json.optDouble("honey_stores", 0.0).coerceAtLeast(0.0),
+                    pollen = json.optDouble("pollen", 0.0).coerceAtLeast(0.0),
+                    emptyDrawnComb = json.optDouble("empty_drawn_comb", 0.0).coerceAtLeast(0.0),
+                    diseaseFlags = json.optString("disease_flags"),
+                    updatedAt = json.optLong("updated_at", doc.updated_at),
+                    beeCountFrames = json.doubleOrNull("bee_count_frames")
+                        ?.let { (it * 2.0).roundToInt().coerceIn(1, 20) / 2.0 }
+                )
+                val existing = db.inspections().get(incoming.id)
+                if (existing == null || incoming.updatedAt >= existing.updatedAt) {
+                    db.inspections().upsert(incoming)
+                }
+                // Even if this copy was stale and ignored, restore the hive summary
+                // from whichever inspection is actually latest in local history.
+                refreshHiveInspectionSummary(hiveId)
+            }
             "feeding" -> if (db.hives().exists(json.optLong("hive_id"))) db.feedings().upsert(FeedingEntity(json.optLong("id",doc.entity_id),json.optLong("hive_id"),json.optLong("created_at",doc.updated_at),json.optString("feed_type"),json.optString("ratio"),json.optDouble("amount").coerceAtLeast(0.0),json.optString("unit"),json.optString("notes"))) else Unit
             "treatment" -> if (db.hives().exists(json.optLong("hive_id"))) db.treatments().upsert(TreatmentEntity(json.optLong("id",doc.entity_id),json.optLong("hive_id"),json.optLong("created_at",doc.updated_at),json.optString("treatment_type"),json.optString("product"),json.longOrNull("inserted_at"),json.longOrNull("removal_at"),json.longOrNull("withdrawal_until"),json.optString("notes"))) else Unit
             "harvest" -> if (db.hives().exists(json.optLong("hive_id"))) db.harvests().upsert(HarvestEntity(json.optLong("id",doc.entity_id),json.optLong("hive_id"),json.optLong("created_at",doc.updated_at),json.optInt("supers_pulled").coerceAtLeast(0),json.optDouble("wet_honey_weight").coerceAtLeast(0.0),json.optDouble("dry_honey_weight").coerceAtLeast(0.0),json.optString("weight_unit","lb"),json.optDouble("wax_weight").coerceAtLeast(0.0),json.optDouble("propolis_weight").coerceAtLeast(0.0),json.optString("notes"))) else Unit
