@@ -3372,7 +3372,7 @@ private fun MoreScreen(
             Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
                     Column(Modifier.weight(1f)) {
-                        Text("BeeKeep Cloud", fontWeight = FontWeight.Bold)
+                        Text("BeeKeep Account", fontWeight = FontWeight.Bold)
                         Text(
                             when {
                                 !account.configured -> "Add Supabase credentials to enable cloud sync"
@@ -3476,43 +3476,23 @@ private fun MoreScreen(
                         },
                         modifier = Modifier.fillMaxWidth()
                     ) { Text("SAVE USERNAME") }
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Button(
-                            onClick = {
-                                scope.launch {
-                                    when (val result = cloud.syncNow()) {
-                                        CloudResult.Success -> authMessage = "Synced just now."
-                                        CloudResult.NotSignedIn -> authMessage = "Sign in required."
-                                        CloudResult.NotConfigured -> authMessage = "Cloud is not configured."
-                                        is CloudResult.Failure -> authMessage = result.message
-                                    }
+                    OutlinedButton(
+                        onClick = {
+                            scope.launch {
+                                authMessage = ""
+                                authMessage = when (val result = cloud.signOut()) {
+                                    CloudResult.Success -> "Signed out. Your phone data is still available offline."
+                                    CloudResult.NotConfigured -> "Cloud is not configured."
+                                    CloudResult.NotSignedIn -> "You are already signed out."
+                                    is CloudResult.Failure -> result.message
                                 }
-                            },
-                            modifier = Modifier.weight(1f),
-                            enabled = !account.syncing
-                        ) { Text("SYNC NOW") }
-                        OutlinedButton(
-                            onClick = {
-                                scope.launch {
-                                    authMessage = ""
-                                    authMessage = when (val result = cloud.signOut()) {
-                                        CloudResult.Success -> "Signed out. Your phone data is still available offline."
-                                        CloudResult.NotConfigured -> "Cloud is not configured."
-                                        CloudResult.NotSignedIn -> "You are already signed out."
-                                        is CloudResult.Failure -> result.message
-                                    }
-                                }
-                            },
-                            modifier = Modifier.weight(1f)
-                        ) { Text("SIGN OUT") }
-                    }
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text("SIGN OUT") }
                 }
 
                 if (authMessage.isNotBlank()) Text(authMessage, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                account.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-                if (account.lastSyncAt != null) {
-                    Text("Last sync: ${account.lastSyncAt?.let { DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT).format(Date(it)) } ?: "Never"}", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
             }
         }
 
