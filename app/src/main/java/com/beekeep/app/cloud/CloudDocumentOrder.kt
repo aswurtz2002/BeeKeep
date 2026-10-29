@@ -15,10 +15,11 @@ internal object CloudDocumentOrder {
         "feeding" to 4,
         "treatment" to 4,
         "harvest" to 4,
-        "event" to 4
+        "event" to 4,
+        "inspection_form_draft" to 5
     )
 
-    private fun priority(entityType: String): Int = priorities[entityType] ?: 5
+    private fun priority(entityType: String): Int = priorities[entityType] ?: 6
 
     fun personal(documents: Collection<CloudDocumentRow>): List<CloudDocumentRow> =
         documents.sortedWith(compareBy<CloudDocumentRow> { priority(it.entity_type) }.thenBy { it.entity_id })
