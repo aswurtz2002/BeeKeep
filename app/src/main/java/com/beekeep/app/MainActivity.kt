@@ -1806,6 +1806,7 @@ fun BeeKeepApp(
         }
         InspectionScreen(
             activity, locationController, hiveForInspection,
+            workspaceId = activeWorkspaceId,
             priorInspections = inspections,
             beeCountHistory = events.filter { it.type == "bee_count_change" && it.hiveId == hiveForInspection.id && it.detail.startsWith("Frames of bees changed from ") },
             defaultMiteSampleSize = autoVoicePrefs.getInt("default_mite_sample_size", 300).coerceIn(1, 10000),
