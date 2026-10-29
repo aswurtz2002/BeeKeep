@@ -837,7 +837,7 @@ class LocalHiveRepository(context: Context) {
                     BeeKeepEntitlements.apiaryLimitMessage(appContext)
                 }
             }
-            val now = System.currentTimeMillis()
+            val now = maxOf(System.currentTimeMillis(), (previous?.updatedAt ?: 0L) + 1L)
             val entity = ApiaryEntity(a.id, cleanName, a.notes.trim(), a.latitude, a.longitude, a.forageNotes.trim(), a.waterNotes.trim(), now, false)
             db.apiaries().upsert(entity)
             enqueue("apiary", entity.id, "upsert", apiaryPayload(entity))
@@ -1542,7 +1542,7 @@ class LocalHiveRepository(context: Context) {
         if (value == value.toLong().toDouble()) value.toLong().toString()
         else String.format(java.util.Locale.US, "%.1f", value)
 
-    private fun toHive(e: HiveEntity) = Hive(e.id, e.number, e.apiaryName, e.queenStatus, e.queenMarkColor, e.queenOrigin, e.queenAgeMonths, e.queenTemperament, e.strength, e.mitePercent, e.tagUid, e.status, e.deadAt, e.latitude, e.longitude, e.beeCountFrames)
+    private fun toHive(e: HiveEntity) = Hive(e.id, e.number, e.apiaryName, e.queenStatus, e.queenMarkColor, e.queenOrigin, e.queenAgeMonths, e.queenTemperament, e.strength, e.mitePercent, e.tagUid, e.status, e.deadAt, e.latitude, e.longitude, e.beeCountFrames, e.apiaryId)
     private fun toInspection(e: InspectionEntity) = Inspection(e.id, e.hiveId, e.createdAt, e.strength, e.queenStatus, e.miteCount, e.sampleSize, e.notes, e.latitude, e.longitude, e.emergencyCells, e.supercedureCells, e.swarmCells, e.eggs, e.openBrood, e.cappedBrood, e.honeyStores, e.pollen, e.emptyDrawnComb, e.diseaseFlags, e.beeCountFrames)
     private fun toFeeding(e: FeedingEntity) = Feeding(e.id, e.hiveId, e.createdAt, e.feedType, e.ratio, e.amount, e.unit, e.notes)
     private fun toTreatment(e: TreatmentEntity) = Treatment(e.id, e.hiveId, e.createdAt, e.treatmentType, e.product, e.insertedAt, e.removalAt, e.withdrawalUntil, e.notes)

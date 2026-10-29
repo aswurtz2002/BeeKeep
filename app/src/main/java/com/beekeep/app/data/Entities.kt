@@ -209,7 +209,8 @@ data class Hive(
     val deadAt: Long? = null,
     val latitude: Double? = null,
     val longitude: Double? = null,
-    val beeCountFrames: Double? = null
+    val beeCountFrames: Double? = null,
+    val apiaryId: Long? = null
 ) {
     val isDead: Boolean get() = status != HiveStatus.ACTIVE
 }

@@ -45,6 +45,8 @@ sealed interface CloudResult {
     data object NotSignedIn : CloudResult
 }
 
+private const val SYNC_UPLOAD_BATCH_SIZE = 200
+
 class SupabaseGateway(
     private val context: Context,
     private val repository: LocalHiveRepository,
@@ -458,42 +460,53 @@ class SupabaseGateway(
         }
         return try {
 
-            // Recover a local note edit if the screen was closed before its debounce queued the outbox row.
+            // Recover note edits saved locally before their debounce queued an outbox row.
             repository.queuePendingInspectionNoteDrafts()
-            // Pull first. This prevents an older offline outbox entry from overwriting a newer cloud record.
+
+            // Pull first so an older offline edit cannot overwrite a newer cloud record.
+            // Drain the entire outbox in bounded batches: the old single-batch sync could
+            // publish an apiary while leaving its hive rows queued for a later run.
             val remoteBefore = loadAllPersonalDocuments()
             val remoteByKey = remoteBefore.associateBy { "${it.entity_type}:${it.entity_id}" }
-            val pending = repository.pendingSync(500)
-            val uploadable = mutableListOf<CloudDocumentRow>()
-            val uploadableIds = mutableSetOf<Long>()
+            while (true) {
+                val pending = repository.pendingSync(SYNC_UPLOAD_BATCH_SIZE)
+                if (pending.isEmpty()) break
 
-            for (item in pending) {
-                val payloadTimestamp = runCatching { JSONObject(item.payload).optLong("updated_at", item.createdAt) }
-                    .getOrDefault(item.createdAt)
-                val remote = remoteByKey["${item.entityType}:${item.entityId}"]
-                if (remote != null && remote.updated_at > payloadTimestamp) {
-                    repository.markSyncDone(item.id)
-                    continue
+                val uploadable = mutableListOf<CloudDocumentRow>()
+                val uploadableIds = mutableSetOf<Long>()
+                for (item in pending) {
+                    val payloadTimestamp = runCatching {
+                        JSONObject(item.payload).optLong("updated_at", item.createdAt)
+                    }.getOrDefault(item.createdAt)
+                    val remote = remoteByKey["${item.entityType}:${item.entityId}"]
+                    if (remote != null && remote.updated_at > payloadTimestamp) {
+                        repository.markSyncDone(item.id)
+                        continue
+                    }
+                    uploadable += CloudDocumentRow(
+                        user_id = userId,
+                        entity_type = item.entityType,
+                        entity_id = item.entityId,
+                        payload = item.payload,
+                        updated_at = payloadTimestamp,
+                        deleted = item.operation == "delete",
+                        device_id = deviceId
+                    )
+                    uploadableIds += item.id
                 }
-                uploadable += CloudDocumentRow(
-                    user_id = userId,
-                    entity_type = item.entityType,
-                    entity_id = item.entityId,
-                    payload = item.payload,
-                    updated_at = payloadTimestamp,
-                    deleted = item.operation == "delete",
-                    device_id = deviceId
-                )
-                uploadableIds += item.id
+
+                if (uploadable.isNotEmpty()) {
+                    client.from("beekeep_documents").upsert(uploadable) {
+                        onConflict = "user_id,entity_type,entity_id"
+                    }
+                    pending.filter { it.id in uploadableIds }.forEach { repository.markSyncDone(it.id) }
+                }
             }
 
-            if (uploadable.isNotEmpty()) {
-                client.from("beekeep_documents").upsert(uploadable) { onConflict = "user_id,entity_type,entity_id" }
-                pending.filter { it.id in uploadableIds }.forEach { repository.markSyncDone(it.id) }
-            }
-
-            val remote = loadAllPersonalDocuments()
-            remote.forEach { repository.applyCloudDocument(it) }
+            // Server order is alphabetical by entity type, not dependency order.
+            // Apply parents first or child rows can be silently ignored by Room.
+            CloudDocumentOrder.personal(loadAllPersonalDocuments())
+                .forEach { repository.applyCloudDocument(it) }
 
             repository.pruneSync()
             val now = System.currentTimeMillis()
@@ -697,63 +710,50 @@ class SupabaseGateway(
             if (isWritable) repository.queuePendingInspectionNoteDrafts()
             val remoteBefore = loadAllWorkspaceDocuments(workspaceId)
             val remoteByKey = remoteBefore.associateBy { "${it.entity_type}:${it.entity_id}" }.toMutableMap()
-            val pending = repository.pendingSync(500)
-            val uploadable = mutableListOf<CloudWorkspaceDocumentRow>()
-            val uploadableIds = mutableSetOf<Long>()
-
             if (isWritable) {
-                for (item in pending) {
-                    val payloadTimestamp = runCatching {
-                        JSONObject(item.payload).optLong("updated_at", item.createdAt)
-                    }.getOrDefault(item.createdAt)
-                    val remote = remoteByKey["${item.entityType}:${item.entityId}"]
-                    if (remote != null && remote.updated_at > payloadTimestamp) {
-                        repository.markSyncDone(item.id)
-                        continue
-                    }
-                    uploadable += CloudWorkspaceDocumentRow(
-                        workspace_id = workspaceId,
-                        entity_type = item.entityType,
-                        entity_id = item.entityId,
-                        payload = item.payload,
-                        updated_at = payloadTimestamp,
-                        deleted = item.operation == "delete",
-                        device_id = deviceId,
-                        updated_by = userId
-                    )
-                    uploadableIds += item.id
-                }
+                // Keep uploading bounded chunks until the selected workspace outbox drains.
+                // Older queued history must not starve a newly-created apiary's hive rows.
+                while (true) {
+                    val pending = repository.pendingSync(SYNC_UPLOAD_BATCH_SIZE)
+                    if (pending.isEmpty()) break
 
-                if (uploadable.isNotEmpty()) {
-                    supabase.from("beekeep_workspace_documents").upsert(uploadable) {
-                        onConflict = "workspace_id,entity_type,entity_id"
+                    val uploadable = mutableListOf<CloudWorkspaceDocumentRow>()
+                    val uploadableIds = mutableSetOf<Long>()
+                    for (item in pending) {
+                        val payloadTimestamp = runCatching {
+                            JSONObject(item.payload).optLong("updated_at", item.createdAt)
+                        }.getOrDefault(item.createdAt)
+                        val remote = remoteByKey["${item.entityType}:${item.entityId}"]
+                        if (remote != null && remote.updated_at > payloadTimestamp) {
+                            repository.markSyncDone(item.id)
+                            continue
+                        }
+                        uploadable += CloudWorkspaceDocumentRow(
+                            workspace_id = workspaceId,
+                            entity_type = item.entityType,
+                            entity_id = item.entityId,
+                            payload = item.payload,
+                            updated_at = payloadTimestamp,
+                            deleted = item.operation == "delete",
+                            device_id = deviceId,
+                            updated_by = userId
+                        )
+                        uploadableIds += item.id
                     }
-                    pending.filter { it.id in uploadableIds }.forEach { repository.markSyncDone(it.id) }
-                    // Reuse the pulled snapshot and overlay successful writes instead of
-                    // issuing a second full paginated download on every sync.
-                    uploadable.forEach { row ->
-                        remoteByKey["${row.entity_type}:${row.entity_id}"] = row
+
+                    if (uploadable.isNotEmpty()) {
+                        supabase.from("beekeep_workspace_documents").upsert(uploadable) {
+                            onConflict = "workspace_id,entity_type,entity_id"
+                        }
+                        pending.filter { it.id in uploadableIds }.forEach { repository.markSyncDone(it.id) }
+                        uploadable.forEach { row ->
+                            remoteByKey["${row.entity_type}:${row.entity_id}"] = row
+                        }
                     }
                 }
             }
 
-            val remote = remoteByKey.values.toList()
-            // Child history is ignored locally if its hive has not been inserted yet.
-            // Apply parents first rather than relying on the database's unspecified row order.
-            val applyPriority = mapOf(
-                "apiary" to 0,
-                "hive" to 1,
-                "nfc_assignment" to 2,
-                "inspection" to 3,
-                "feeding" to 3,
-                "treatment" to 3,
-                "harvest" to 3,
-                "event" to 3
-            )
-            remote.sortedWith(
-                compareBy<CloudWorkspaceDocumentRow> { applyPriority[it.entity_type] ?: 4 }
-                    .thenBy { it.entity_id }
-            ).forEach { document ->
+            CloudDocumentOrder.workspace(remoteByKey.values).forEach { document ->
                 repository.applyCloudDocument(
                     CloudDocumentRow(
                         user_id = userId,
@@ -769,7 +769,7 @@ class SupabaseGateway(
 
             repository.pruneSync()
             val now = System.currentTimeMillis()
-            val warning = if (!isWritable && pending.isNotEmpty()) {
+            val warning = if (!isWritable && repository.pendingSync(1).isNotEmpty()) {
                 "This workspace is view-only. Pending local edits were not uploaded."
             } else null
             _account.value = _account.value.copy(
