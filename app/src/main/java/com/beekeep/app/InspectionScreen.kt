@@ -161,9 +161,37 @@ internal fun clearInspectionDraftsForHive(context: android.content.Context, hive
 
 /** Clear all unfinished field-entry state after Reset Apiaries succeeds locally. */
 internal fun clearAllInspectionDrafts(context: android.content.Context) {
-    context.getSharedPreferences(INSPECTION_NOTE_DRAFTS, android.content.Context.MODE_PRIVATE).edit {
-        clear()
+    // Reset only the active workspace's note drafts. Other workspaces keep their local drafts.
+    val workspaceId = context.getSharedPreferences("beekeep_prefs", android.content.Context.MODE_PRIVATE)
+        .getString("active_team_workspace_id", "").orEmpty().trim().takeIf { it.isNotEmpty() }
+    val notePrefs = context.getSharedPreferences(INSPECTION_NOTE_DRAFTS, android.content.Context.MODE_PRIVATE)
+    val scopePrefix = "${com.beekeep.app.data.inspectionNoteDraftScope(workspaceId)}_hive_"
+    val activeDraftIds = notePrefs.all.keys.asSequence()
+        .filter { it.startsWith(scopePrefix) }
+        .mapNotNull { it.removePrefix(scopePrefix).toLongOrNull() }
+        .filter { it > 0L }
+        .toSet()
+    val legacyPersonalIds = if (workspaceId == null) {
+        notePrefs.all.keys.asSequence()
+            .filter { it.startsWith("hive_") }
+            .mapNotNull { it.removePrefix("hive_").toLongOrNull() }
+            .filter { it > 0L }
+            .toSet()
+    } else emptySet()
+    notePrefs.edit {
+        (activeDraftIds + legacyPersonalIds).forEach { hiveId ->
+            val key = inspectionNoteDraftKey(workspaceId, hiveId)
+            remove(key)
+            remove(inspectionNoteDraftRecordedAtKey(key))
+            remove(inspectionNoteDraftUpdatedAtKey(key))
+            remove(inspectionNoteDraftPendingKey(key))
+            if (workspaceId == null) {
+                remove("hive_$hiveId")
+                remove("hive_${hiveId}_recorded_at")
+            }
+        }
     }
+    // Inspection form and bee-count history drafts predate workspace-scoped draft storage.
     context.getSharedPreferences(INSPECTION_FORM_DRAFTS, android.content.Context.MODE_PRIVATE).edit {
         clear()
     }
@@ -715,7 +743,10 @@ internal fun InspectionScreen(
     val voiceBlocked by rememberUpdatedState(saving)
     val appendRecognizedSpeech by rememberUpdatedState<(String) -> Unit>({ spokenText ->
         val cleanSpokenText = spokenText.trim()
-        if (cleanSpokenText.isNotBlank()) {
+        if (cleanSpokenText.isNotBlank() && isReadOnlyWorkspace) {
+            voiceStatus = "View-only workspace • notes cannot be edited"
+            noteSaveStatus = "View-only workspace"
+        } else if (cleanSpokenText.isNotBlank()) {
             val recordedAt = System.currentTimeMillis()
             val datedSpokenText = "${inspectionNoteDatePrefix(recordedAt)}$cleanSpokenText"
             val updatedNotes = if (latestNotes.isBlank()) datedSpokenText else "${latestNotes.trimEnd()}\n$datedSpokenText"
