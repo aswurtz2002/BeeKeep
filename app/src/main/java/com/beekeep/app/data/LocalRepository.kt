@@ -1261,8 +1261,10 @@ class LocalHiveRepository(context: Context) {
                 val existing = db.inspections().get(incoming.id)
                 if (existing == null || incoming.updatedAt >= existing.updatedAt) {
                     db.inspections().upsert(incoming)
-                    refreshHiveInspectionSummary(hiveId)
                 }
+                // Even if this copy was stale and ignored, restore the hive summary
+                // from whichever inspection is actually latest in local history.
+                refreshHiveInspectionSummary(hiveId)
             }
             "feeding" -> if (db.hives().exists(json.optLong("hive_id"))) db.feedings().upsert(FeedingEntity(json.optLong("id",doc.entity_id),json.optLong("hive_id"),json.optLong("created_at",doc.updated_at),json.optString("feed_type"),json.optString("ratio"),json.optDouble("amount").coerceAtLeast(0.0),json.optString("unit"),json.optString("notes"))) else Unit
             "treatment" -> if (db.hives().exists(json.optLong("hive_id"))) db.treatments().upsert(TreatmentEntity(json.optLong("id",doc.entity_id),json.optLong("hive_id"),json.optLong("created_at",doc.updated_at),json.optString("treatment_type"),json.optString("product"),json.longOrNull("inserted_at"),json.longOrNull("removal_at"),json.longOrNull("withdrawal_until"),json.optString("notes"))) else Unit
