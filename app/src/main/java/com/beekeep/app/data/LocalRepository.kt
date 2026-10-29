@@ -1205,15 +1205,9 @@ class LocalHiveRepository(context: Context) {
                         enqueue("nfc_assignment", closed.id, "upsert", nfcAssignmentPayload(closed))
                     }
                 }
-                val tagUidBeforeRefresh = db.hives().get(doc.entity_id)?.tagUid
+                // The assignment ledger is the source of truth. Hydrating or refreshing its
+                // local tag_uid cache must never publish a whole hive-profile snapshot.
                 db.hives().refreshTagCache(doc.entity_id)
-                db.hives().get(doc.entity_id)?.let { refreshed ->
-                    if (tagUidBeforeRefresh != refreshed.tagUid) {
-                        // Publish cache-only changes caused by the assignment ledger so old
-                        // clients/cloud documents do not keep broadcasting a released UID.
-                        enqueue("hive", doc.entity_id, "upsert", hivePayload(refreshed))
-                    }
-                }
             }
             "nfc_assignment" -> {
                 val incoming = NfcTagAssignmentEntity(
