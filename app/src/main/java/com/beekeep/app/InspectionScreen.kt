@@ -79,8 +79,7 @@ import com.beekeep.app.data.IdGenerator
 import com.beekeep.app.data.inspectionNoteDraftKey
 import com.beekeep.app.data.inspectionNoteDraftRecordedAtKey
 import com.beekeep.app.data.inspectionNoteDraftUpdatedAtKey
-import com.beekeep.app.data.migrateLegacyInspectionNoteDraftForContext
-import com.beekeep.app.data.inspectionNoteDraftKeyForContext
+import com.beekeep.app.data.migrateLegacyInspectionNoteDraft
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.onFocusChanged
@@ -359,6 +358,7 @@ internal fun InspectionScreen(
     activity: ComponentActivity,
     locationController: LocationController,
     hive: Hive,
+    workspaceId: String?,
     priorInspections: List<Inspection>,
     beeCountHistory: List<ActivityEvent>,
     defaultMiteSampleSize: Int,
@@ -389,11 +389,12 @@ internal fun InspectionScreen(
     val noteDraftPrefs = remember(context) {
         context.getSharedPreferences(INSPECTION_NOTE_DRAFTS, android.content.Context.MODE_PRIVATE)
     }
-    val noteDraftKey = remember(context, hive.id) {
-        inspectionNoteDraftKeyForContext(context, hive.id)
+    val cleanDraftWorkspaceId = workspaceId?.trim()?.takeIf { it.isNotEmpty() }
+    val noteDraftKey = remember(context, cleanDraftWorkspaceId, hive.id) {
+        inspectionNoteDraftKey(cleanDraftWorkspaceId, hive.id)
     }
     val legacyDraftNeedsSync = remember(noteDraftKey, hive.id, noteDraftPrefs) {
-        migrateLegacyInspectionNoteDraftForContext(noteDraftPrefs, context, hive.id)
+        migrateLegacyInspectionNoteDraft(noteDraftPrefs, cleanDraftWorkspaceId, hive.id)
     }
     val formDraftPrefs = remember(context) {
         context.getSharedPreferences(INSPECTION_FORM_DRAFTS, android.content.Context.MODE_PRIVATE)
