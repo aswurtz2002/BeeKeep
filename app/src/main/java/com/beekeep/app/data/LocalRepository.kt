@@ -913,7 +913,7 @@ class LocalHiveRepository(context: Context) {
             val notes = inspectionNoteDraftPrefs.getString(key, "").orEmpty()
             val updatedAtKey = inspectionNoteDraftUpdatedAtKey(key)
             val localUpdatedAt = inspectionNoteDraftPrefs.getLong(updatedAtKey, 0L)
-            val effectiveUpdatedAt = maxOf(localUpdatedAt, System.currentTimeMillis())
+            val effectiveUpdatedAt = maxOf(System.currentTimeMillis(), localUpdatedAt + 1L)
             val recordedAt = inspectionNoteDraftPrefs.getLong(inspectionNoteDraftRecordedAtKey(key), 0L)
                 .takeIf { it > 0L && notes.isNotBlank() }
             enqueue(
@@ -1009,9 +1009,6 @@ class LocalHiveRepository(context: Context) {
                 if (recordedAt != null) editor.putLong(inspectionNoteDraftRecordedAtKey(key), recordedAt)
                 else editor.remove(inspectionNoteDraftRecordedAtKey(key))
                 editor.apply()
-                _inspectionNoteDraftUpdates.tryEmit(
-                    InspectionNoteDraftUpdate(workspaceId, doc.entity_id, notes, recordedAt, incomingUpdatedAt)
-                )
             }
             "apiary" -> {
                 val existing = db.apiaries().get(doc.entity_id)
