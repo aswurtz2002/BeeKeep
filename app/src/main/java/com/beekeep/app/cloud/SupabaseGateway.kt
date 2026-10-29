@@ -453,6 +453,8 @@ class SupabaseGateway(
         }
         try {
 
+            // Recover a local note edit if the screen was closed before its debounce queued the outbox row.
+            repository.queuePendingInspectionNoteDrafts()
             // Pull first. This prevents an older offline outbox entry from overwriting a newer cloud record.
             val remoteBefore = loadAllPersonalDocuments()
             val remoteByKey = remoteBefore.associateBy { "${it.entity_type}:${it.entity_id}" }
@@ -681,6 +683,7 @@ class SupabaseGateway(
             if (repository.activeWorkspaceReadOnly.value == isWritable) {
                 repository.switchWorkspace(workspaceId, readOnly = !isWritable)
             }
+            if (isWritable) repository.queuePendingInspectionNoteDrafts()
             val remoteBefore = loadAllWorkspaceDocuments(workspaceId)
             val remoteByKey = remoteBefore.associateBy { "${it.entity_type}:${it.entity_id}" }.toMutableMap()
             val pending = repository.pendingSync(100)

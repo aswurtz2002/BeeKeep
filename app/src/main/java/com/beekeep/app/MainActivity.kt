@@ -1806,6 +1806,7 @@ fun BeeKeepApp(
         }
         InspectionScreen(
             activity, locationController, hiveForInspection,
+            workspaceId = activeWorkspaceId,
             priorInspections = inspections,
             beeCountHistory = events.filter { it.type == "bee_count_change" && it.hiveId == hiveForInspection.id && it.detail.startsWith("Frames of bees changed from ") },
             defaultMiteSampleSize = autoVoicePrefs.getInt("default_mite_sample_size", 300).coerceIn(1, 10000),
@@ -1845,9 +1846,6 @@ fun BeeKeepApp(
                 if (requestHiveAccess(hiveForInspection)) {
                     val saved = vm.saveInspection(inspection)
                     if (saved) {
-                        // Keep the full note log (including an intentional empty value) available for the next Inspect session.
-                        activity.getSharedPreferences(INSPECTION_NOTE_DRAFTS, android.content.Context.MODE_PRIVATE)
-                            .edit { putString("hive_${inspection.hiveId}", inspection.notes) }
                         scope.launch { snackbarHostState.showSnackbar("Inspection saved") }
                     } else {
                         if (activeWorkspaceReadOnly) {

@@ -41,7 +41,6 @@ class BeeKeepViewModel(
     val activeWorkspaceId: StateFlow<String?> = repo.activeWorkspaceId
     val activeWorkspaceReadOnly: StateFlow<Boolean> = repo.activeWorkspaceReadOnly
     val readOnlyWriteAttempt: StateFlow<Long> = repo.readOnlyWriteAttempt
-
     private var detailJob: Job? = null
     private var selectionRequestGeneration = 0L
 

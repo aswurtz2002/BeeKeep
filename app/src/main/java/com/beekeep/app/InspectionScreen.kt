@@ -66,6 +66,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.mutableDoubleStateOf
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -75,6 +76,11 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.beekeep.app.data.IdGenerator
+import com.beekeep.app.data.inspectionNoteDraftKey
+import com.beekeep.app.data.inspectionNoteDraftRecordedAtKey
+import com.beekeep.app.data.inspectionNoteDraftUpdatedAtKey
+import com.beekeep.app.data.inspectionNoteDraftPendingKey
+import com.beekeep.app.data.migrateLegacyInspectionNoteDraft
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.onFocusChanged
@@ -127,11 +133,19 @@ internal fun clearInspectionDraftsForHives(
 
     // Batch a whole apiary's cleanup into one edit per preference store, instead
     // of scheduling a full XML rewrite for every hive in a large yard.
+    val workspaceId = context.getSharedPreferences("beekeep_prefs", android.content.Context.MODE_PRIVATE)
+        .getString("active_team_workspace_id", "").orEmpty().trim().takeIf { it.isNotEmpty() }
     context.getSharedPreferences(INSPECTION_NOTE_DRAFTS, android.content.Context.MODE_PRIVATE).edit {
         validHiveIds.forEach { hiveId ->
-            val hiveKey = "hive_$hiveId"
+            val hiveKey = inspectionNoteDraftKey(workspaceId, hiveId)
             remove(hiveKey)
-            remove("${hiveKey}_recorded_at")
+            remove(inspectionNoteDraftRecordedAtKey(hiveKey))
+            remove(inspectionNoteDraftUpdatedAtKey(hiveKey))
+            remove(inspectionNoteDraftPendingKey(hiveKey))
+            if (workspaceId == null) {
+                remove("hive_$hiveId")
+                remove("hive_${hiveId}_recorded_at")
+            }
         }
     }
     context.getSharedPreferences(INSPECTION_FORM_DRAFTS, android.content.Context.MODE_PRIVATE).edit {
@@ -148,9 +162,37 @@ internal fun clearInspectionDraftsForHive(context: android.content.Context, hive
 
 /** Clear all unfinished field-entry state after Reset Apiaries succeeds locally. */
 internal fun clearAllInspectionDrafts(context: android.content.Context) {
-    context.getSharedPreferences(INSPECTION_NOTE_DRAFTS, android.content.Context.MODE_PRIVATE).edit {
-        clear()
+    // Reset only the active workspace's note drafts. Other workspaces keep their local drafts.
+    val workspaceId = context.getSharedPreferences("beekeep_prefs", android.content.Context.MODE_PRIVATE)
+        .getString("active_team_workspace_id", "").orEmpty().trim().takeIf { it.isNotEmpty() }
+    val notePrefs = context.getSharedPreferences(INSPECTION_NOTE_DRAFTS, android.content.Context.MODE_PRIVATE)
+    val scopePrefix = "${com.beekeep.app.data.inspectionNoteDraftScope(workspaceId)}_hive_"
+    val activeDraftIds = notePrefs.all.keys.asSequence()
+        .filter { it.startsWith(scopePrefix) }
+        .mapNotNull { it.removePrefix(scopePrefix).toLongOrNull() }
+        .filter { it > 0L }
+        .toSet()
+    val legacyPersonalIds = if (workspaceId == null) {
+        notePrefs.all.keys.asSequence()
+            .filter { it.startsWith("hive_") }
+            .mapNotNull { it.removePrefix("hive_").toLongOrNull() }
+            .filter { it > 0L }
+            .toSet()
+    } else emptySet()
+    notePrefs.edit {
+        (activeDraftIds + legacyPersonalIds).forEach { hiveId ->
+            val key = inspectionNoteDraftKey(workspaceId, hiveId)
+            remove(key)
+            remove(inspectionNoteDraftRecordedAtKey(key))
+            remove(inspectionNoteDraftUpdatedAtKey(key))
+            remove(inspectionNoteDraftPendingKey(key))
+            if (workspaceId == null) {
+                remove("hive_$hiveId")
+                remove("hive_${hiveId}_recorded_at")
+            }
+        }
     }
+    // Inspection form and bee-count history drafts predate workspace-scoped draft storage.
     context.getSharedPreferences(INSPECTION_FORM_DRAFTS, android.content.Context.MODE_PRIVATE).edit {
         clear()
     }
@@ -345,6 +387,7 @@ internal fun InspectionScreen(
     activity: ComponentActivity,
     locationController: LocationController,
     hive: Hive,
+    workspaceId: String?,
     priorInspections: List<Inspection>,
     beeCountHistory: List<ActivityEvent>,
     defaultMiteSampleSize: Int,
@@ -361,6 +404,9 @@ internal fun InspectionScreen(
     onBack: () -> Unit,
     onHome: () -> Unit,
     onSave: suspend (Inspection) -> Boolean,
+    onSaveNoteDraft: suspend (Long, String, Long?, Long) -> Long = { hiveId, draftNotes, recordedAt, updatedAt ->
+        queueInspectionNoteDraft(activity.applicationContext, hiveId, draftNotes, recordedAt, updatedAt)
+    },
     onSaved: () -> Unit
 ) {
     val haptic = LocalHapticFeedback.current
@@ -369,11 +415,18 @@ internal fun InspectionScreen(
     val noteDraftPrefs = remember(context) {
         context.getSharedPreferences(INSPECTION_NOTE_DRAFTS, android.content.Context.MODE_PRIVATE)
     }
+    val cleanDraftWorkspaceId = workspaceId?.trim()?.takeIf { it.isNotEmpty() }
+    val noteDraftKey = remember(context, cleanDraftWorkspaceId, hive.id) {
+        inspectionNoteDraftKey(cleanDraftWorkspaceId, hive.id)
+    }
+    val legacyDraftNeedsSync = remember(noteDraftKey, hive.id, noteDraftPrefs) {
+        migrateLegacyInspectionNoteDraft(noteDraftPrefs, cleanDraftWorkspaceId, hive.id)
+    }
     val formDraftPrefs = remember(context) {
         context.getSharedPreferences(INSPECTION_FORM_DRAFTS, android.content.Context.MODE_PRIVATE)
     }
-    val noteDraftKey = remember(hive.id) { "hive_${hive.id}" }
-    val noteDraftTimestampKey = remember(hive.id) { "${noteDraftKey}_recorded_at" }
+    val noteDraftTimestampKey = remember(noteDraftKey) { inspectionNoteDraftRecordedAtKey(noteDraftKey) }
+    val noteDraftUpdatedAtKey = remember(noteDraftKey) { inspectionNoteDraftUpdatedAtKey(noteDraftKey) }
     // The inspection list may briefly still contain the previous hive while NFC
     // switches the selected hive. Never let another hive's latest inspection seed this form.
     val lastInspection = remember(hive.id, priorInspections) {
@@ -385,10 +438,10 @@ internal fun InspectionScreen(
     // Load unfinished field values for this specific hive; if none exist, use the last saved inspection.
     val formDraft = remember(hive.id) { readInspectionFormDraft(formDraftPrefs, hive.id) }
     val formStateKey = formDraft?.updatedAt ?: 0L
-    val hasSavedNoteDraft = remember(hive.id) { noteDraftPrefs.contains(noteDraftKey) }
-    val savedNoteDraft = remember(hive.id) { noteDraftPrefs.getString(noteDraftKey, "").orEmpty() }
+    val hasSavedNoteDraft = remember(noteDraftKey, hive.id) { noteDraftPrefs.contains(noteDraftKey) }
+    val savedNoteDraft = remember(noteDraftKey, hive.id) { noteDraftPrefs.getString(noteDraftKey, "").orEmpty() }
     // A stored empty string means the beekeeper deliberately cleared the notes; don't restore older text.
-    val startingNotes = remember(hive.id, hasSavedNoteDraft, savedNoteDraft, lastInspection?.id, lastInspection?.notes) {
+    val startingNotes = remember(noteDraftKey, hive.id, hasSavedNoteDraft, savedNoteDraft, lastInspection?.id, lastInspection?.notes) {
         val loadedNotes = if (hasSavedNoteDraft) savedNoteDraft else lastInspection?.notes.orEmpty()
         if (loadedNotes.isBlank() || hasInlineInspectionNoteDate(loadedNotes)) {
             loadedNotes
@@ -471,9 +524,60 @@ internal fun InspectionScreen(
     var sample by rememberSaveable(hive.id, formStateKey, lastInspection?.id) {
         mutableIntStateOf(formDraft?.sampleSize ?: (if (rememberLastInspectionValues) lastInspection?.sampleSize else null) ?: defaultMiteSampleSize.coerceIn(1, 10000))
     }
-    var notes by rememberSaveable(hive.id) { mutableStateOf(startingNotes) }
-    var noteSaveStatus by rememberSaveable(hive.id) {
-        mutableStateOf(if (startingNotes.isBlank()) "" else if (hasSavedNoteDraft) "Auto-saved note restored" else "Saved notes loaded")
+    var notes by rememberSaveable(noteDraftKey, hive.id) { mutableStateOf(startingNotes) }
+    var noteRevision by rememberSaveable(noteDraftKey, hive.id) {
+        mutableLongStateOf(noteDraftPrefs.getLong(noteDraftUpdatedAtKey, 0L))
+    }
+    val noteDraftPendingKey = remember(noteDraftKey) { inspectionNoteDraftPendingKey(noteDraftKey) }
+    var needsCloudSave by rememberSaveable(noteDraftKey, hive.id) {
+        mutableStateOf(legacyDraftNeedsSync || noteDraftPrefs.getBoolean(noteDraftPendingKey, false))
+    }
+    var noteSaveStatus by rememberSaveable(noteDraftKey, hive.id) {
+        mutableStateOf(
+            when {
+                legacyDraftNeedsSync -> "Restored local note - syncing to workspace"
+                startingNotes.isBlank() -> ""
+                hasSavedNoteDraft -> "Saved draft restored"
+                else -> "Saved notes loaded"
+            }
+        )
+    }
+    // Cloud pulls write drafts to the same workspace-scoped preference file.
+    // Observe those writes so an already-open inspection refreshes without reopening the hive.
+    DisposableEffect(noteDraftPrefs, noteDraftKey, noteDraftUpdatedAtKey) {
+        val listener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, changedKey ->
+            if (changedKey == noteDraftKey || changedKey == noteDraftUpdatedAtKey ||
+                changedKey == noteDraftPendingKey
+            ) {
+                scope.launch {
+                    val incomingExists = noteDraftPrefs.contains(noteDraftKey)
+                    val incoming = noteDraftPrefs.getString(noteDraftKey, "").orEmpty()
+                    val incomingRevision = noteDraftPrefs.getLong(noteDraftUpdatedAtKey, 0L)
+                    val localQueuePending = noteDraftPrefs.getBoolean(noteDraftPendingKey, false)
+                    if (needsCloudSave && !localQueuePending && incomingExists &&
+                        incoming == notes && incomingRevision >= noteRevision
+                    ) {
+                        noteRevision = incomingRevision
+                        needsCloudSave = false
+                        noteSaveStatus = if (incoming.isBlank()) "" else "Saved locally - cloud sync queued"
+                    } else if (!needsCloudSave && !incomingExists) {
+                        // A cloud tombstone (or workspace reset) removes the draft keys.
+                        // Clear the open editor too, without turning that deletion into a new cloud write.
+                        notes = ""
+                        noteRevision = 0L
+                        noteSaveStatus = ""
+                    } else if (!needsCloudSave && incomingRevision >= noteRevision &&
+                        (incomingRevision > noteRevision || incoming != notes)
+                    ) {
+                        notes = incoming
+                        noteRevision = incomingRevision
+                        noteSaveStatus = if (incoming.isBlank()) "" else "Updated from another device"
+                    }
+                }
+            }
+        }
+        noteDraftPrefs.registerOnSharedPreferenceChangeListener(listener)
+        onDispose { noteDraftPrefs.unregisterOnSharedPreferenceChangeListener(listener) }
     }
     var eggs by rememberSaveable(hive.id, formStateKey, lastInspection?.id) {
         mutableDoubleStateOf(normalizeBroodStoresGauge(formDraft?.eggs ?: (if (rememberLastInspectionValues) lastInspection?.eggs else null) ?: 0.0))
@@ -640,15 +744,28 @@ internal fun InspectionScreen(
     val voiceBlocked by rememberUpdatedState(saving)
     val appendRecognizedSpeech by rememberUpdatedState<(String) -> Unit>({ spokenText ->
         val cleanSpokenText = spokenText.trim()
-        if (cleanSpokenText.isNotBlank()) {
+        if (cleanSpokenText.isNotBlank() && isReadOnlyWorkspace) {
+            voiceStatus = "View-only workspace • notes cannot be edited"
+            noteSaveStatus = "View-only workspace"
+        } else if (cleanSpokenText.isNotBlank()) {
             val recordedAt = System.currentTimeMillis()
             val datedSpokenText = "${inspectionNoteDatePrefix(recordedAt)}$cleanSpokenText"
             val updatedNotes = if (latestNotes.isBlank()) datedSpokenText else "${latestNotes.trimEnd()}\n$datedSpokenText"
             notes = updatedNotes
+            val nextRevision = maxOf(
+                System.currentTimeMillis(),
+                noteRevision + 1L,
+                noteDraftPrefs.getLong(noteDraftUpdatedAtKey, 0L) + 1L
+            )
+            noteRevision = nextRevision
+            needsCloudSave = !isReadOnlyWorkspace
             noteDraftPrefs.edit {
                 putString(noteDraftKey, updatedNotes)
+                putLong(noteDraftUpdatedAtKey, nextRevision)
+                putLong(noteDraftTimestampKey, recordedAt)
+                putBoolean(noteDraftPendingKey, true)
             }
-            noteSaveStatus = "Note auto-saved"
+            noteSaveStatus = if (isReadOnlyWorkspace) "View-only workspace" else "Saved locally"
             voicePartialText = ""
             voiceStatus = "Saved • continuing to listen"
         }
@@ -788,15 +905,38 @@ internal fun InspectionScreen(
         onDispose { voiceLifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
-    androidx.compose.runtime.LaunchedEffect(hive.id, notes) {
-        // Debounce edits so a longer note is stored when the user pauses typing.
+    androidx.compose.runtime.LaunchedEffect(
+        hive.id, noteDraftKey, notes, noteRevision, needsCloudSave, isReadOnlyWorkspace
+    ) {
         delay(400)
-        // Store blank too: it records an intentional manual clear rather than reviving old notes later.
+        val capturedRevision = noteRevision
+        val capturedNotes = notes
+        val recordedAt = noteDraftPrefs.getLong(noteDraftTimestampKey, 0L)
+            .takeIf { it > 0L && capturedNotes.isNotBlank() }
         noteDraftPrefs.edit {
-            putString(noteDraftKey, notes)
-            if (notes.isBlank()) remove(noteDraftTimestampKey)
+            putString(noteDraftKey, capturedNotes)
+            putLong(noteDraftUpdatedAtKey, capturedRevision)
+            if (needsCloudSave && !isReadOnlyWorkspace) putBoolean(noteDraftPendingKey, true)
+            if (recordedAt != null) putLong(noteDraftTimestampKey, recordedAt)
+            else remove(noteDraftTimestampKey)
         }
-        noteSaveStatus = if (notes.isBlank()) "" else "Note auto-saved"
+        if (needsCloudSave && !isReadOnlyWorkspace) {
+            try {
+                val queuedRevision = onSaveNoteDraft(hive.id, capturedNotes, recordedAt, capturedRevision)
+                if (noteRevision == capturedRevision) {
+                    noteRevision = queuedRevision
+                    needsCloudSave = false
+                    noteSaveStatus = "Saved locally - cloud sync queued"
+                }
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (_: Throwable) {
+                noteSaveStatus = "Saved locally - sync pending"
+                com.beekeep.app.cloud.CloudSyncScheduler.runNow(context)
+            }
+        } else if (capturedNotes.isNotBlank() && noteSaveStatus.isBlank()) {
+            noteSaveStatus = if (isReadOnlyWorkspace) "View-only workspace" else "Saved on device"
+        }
     }
 
     BackHandler { onBack() }
@@ -910,6 +1050,20 @@ internal fun InspectionScreen(
                                             try {
                                                 val saved = onSave(inspection)
                                                 if (saved) {
+                                                    // Flush the current note buffer before leaving the inspection screen.
+                                                    try {
+                                                        val revision = maxOf(
+                                                            System.currentTimeMillis(),
+                                                            noteRevision + 1L,
+                                                            noteDraftPrefs.getLong(noteDraftUpdatedAtKey, 0L) + 1L
+                                                        )
+                                                        val recordedAt = noteDraftPrefs.getLong(noteDraftTimestampKey, 0L)
+                                                            .takeIf { it > 0L && notes.isNotBlank() }
+                                                        noteRevision = onSaveNoteDraft(hive.id, notes.trim(), recordedAt, revision)
+                                                        needsCloudSave = false
+                                                    } catch (_: Exception) {
+                                                        noteSaveStatus = "Inspection saved - note sync pending"
+                                                    }
                                                     // Clear only after durable save succeeds; keep the independent note draft.
                                                     discardSavedFormDraftOnDispose.value = true
                                                     formDraftPrefs.edit { remove("hive_${hive.id}") }
@@ -979,19 +1133,31 @@ internal fun InspectionScreen(
                         OutlinedTextField(
                             value = notes,
                             onValueChange = {
-                                val updatedNotes = addDateToNewInspectionNoteLines(notes, it)
-                                notes = updatedNotes
-                                noteDraftPrefs.edit {
-                                    putString(noteDraftKey, updatedNotes)
-                                    if (updatedNotes.isBlank()) {
-                                        remove(noteDraftTimestampKey)
-                                    } else if (!noteDraftPrefs.contains(noteDraftTimestampKey)) {
-                                        putLong(noteDraftTimestampKey, System.currentTimeMillis())
+                                if (!isReadOnlyWorkspace) {
+                                    val updatedNotes = addDateToNewInspectionNoteLines(notes, it)
+                                    notes = updatedNotes
+                                    val nextRevision = maxOf(
+                                        System.currentTimeMillis(),
+                                        noteRevision + 1L,
+                                        noteDraftPrefs.getLong(noteDraftUpdatedAtKey, 0L) + 1L
+                                    )
+                                    noteRevision = nextRevision
+                                    needsCloudSave = true
+                                    noteDraftPrefs.edit {
+                                        putString(noteDraftKey, updatedNotes)
+                                        putLong(noteDraftUpdatedAtKey, nextRevision)
+                                        putBoolean(noteDraftPendingKey, true)
+                                        if (updatedNotes.isBlank()) {
+                                            remove(noteDraftTimestampKey)
+                                        } else if (!noteDraftPrefs.contains(noteDraftTimestampKey)) {
+                                            putLong(noteDraftTimestampKey, System.currentTimeMillis())
+                                        }
                                     }
+                                    noteSaveStatus = "Saving note..."
                                 }
-                                noteSaveStatus = if (updatedNotes.isBlank()) "" else "Saving note…"
                             },
                             modifier = Modifier.fillMaxWidth().height(124.dp),
+                            enabled = !isReadOnlyWorkspace,
                             label = { Text("What did you see?") }
                         )
                         if (noteSaveStatus.isNotBlank()) {

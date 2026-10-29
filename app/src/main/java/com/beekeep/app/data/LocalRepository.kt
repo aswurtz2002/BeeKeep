@@ -25,6 +25,7 @@ import kotlin.math.roundToInt
 class LocalHiveRepository(context: Context) {
     private val appContext = context.applicationContext
     private val prefs = appContext.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
+    private val inspectionNoteDraftPrefs = appContext.getSharedPreferences(INSPECTION_NOTE_DRAFTS, Context.MODE_PRIVATE)
     private val initialTeamWorkspaceId = prefs.getString("active_team_workspace_id", null)
         ?.trim()?.takeIf { it.isNotEmpty() }
     private val _activeWorkspaceId = MutableStateFlow(initialTeamWorkspaceId)
@@ -86,6 +87,21 @@ class LocalHiveRepository(context: Context) {
             val events = db.events().allForBackup()
             val assignments = db.nfcTagAssignments().allForBackup()
             val pendingOutbox = db.outbox().allPendingForReset()
+            val activeDraftWorkspaceId = _activeWorkspaceId.value
+            val draftScopePrefix = "${inspectionNoteDraftScope(activeDraftWorkspaceId)}_hive_"
+            val scopedDraftIds = inspectionNoteDraftPrefs.all.keys
+                .asSequence()
+                .filter { it.startsWith(draftScopePrefix) }
+                .mapNotNull { it.removePrefix(draftScopePrefix).toLongOrNull() }
+                .filter { it > 0L }
+                .toList()
+            val legacyPersonalDraftIds = if (activeDraftWorkspaceId == null) {
+                inspectionNoteDraftPrefs.all.keys.asSequence()
+                    .filter { it.startsWith("hive_") }
+                    .mapNotNull { it.removePrefix("hive_").toLongOrNull() }
+                    .filter { it > 0L }
+                    .toList()
+            } else emptyList()
 
             val resetAt = System.currentTimeMillis()
             val recordsToDelete = linkedSetOf<Pair<String, Long>>()
@@ -100,6 +116,9 @@ class LocalHiveRepository(context: Context) {
             // Convert queued writes to deletes too, including changes for records already
             // removed locally, so a pending upload can never recreate a wiped record.
             pendingOutbox.forEach { recordsToDelete.add(it.entityType to it.entityId) }
+            (scopedDraftIds + legacyPersonalDraftIds).distinct().forEach {
+                recordsToDelete.add("inspection_note_draft" to it)
+            }
 
             // Delete children before parent records to respect all Room foreign keys.
             db.events().clearAll()
@@ -114,9 +133,13 @@ class LocalHiveRepository(context: Context) {
             db.outbox().clearAll()
 
             recordsToDelete.forEach { (type, id) ->
+                val draftKey = inspectionNoteDraftKey(activeDraftWorkspaceId, id)
+                val tombstoneAt = if (type == "inspection_note_draft") {
+                    maxOf(resetAt, inspectionNoteDraftPrefs.getLong(inspectionNoteDraftUpdatedAtKey(draftKey), 0L) + 1L)
+                } else resetAt
                 val payload = JSONObject()
                     .put("id", id)
-                    .put("updated_at", resetAt)
+                    .put("updated_at", tombstoneAt)
                     .put("deleted", true)
                 db.outbox().enqueue(
                     SyncOutboxEntity(
@@ -125,10 +148,24 @@ class LocalHiveRepository(context: Context) {
                         entityId = id,
                         operation = "delete",
                         payload = payload.toString(),
-                        createdAt = resetAt
+                        createdAt = tombstoneAt
                     )
                 )
             }
+
+            val draftEditor = inspectionNoteDraftPrefs.edit()
+            (scopedDraftIds + legacyPersonalDraftIds).distinct().forEach { hiveId ->
+                val draftKey = inspectionNoteDraftKey(activeDraftWorkspaceId, hiveId)
+                draftEditor.remove(draftKey)
+                    .remove(inspectionNoteDraftRecordedAtKey(draftKey))
+                    .remove(inspectionNoteDraftUpdatedAtKey(draftKey))
+                    .remove(inspectionNoteDraftPendingKey(draftKey))
+                if (activeDraftWorkspaceId == null) {
+                    draftEditor.remove("hive_$hiveId")
+                        .remove("hive_${hiveId}_recorded_at")
+                }
+            }
+            draftEditor.apply()
         }
 
     }
@@ -463,9 +500,12 @@ class LocalHiveRepository(context: Context) {
         db.nfcTagAssignments().listForHiveForDelete(hiveId).forEach {
             enqueue("nfc_assignment", it.id, "delete", tombstone(it.id))
         }
+        // The live field-note buffer is a separate cloud document from saved inspections.
+        enqueue("inspection_note_draft", hiveId, "delete", tombstone(hiveId))
     }
 
     private suspend fun permanentlyDeleteHiveLocal(hiveId: Long) {
+        clearLocalInspectionNoteDraft(hiveId, System.currentTimeMillis())
         db.events().deleteForHive(hiveId)
         // inspections, feedings, treatments, harvests and NFC assignments cascade.
         db.hives().hardDelete(hiveId)
@@ -815,14 +855,104 @@ class LocalHiveRepository(context: Context) {
     }
 
 
+    suspend fun saveInspectionNoteDraft(
+        hiveId: Long,
+        notes: String,
+        recordedAt: Long?,
+        updatedAt: Long
+    ): Long = withContext(Dispatchers.IO) {
+        checkWritable()
+        require(hiveId > 0L) { "The inspection note draft has an invalid hive ID." }
+        require(updatedAt > 0L) { "The inspection note draft needs a valid update time." }
+
+        val workspaceId = _activeWorkspaceId.value
+        val key = inspectionNoteDraftKey(workspaceId, hiveId)
+        val updatedAtKey = inspectionNoteDraftUpdatedAtKey(key)
+        val previousUpdatedAt = inspectionNoteDraftPrefs.getLong(updatedAtKey, 0L)
+        // Ensure a local edit wins over the draft snapshot it was based on, including when
+        // a different device's latest note arrived while this screen was still being edited.
+        val effectiveUpdatedAt = maxOf(updatedAt, System.currentTimeMillis(), previousUpdatedAt + 1L)
+        val safeRecordedAt = recordedAt?.takeIf { it > 0L && notes.isNotBlank() }
+        val pendingKey = inspectionNoteDraftPendingKey(key)
+        val editor = inspectionNoteDraftPrefs.edit()
+            .putString(key, notes)
+            .putLong(updatedAtKey, effectiveUpdatedAt)
+            .putBoolean(pendingKey, true)
+        if (safeRecordedAt != null) editor.putLong(inspectionNoteDraftRecordedAtKey(key), safeRecordedAt)
+        else editor.remove(inspectionNoteDraftRecordedAtKey(key))
+        editor.apply()
+
+        enqueue(
+            "inspection_note_draft",
+            hiveId,
+            "upsert",
+            inspectionNoteDraftPayload(hiveId, notes, safeRecordedAt, effectiveUpdatedAt)
+        )
+        inspectionNoteDraftPrefs.edit().putBoolean(pendingKey, false).apply()
+        effectiveUpdatedAt
+    }
+
+    /**
+     * Recover edits that were saved locally just before the inspection screen was closed or
+     * the process died, before its debounce could enqueue them. Called before each cloud pull.
+     */
+    suspend fun queuePendingInspectionNoteDrafts(): Int = withContext(Dispatchers.IO) {
+        if (_activeWorkspaceReadOnly.value) return@withContext 0
+        val prefix = "${inspectionNoteDraftScope(_activeWorkspaceId.value)}_hive_"
+        val hiveIds = inspectionNoteDraftPrefs.all.keys.asSequence()
+            .filter { it.startsWith(prefix) }
+            .mapNotNull { it.removePrefix(prefix).toLongOrNull() }
+            .filter { it > 0L }
+            .distinct()
+            .toList()
+        var queued = 0
+        for (hiveId in hiveIds) {
+            val key = inspectionNoteDraftKey(_activeWorkspaceId.value, hiveId)
+            val pendingKey = inspectionNoteDraftPendingKey(key)
+            if (!inspectionNoteDraftPrefs.getBoolean(pendingKey, false)) continue
+            val notes = inspectionNoteDraftPrefs.getString(key, "").orEmpty()
+            val updatedAtKey = inspectionNoteDraftUpdatedAtKey(key)
+            val localUpdatedAt = inspectionNoteDraftPrefs.getLong(updatedAtKey, 0L)
+            val effectiveUpdatedAt = maxOf(System.currentTimeMillis(), localUpdatedAt + 1L)
+            val recordedAt = inspectionNoteDraftPrefs.getLong(inspectionNoteDraftRecordedAtKey(key), 0L)
+                .takeIf { it > 0L && notes.isNotBlank() }
+            enqueue(
+                "inspection_note_draft",
+                hiveId,
+                "upsert",
+                inspectionNoteDraftPayload(hiveId, notes, recordedAt, effectiveUpdatedAt)
+            )
+            inspectionNoteDraftPrefs.edit()
+                .putLong(updatedAtKey, effectiveUpdatedAt)
+                .putBoolean(pendingKey, false)
+                .apply()
+            queued++
+        }
+        queued
+    }
+
     suspend fun pendingSync(limit: Int = 50): List<SyncOutboxEntity> = db.outbox().pending(limit)
     suspend fun markSyncDone(id: Long) = db.outbox().setState(id, "done")
     suspend fun markSyncError(id: Long, message: String) = db.outbox().setState(id, "pending", message.take(500))
     suspend fun pruneSync() = db.outbox().pruneDone(System.currentTimeMillis() - 7 * 24 * 60 * 60 * 1000)
 
+    private fun clearLocalInspectionNoteDraft(hiveId: Long, deletedAt: Long) {
+        val workspaceId = _activeWorkspaceId.value
+        val key = inspectionNoteDraftKey(workspaceId, hiveId)
+        val previousUpdatedAt = inspectionNoteDraftPrefs.getLong(inspectionNoteDraftUpdatedAtKey(key), 0L)
+        if (deletedAt < previousUpdatedAt) return
+        inspectionNoteDraftPrefs.edit()
+            .remove(key)
+            .remove(inspectionNoteDraftRecordedAtKey(key))
+            .remove(inspectionNoteDraftUpdatedAtKey(key))
+            .remove(inspectionNoteDraftPendingKey(key))
+            .apply()
+    }
+
     suspend fun applyCloudDocument(doc: CloudDocumentRow) = withContext(Dispatchers.IO) {
         if (doc.deleted) {
             when (doc.entity_type) {
+                "inspection_note_draft" -> clearLocalInspectionNoteDraft(doc.entity_id, doc.updated_at)
                 "apiary" -> db.apiaries().get(doc.entity_id)?.let {
                     // A newer cloud tombstone removes the row locally as well, freeing
                     // the apiary name and ensuring the map pin disappears on this device.
@@ -860,6 +990,26 @@ class LocalHiveRepository(context: Context) {
         }
         val json = runCatching { JSONObject(doc.payload) }.getOrNull() ?: return@withContext
         when (doc.entity_type) {
+            "inspection_note_draft" -> {
+                val workspaceId = _activeWorkspaceId.value
+                val key = inspectionNoteDraftKey(workspaceId, doc.entity_id)
+                val incomingUpdatedAt = json.optLong("updated_at", doc.updated_at)
+                val localUpdatedAt = inspectionNoteDraftPrefs.getLong(inspectionNoteDraftUpdatedAtKey(key), 0L)
+                // A local edit may already be persisted but not yet in the Room outbox.
+                // Preserve it until the pre-sync recovery path queues it.
+                if (inspectionNoteDraftPrefs.getBoolean(inspectionNoteDraftPendingKey(key), false)) return@withContext
+                if (!shouldApplyInspectionNoteDraft(incomingUpdatedAt, localUpdatedAt)) return@withContext
+
+                val notes = json.optString("notes", "")
+                val recordedAt = json.longOrNull("recorded_at")?.takeIf { it > 0L && notes.isNotBlank() }
+                val editor = inspectionNoteDraftPrefs.edit()
+                    .putString(key, notes)
+                    .putLong(inspectionNoteDraftUpdatedAtKey(key), incomingUpdatedAt)
+                    .putBoolean(inspectionNoteDraftPendingKey(key), false)
+                if (recordedAt != null) editor.putLong(inspectionNoteDraftRecordedAtKey(key), recordedAt)
+                else editor.remove(inspectionNoteDraftRecordedAtKey(key))
+                editor.apply()
+            }
             "apiary" -> {
                 val existing = db.apiaries().get(doc.entity_id)
                 val incomingUpdatedAt = json.optLong("updated_at", doc.updated_at)
