@@ -103,11 +103,28 @@ class LocalHiveRepository(context: Context) {
                     .filter { it > 0L }
                     .toList()
             } else emptyList()
+            val formDraftScopePrefix = InspectionFormDraftStore.keyPrefix(activeDraftWorkspaceId)
+            val scopedFormDraftIds = inspectionFormDraftPrefs.all.keys.asSequence()
+                .filter { it.startsWith(formDraftScopePrefix) }
+                .mapNotNull { it.removePrefix(formDraftScopePrefix).toLongOrNull() }
+                .filter { it > 0L }
+                .toList()
+            val legacyPersonalFormDraftIds = if (activeDraftWorkspaceId == null) {
+                inspectionFormDraftPrefs.all.keys.asSequence()
+                    .filter { it.startsWith("hive_") }
+                    .mapNotNull { it.removePrefix("hive_").toLongOrNull() }
+                    .filter { it > 0L }
+                    .toList()
+            } else emptyList()
 
             val resetAt = System.currentTimeMillis()
             val recordsToDelete = linkedSetOf<Pair<String, Long>>()
             apiaries.forEach { recordsToDelete.add("apiary" to it.id) }
-            hives.forEach { recordsToDelete.add("hive" to it.id) }
+            hives.forEach {
+                recordsToDelete.add("hive" to it.id)
+                // Also remove unfinished inspection state on every synced device.
+                recordsToDelete.add("inspection_form_draft" to it.id)
+            }
             inspections.forEach { recordsToDelete.add("inspection" to it.id) }
             feedings.forEach { recordsToDelete.add("feeding" to it.id) }
             treatments.forEach { recordsToDelete.add("treatment" to it.id) }
@@ -119,6 +136,9 @@ class LocalHiveRepository(context: Context) {
             pendingOutbox.forEach { recordsToDelete.add(it.entityType to it.entityId) }
             (scopedDraftIds + legacyPersonalDraftIds).distinct().forEach {
                 recordsToDelete.add("inspection_note_draft" to it)
+            }
+            (scopedFormDraftIds + legacyPersonalFormDraftIds).distinct().forEach {
+                recordsToDelete.add("inspection_form_draft" to it)
             }
 
             // Delete children before parent records to respect all Room foreign keys.
@@ -135,11 +155,21 @@ class LocalHiveRepository(context: Context) {
 
             recordsToDelete.forEach { (type, id) ->
                 val draftKey = inspectionNoteDraftKey(activeDraftWorkspaceId, id)
-                val tombstoneAt = if (type == "inspection_note_draft") {
-                    maxOf(resetAt, inspectionNoteDraftPrefs.getLong(inspectionNoteDraftUpdatedAtKey(draftKey), 0L) + 1L)
-                } else resetAt
+                val tombstoneAt = when (type) {
+                    "inspection_note_draft" -> maxOf(
+                        resetAt, inspectionNoteDraftPrefs.getLong(inspectionNoteDraftUpdatedAtKey(draftKey), 0L) + 1L
+                    )
+                    "inspection_form_draft" -> maxOf(
+                        resetAt,
+                        InspectionFormDraftStore.updatedAt(
+                            InspectionFormDraftStore.readRaw(inspectionFormDraftPrefs, activeDraftWorkspaceId, id)
+                        ) + 1L
+                    )
+                    else -> resetAt
+                }
                 val payload = JSONObject()
                     .put("id", id)
+                    .put("hive_id", if (type == "inspection_form_draft") id else JSONObject.NULL)
                     .put("updated_at", tombstoneAt)
                     .put("deleted", true)
                 db.outbox().enqueue(
@@ -153,6 +183,14 @@ class LocalHiveRepository(context: Context) {
                     )
                 )
             }
+
+            val formDraftEditor = inspectionFormDraftPrefs.edit()
+            (scopedFormDraftIds + legacyPersonalFormDraftIds + hives.map { it.id }).distinct().forEach { hiveId ->
+                val key = InspectionFormDraftStore.key(activeDraftWorkspaceId, hiveId)
+                formDraftEditor.remove(key).remove(InspectionFormDraftStore.pendingKey(key))
+                if (activeDraftWorkspaceId == null) formDraftEditor.remove(InspectionFormDraftStore.legacyKey(hiveId))
+            }
+            formDraftEditor.apply()
 
             val draftEditor = inspectionNoteDraftPrefs.edit()
             (scopedDraftIds + legacyPersonalDraftIds).distinct().forEach { hiveId ->
