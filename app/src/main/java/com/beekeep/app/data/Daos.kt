@@ -4,6 +4,7 @@ import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
+import androidx.room.Upsert
 import kotlinx.coroutines.flow.Flow
 
 @Dao
@@ -16,7 +17,9 @@ interface ApiaryDao {
     suspend fun get(id: Long): ApiaryEntity?
     @Query("SELECT * FROM apiaries WHERE name = :name COLLATE NOCASE LIMIT 1")
     suspend fun byName(name: String): ApiaryEntity?
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    // Use UPDATE-then-INSERT instead of REPLACE: replacing a parent row fires
+    // ON DELETE SET NULL for every hive currently linked to this apiary.
+    @Upsert
     suspend fun upsert(entity: ApiaryEntity)
     @Query("DELETE FROM apiaries WHERE id = :id")
     suspend fun hardDelete(id: Long)
@@ -50,7 +53,10 @@ interface HiveDao {
     suspend fun clearAll()
     @Query("UPDATE hives SET tag_uid = (SELECT tag_uid FROM nfc_tag_assignments WHERE hive_id = :hiveId AND unassigned_at IS NULL ORDER BY assigned_at DESC, id DESC LIMIT 1) WHERE id = :hiveId")
     suspend fun refreshTagCache(hiveId: Long)
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    // REPLACE deletes then reinserts the hive row, which fires ON DELETE CASCADE
+    // and can silently erase its inspections, feeding, treatments, harvests, events,
+    // and NFC assignment history during a cloud profile refresh.
+    @Upsert
     suspend fun upsert(entity: HiveEntity)
 }
 
