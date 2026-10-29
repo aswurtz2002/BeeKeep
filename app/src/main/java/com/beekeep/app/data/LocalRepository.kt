@@ -1160,7 +1160,8 @@ class LocalHiveRepository(context: Context) {
                     queenMarkColor = json.optString("queen_mark_color"), queenOrigin = json.optString("queen_origin"),
                     queenAgeMonths = json.intOrNull("queen_age_months"), queenTemperament = json.optInt("queen_temperament", 3).coerceIn(1, 5),
                     strength = json.optInt("strength", 0).coerceIn(0, 10), mitePercent = json.optDouble("mite_percent", 0.0).coerceAtLeast(0.0),
-                    tagUid = existing?.tagUid, updatedAt = incomingUpdatedAt,
+                    tagUid = existing?.tagUid ?: json.stringOrNull("tag_uid")?.let(NfcUid::normalize),
+                    updatedAt = incomingUpdatedAt,
                     deleted = existing?.deleted ?: json.optBoolean("deleted", false),
                     status = status,
                     deadAt = if (lifecycleWins) json.longOrNull("dead_at") else existing.deadAt,
@@ -1171,29 +1172,10 @@ class LocalHiveRepository(context: Context) {
                         (it * 2.0).roundToInt().coerceIn(1, 20) / 2.0
                     } ?: existing?.beeCountFrames
                 ))
-                // Older BeeKeep builds stored the tag on the hive document. Adopt it
-                // into the assignment ledger so mixed-version fleets still resolve scans.
-                val remoteTag = json.stringOrNull("tag_uid")?.let(NfcUid::normalize)
-                if (remoteTag != null && status == HiveStatus.ACTIVE) {
-                    // Hive.tag_uid is a legacy cache, not the assignment authority. Import
-                    // it only when neither this hive nor this physical UID has any ledger
-                    // history. Otherwise a stale hive document (updated later for an
-                    // unrelated edit) could reclaim a released tag during cloud sync.
-                    val hiveHasLedgerHistory = db.nfcTagAssignments().allAssignmentsForHive(doc.entity_id).isNotEmpty()
-                    val uidHasLedgerHistory = db.nfcTagAssignments().allForBackup()
-                        .any { NfcUid.matches(it.tagUid, remoteTag) }
-                    if (!hiveHasLedgerHistory && !uidHasLedgerHistory) {
-                        applyAssignment(
-                            NfcTagAssignmentEntity(
-                                IdGenerator.nextLong(),
-                                remoteTag,
-                                doc.entity_id,
-                                incomingUpdatedAt
-                            ),
-                            publishIncomingIfNew = true
-                        )
-                    }
-                }
+                // Older builds stored the physical UID only in hives.tag_uid. Preserve
+                // that cache for truly legacy IDs, but do not synthesize a new active ledger row
+                // while syncing the hive: its canonical assignment (including a release
+                // tombstone) may still be waiting later in this same cloud batch.
                 if (status != HiveStatus.ACTIVE || json.optBoolean("deleted", false)) {
                     // Older app versions can sync a lifecycle change without closing NFC
                     // rows. Close every active assignment here too; otherwise a dead hive
@@ -1205,9 +1187,19 @@ class LocalHiveRepository(context: Context) {
                         enqueue("nfc_assignment", closed.id, "upsert", nfcAssignmentPayload(closed))
                     }
                 }
-                // The assignment ledger is the source of truth. Hydrating or refreshing its
-                // local tag_uid cache must never publish a whole hive-profile snapshot.
-                db.hives().refreshTagCache(doc.entity_id)
+                // Refresh the derived cache whenever this hive or its cached UID has ledger
+                // history. Otherwise retain the tag cache as a legacy fallback until a tag
+                // is explicitly assigned or released.
+                val remoteTagUid = json.stringOrNull("tag_uid")?.let(NfcUid::normalize)
+                val hiveHasLedgerHistory = db.nfcTagAssignments()
+                    .allAssignmentsForHive(doc.entity_id).isNotEmpty()
+                val uidHasLedgerHistory = remoteTagUid != null &&
+                    db.nfcTagAssignments().allAssignmentsForTag(remoteTagUid).isNotEmpty()
+                if (hiveHasLedgerHistory || uidHasLedgerHistory ||
+                    status != HiveStatus.ACTIVE || json.optBoolean("deleted", false)
+                ) {
+                    db.hives().refreshTagCache(doc.entity_id)
+                }
             }
             "nfc_assignment" -> {
                 val incoming = NfcTagAssignmentEntity(
