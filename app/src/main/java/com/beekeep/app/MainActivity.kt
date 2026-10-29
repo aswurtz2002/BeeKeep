@@ -224,7 +224,11 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
         cloud.handleAuthDeepLink(intent)
         CloudSyncScheduler.schedule(applicationContext)
         val vm = ViewModelProvider(this, BeeKeepViewModel.Factory(repository, applicationContext))[BeeKeepViewModel::class.java]
-        lifecycleScope.launch { cloud.syncNow() }
+        lifecycleScope.launch {
+            // syncNow waits for auth initialization; start live updates only once a
+            // valid cloud session has been confirmed.
+            if (cloud.syncNow() is CloudResult.Success) cloud.startRealtime()
+        }
         val prefs = getSharedPreferences(PREFS, MODE_PRIVATE)
         setContent {
             var darkMode by rememberSaveable { mutableStateOf(prefs.getBoolean("dark_mode", false)) }
@@ -3411,7 +3415,11 @@ private fun MoreScreen(
                                 scope.launch {
                                     authMessage = ""
                                     when (val result = cloud.signIn(email, password)) {
-                                        CloudResult.Success -> { authMessage = "Signed in. Syncing…"; CloudSyncScheduler.runNow(context) }
+                                        CloudResult.Success -> {
+                                            authMessage = "Signed in. Syncing…"
+                                            cloud.startRealtime()
+                                            CloudSyncScheduler.runNow(context)
+                                        }
                                         CloudResult.NotConfigured -> authMessage = "Cloud is not configured."
                                         CloudResult.NotSignedIn -> authMessage = "Please sign in."
                                         is CloudResult.Failure -> authMessage = result.message
@@ -3433,7 +3441,11 @@ private fun MoreScreen(
                                         authMessage = "That username is already taken. Please choose another."
                                     } else {
                                         when (val result = cloud.signUp(email, password, username.trim())) {
-                                            CloudResult.Success -> { authMessage = "Account created. Check your email if verification is required."; CloudSyncScheduler.runNow(context) }
+                                            CloudResult.Success -> {
+                                                authMessage = "Account created. Check your email if verification is required."
+                                                cloud.startRealtime()
+                                                CloudSyncScheduler.runNow(context)
+                                            }
                                             CloudResult.NotConfigured -> authMessage = "Cloud is not configured."
                                             CloudResult.NotSignedIn -> authMessage = "Account created but not signed in yet."
                                             is CloudResult.Failure -> authMessage = result.message
