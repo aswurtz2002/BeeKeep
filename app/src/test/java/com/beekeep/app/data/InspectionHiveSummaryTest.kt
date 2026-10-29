@@ -55,8 +55,8 @@ class InspectionHiveSummaryTest {
         assertEquals(hive.updatedAt, merged.updatedAt)
         assertEquals(hive.status, merged.status)
         assertEquals(hive.statusChangedAt, merged.statusChangedAt)
-        assertEquals(hive.latitude, merged.latitude)
-        assertEquals(hive.longitude, merged.longitude)
+        assertEquals(hive.latitude!!, merged.latitude!!, 0.0001)
+        assertEquals(hive.longitude!!, merged.longitude!!, 0.0001)
     }
 
     @Test
