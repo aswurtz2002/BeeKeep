@@ -76,7 +76,6 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.beekeep.app.data.IdGenerator
-import com.beekeep.app.data.INSPECTION_NOTE_DRAFTS
 import com.beekeep.app.data.InspectionNoteDraftUpdate
 import com.beekeep.app.data.inspectionNoteDraftKey
 import com.beekeep.app.data.inspectionNoteDraftRecordedAtKey
@@ -110,6 +109,8 @@ import java.util.Date
 import java.util.Locale
 import kotlin.math.roundToInt
 import org.json.JSONObject
+
+internal const val INSPECTION_NOTE_DRAFTS = "beekeep_inspection_note_drafts"
 
 private fun normalizeBroodStoresGauge(value: Double): Double =
     (value.coerceIn(0.0, 10.0) * 2.0).roundToInt() / 2.0
