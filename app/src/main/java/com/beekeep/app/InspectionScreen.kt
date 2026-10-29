@@ -702,6 +702,14 @@ internal fun InspectionScreen(
         longitude = lon,
         beeCountHalfSteps = beeCountHalfSteps
     )
+    // A form opened with no user edits must not publish default fields over another
+    // device's unfinished draft. The baseline resets only when a new remote draft revision
+    // is loaded; user changes leave this baseline in place and become syncable edits.
+    val inspectionFormBaseline = remember(hive.id, cleanDraftWorkspaceId, formStateKey) {
+        currentFormDraft
+    }
+    val hasInspectionFormEdits = currentFormDraft != inspectionFormBaseline
+    val latestHasInspectionFormEdits = rememberUpdatedState(hasInspectionFormEdits)
     // Keep a separate latest-draft state per hive. A single rememberUpdatedState
     // here was shared while the screen stayed open during NFC cycling, allowing the
     // next hive's values to be written under the previous hive's key on disposal.
@@ -714,7 +722,7 @@ internal fun InspectionScreen(
         hive.id, cleanDraftWorkspaceId, isReadOnlyWorkspace, strength, beeCountHalfSteps, queen, mites, sample, eggs, openBrood, cappedBrood,
         honey, pollen, emptyComb, emergency, supercedure, swarm, diseasesCsv, lat, lon
     ) {
-        if (isReadOnlyWorkspace || discardSavedFormDraftOnDispose.value) return@LaunchedEffect
+        if (isReadOnlyWorkspace || discardSavedFormDraftOnDispose.value || !hasInspectionFormEdits) return@LaunchedEffect
         val changed = saveInspectionFormDraft(formDraftPrefs, cleanDraftWorkspaceId, hive.id, currentFormDraft)
         if (changed) {
             delay(600)
@@ -734,6 +742,7 @@ internal fun InspectionScreen(
         val hiveIdForDraft = hive.id
         val formDraftForThisHive = latestFormDraft
         val finalizeThisHiveBeeCount = latestFinalizeBeeCountHistory
+        val formDraftEditsForThisHive = latestHasInspectionFormEdits
         val historyStartKeyForThisHive = beeCountHistoryStartKey
         val legacyHistoryStartKeyForThisHive = legacyBeeCountHistoryStartKey
         onDispose {
@@ -742,7 +751,7 @@ internal fun InspectionScreen(
                     remove(historyStartKeyForThisHive)
                     if (cleanDraftWorkspaceId == null) remove(legacyHistoryStartKeyForThisHive)
                 }
-            } else if (!isReadOnlyWorkspace) {
+            } else if (!isReadOnlyWorkspace && formDraftEditsForThisHive.value) {
                 if (saveInspectionFormDraft(formDraftPrefs, cleanDraftWorkspaceId, hiveIdForDraft, formDraftForThisHive.value)) {
                     com.beekeep.app.cloud.CloudSyncScheduler.runNow(context)
                 }
