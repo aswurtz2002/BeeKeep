@@ -169,9 +169,9 @@ class LocalHiveRepository(context: Context) {
                 }
                 val payload = JSONObject()
                     .put("id", id)
-                    .put("hive_id", if (type == "inspection_form_draft") id else JSONObject.NULL)
                     .put("updated_at", tombstoneAt)
                     .put("deleted", true)
+                if (type == "inspection_form_draft") payload.put("hive_id", id)
                 db.outbox().enqueue(
                     SyncOutboxEntity(
                         id = IdGenerator.nextLong(),
@@ -540,7 +540,15 @@ class LocalHiveRepository(context: Context) {
             enqueue("nfc_assignment", it.id, "delete", tombstone(it.id))
         }
         // In-progress inspection fields and the live field-note buffer are separate cloud documents.
-        enqueue("inspection_form_draft", hiveId, "delete", tombstone(hiveId))
+        InspectionFormDraftStore.markDeleted(inspectionFormDraftPrefs, _activeWorkspaceId.value, hiveId)
+        val formDraftKey = InspectionFormDraftStore.key(_activeWorkspaceId.value, hiveId)
+        val formDraftTombstone = InspectionFormDraftStore.readRaw(
+            inspectionFormDraftPrefs, _activeWorkspaceId.value, hiveId
+        ) ?: tombstone(hiveId)
+        enqueue("inspection_form_draft", hiveId, "delete", formDraftTombstone)
+        inspectionFormDraftPrefs.edit()
+            .putBoolean(InspectionFormDraftStore.pendingKey(formDraftKey), false)
+            .apply()
         enqueue("inspection_note_draft", hiveId, "delete", tombstone(hiveId))
     }
 
@@ -1002,7 +1010,7 @@ class LocalHiveRepository(context: Context) {
             val payload = runCatching { JSONObject(raw) }.getOrNull() ?: continue
             val updatedAt = InspectionFormDraftStore.updatedAt(raw)
             if (updatedAt <= 0L) continue
-            payload.put("id", hiveId).put("hive_id", hiveId).put("updated_at", updatedAt)
+            payload.put("id", hiveId).put("hive_id", hiveId).put("updated_at", updatedAt).put("updatedAt", updatedAt)
             val operation = if (payload.optBoolean("deleted", false)) "delete" else "upsert"
             enqueue("inspection_form_draft", hiveId, operation, payload.toString())
             inspectionFormDraftPrefs.edit()
@@ -1041,9 +1049,7 @@ class LocalHiveRepository(context: Context) {
         if (doc.deleted) {
             when (doc.entity_type) {
                 "inspection_note_draft" -> clearLocalInspectionNoteDraft(doc.entity_id, doc.updated_at)
-                "inspection_form_draft" -> InspectionFormDraftStore.clearRemote(
-                    inspectionFormDraftPrefs, _activeWorkspaceId.value, doc.entity_id, doc.updated_at
-                )
+                "inspection_form_draft" -> clearLocalInspectionFormDraft(doc.entity_id, doc.updated_at)
                 "apiary" -> db.apiaries().get(doc.entity_id)?.let {
                     // A newer cloud tombstone removes the row locally as well, freeing
                     // the apiary name and ensuring the map pin disappears on this device.
