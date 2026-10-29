@@ -197,7 +197,9 @@ class SupabaseGateway(
         }
     }
 
-    suspend fun signOut(): CloudResult = try {
+    suspend fun signOut(): CloudResult = syncMutex.withLock { signOutUnlocked() }
+
+    private suspend fun signOutUnlocked(): CloudResult = try {
         val supabase = client ?: return CloudResult.NotConfigured
         stopRealtime()
         // Never leave another account viewing the previously selected team's local cache.
@@ -418,23 +420,25 @@ class SupabaseGateway(
         return documents
     }
 
-    suspend fun syncNow(): CloudResult = syncMutex.withLock {
-        if (!configured || client == null) return@withLock CloudResult.NotConfigured
+    suspend fun syncNow(): CloudResult = syncMutex.withLock { syncNowUnlocked() }
+
+    private suspend fun syncNowUnlocked(): CloudResult {
+        if (!configured || client == null) return CloudResult.NotConfigured
         try {
             client.auth.awaitInitialization()
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (error: Throwable) {
             _account.value = _account.value.copy(syncing = false, error = error.message ?: "Could not restore your cloud session")
-            return@withLock CloudResult.Failure(error.message ?: "Could not restore your cloud session")
+            return CloudResult.Failure(error.message ?: "Could not restore your cloud session")
         }
         val session = client.auth.currentSessionOrNull() ?: run {
             refreshAccount()
-            return@withLock CloudResult.NotSignedIn
+            return CloudResult.NotSignedIn
         }
         val userId = session.user?.id ?: run {
             _account.value = _account.value.copy(syncing = false, signedIn = false, error = "Your cloud session has no user ID. Sign in again.")
-            return@withLock CloudResult.NotSignedIn
+            return CloudResult.NotSignedIn
         }
         refreshVerifiedPlanForUser(userId)
         refreshHiveLimitOverrideForUser(userId)
@@ -449,7 +453,7 @@ class SupabaseGateway(
         }
         _account.value = _account.value.copy(syncing = true, error = null)
         if (activeTeamWorkspaceId.isNotEmpty()) {
-            return@withLock syncSharedWorkspace(activeTeamWorkspaceId, userId, session.user?.email.orEmpty())
+            return syncSharedWorkspace(activeTeamWorkspaceId, userId, session.user?.email.orEmpty())
         }
         try {
 
@@ -515,13 +519,13 @@ class SupabaseGateway(
      * team workspace. Private sync must finish first. The server copy is atomic and refuses key
      * collisions, so an existing team record can never be silently overwritten.
      */
-    suspend fun copyPersonalRecordsToWorkspace(workspaceId: String): WorkspaceOperationResult<Int> {
+    suspend fun copyPersonalRecordsToWorkspace(workspaceId: String): WorkspaceOperationResult<Int> = syncMutex.withLock {
         val supabase = client
         if (!configured || supabase == null) {
-            return WorkspaceOperationResult(error = "BeeKeep Cloud is not configured.")
+            return@withLock WorkspaceOperationResult(error = "BeeKeep Cloud is not configured.")
         }
         val cleanId = workspaceId.trim()
-        if (cleanId.isBlank()) return WorkspaceOperationResult(error = "Choose a team workspace first.")
+        if (cleanId.isBlank()) return@withLock WorkspaceOperationResult(error = "Choose a team workspace first.")
 
         val prefs = appContext.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
         val previousWorkspaceId = prefs.getString("active_team_workspace_id", "")
@@ -533,13 +537,13 @@ class SupabaseGateway(
         try {
             supabase.auth.awaitInitialization()
             val session = supabase.auth.currentSessionOrNull()
-                ?: return WorkspaceOperationResult(error = "Sign in before copying personal records.")
+                ?: return@withLock WorkspaceOperationResult(error = "Sign in before copying personal records.")
             val available = supabase.postgrest.rpc("beekeep_list_workspaces")
                 .decodeList<BeeKeepWorkspace>()
             val target = available.firstOrNull { it.id == cleanId && !it.is_personal }
-                ?: return WorkspaceOperationResult(error = "You no longer have access to that team workspace.")
+                ?: return@withLock WorkspaceOperationResult(error = "You no longer have access to that team workspace.")
             if (target.member_role !in setOf("owner", "admin")) {
-                return WorkspaceOperationResult(error = "Only a workspace owner or admin can copy personal records into a team.")
+                return@withLock WorkspaceOperationResult(error = "Only a workspace owner or admin can copy personal records into a team.")
             }
 
             val previousRole = previousWorkspaceId?.let { oldId ->
@@ -554,21 +558,21 @@ class SupabaseGateway(
 
             // Flush private/offline edits before asking the server to copy the private cloud rows.
             repository.switchWorkspace(null)
-            when (val privateSync = syncNow()) {
+            when (val privateSync = syncNowUnlocked()) {
                 CloudResult.Success -> Unit
                 is CloudResult.Failure -> {
                     restorePreviousWorkspace()
-                    return WorkspaceOperationResult(
+                    return@withLock WorkspaceOperationResult(
                         error = "Personal records were not copied because private sync failed: ${privateSync.message}"
                     )
                 }
                 CloudResult.NotConfigured -> {
                     restorePreviousWorkspace()
-                    return WorkspaceOperationResult(error = "BeeKeep Cloud is not configured.")
+                    return@withLock WorkspaceOperationResult(error = "BeeKeep Cloud is not configured.")
                 }
                 CloudResult.NotSignedIn -> {
                     restorePreviousWorkspace()
-                    return WorkspaceOperationResult(error = "Sign in before copying personal records.")
+                    return@withLock WorkspaceOperationResult(error = "Sign in before copying personal records.")
                 }
             }
 
@@ -582,7 +586,7 @@ class SupabaseGateway(
 
             // Make the imported team dataset the active local dataset and pull the server's result.
             repository.switchWorkspace(cleanId, readOnly = false)
-            val teamSync = syncNow()
+            val teamSync = syncNowUnlocked()
             return when (teamSync) {
                 CloudResult.Success -> WorkspaceOperationResult(value = copy.copied_count)
                 is CloudResult.Failure -> WorkspaceOperationResult(
@@ -609,7 +613,7 @@ class SupabaseGateway(
                     )
                 }
             }
-            return WorkspaceOperationResult(
+            return@withLock WorkspaceOperationResult(
                 value = copiedCount,
                 error = error.message?.takeIf { it.isNotBlank() }
                     ?: if (copyCompleted) "Records were copied, but team setup did not finish." else "Could not copy personal records to the team."
@@ -621,16 +625,16 @@ class SupabaseGateway(
      * Switches the app's active dataset to a team workspace or back to the user's personal data.
      * The repository stores team data in a separate Room file before the first team pull.
      */
-    suspend fun activateWorkspace(workspaceId: String?): WorkspaceOperationResult<Unit> {
+    suspend fun activateWorkspace(workspaceId: String?): WorkspaceOperationResult<Unit> = syncMutex.withLock {
         val supabase = client
         if (!configured || supabase == null) {
-            return WorkspaceOperationResult(error = "BeeKeep Cloud is not configured.")
+            return@withLock WorkspaceOperationResult(error = "BeeKeep Cloud is not configured.")
         }
         return try {
             supabase.auth.awaitInitialization()
             if (supabase.auth.currentSessionOrNull() == null) {
                 refreshAccount()
-                return WorkspaceOperationResult(error = "Sign in before switching workspaces.")
+                return@withLock WorkspaceOperationResult(error = "Sign in before switching workspaces.")
             }
             val cleanId = workspaceId?.trim()?.takeIf { it.isNotEmpty() }
             val workspace = if (cleanId == null) null else {
@@ -643,7 +647,7 @@ class SupabaseGateway(
                 workspaceId = cleanId,
                 readOnly = workspace?.member_role == "viewer"
             )
-            val syncResult = syncNow()
+            val syncResult = syncNowUnlocked()
             if (syncResult is CloudResult.Failure) {
                 WorkspaceOperationResult(
                     value = Unit,
@@ -1100,9 +1104,13 @@ class SupabaseGateway(
             client?.auth?.awaitInitialization()
             // Authentication can replace the signed-in account. Return to private/local data
             // before that transition so a cached team dataset is not displayed to the next account.
-            repository.switchWorkspace(null)
-            block()
-            refreshAccount()
+            // Serialize account transitions with sync so a background worker cannot
+            // keep applying documents while the active database is being changed.
+            syncMutex.withLock {
+                repository.switchWorkspace(null)
+                block()
+                refreshAccount()
+            }
             val workspaceToRestore = restoreWorkspaceId?.trim()?.takeIf { it.isNotEmpty() }
             if (_account.value.signedIn && workspaceToRestore != null) {
                 // Authentication first switches to private data for account isolation. Restore
