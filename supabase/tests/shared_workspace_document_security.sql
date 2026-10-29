@@ -43,6 +43,17 @@ values (
     '00000000-0000-0000-0000-000000000001'
 );
 
+-- An unfinished inspection note is a separate shared document and must follow the same RLS rules.
+insert into public.beekeep_workspace_documents (
+    workspace_id, entity_type, entity_id, payload, updated_at, deleted, device_id, updated_by
+)
+values (
+    (select value::uuid from stage3_workspace_document_context where key = 'workspace_id'),
+    'inspection_note_draft', 7001,
+    '{"id":7001,"hive_id":7001,"notes":"Unfinished field notes","recorded_at":1000,"updated_at":1000}',
+    1000, false, 'sql-test-device', '00000000-0000-0000-0000-000000000001'
+);
+
 select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-000000000002', false);
 do $member_assertions$
 declare visible_count integer;
@@ -53,6 +64,14 @@ begin
     if visible_count <> 1 then
         raise exception 'Workspace member could not read shared hive record';
     end if;
+
+    select count(*) into visible_count from public.beekeep_workspace_documents
+    where workspace_id = (select value::uuid from stage3_workspace_document_context where key = 'workspace_id')
+      and entity_type = 'inspection_note_draft' and entity_id = 7001
+      and payload::jsonb ->> 'notes' = 'Unfinished field notes';
+    if visible_count <> 1 then
+        raise exception 'Workspace member could not read an unfinished inspection note';
+    end if;
 end;
 $member_assertions$;
 
@@ -62,6 +81,13 @@ set payload = '{"id":7001,"number":"Edited by team member"}',
     updated_by = '00000000-0000-0000-0000-000000000002'
 where workspace_id = (select value::uuid from stage3_workspace_document_context where key = 'workspace_id')
   and entity_type = 'hive' and entity_id = 7001;
+
+update public.beekeep_workspace_documents
+set payload = '{"id":7001,"hive_id":7001,"notes":"Edited by team member","recorded_at":1000,"updated_at":2000}',
+    updated_at = 2000,
+    updated_by = '00000000-0000-0000-0000-000000000002'
+where workspace_id = (select value::uuid from stage3_workspace_document_context where key = 'workspace_id')
+  and entity_type = 'inspection_note_draft' and entity_id = 7001;
 
 -- Workspace owner changes the invited user's role to viewer.
 select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-000000000001', false);
@@ -155,6 +181,13 @@ begin
         raise exception 'Viewer could not read shared record';
     end if;
 
+    select count(*) into visible_count from public.beekeep_workspace_documents
+    where workspace_id = (select value::uuid from stage3_workspace_document_context where key = 'workspace_id')
+      and entity_type = 'inspection_note_draft' and entity_id = 7001;
+    if visible_count <> 1 then
+        raise exception 'Viewer could not read a shared inspection note';
+    end if;
+
     update public.beekeep_workspace_documents
     set payload = '{"id":7001,"number":"Viewer must not edit"}',
         updated_at = 3000,
@@ -164,6 +197,17 @@ begin
     get diagnostics affected = row_count;
     if affected <> 0 then
         raise exception 'Viewer unexpectedly updated a shared record';
+    end if;
+
+    update public.beekeep_workspace_documents
+    set payload = '{"id":7001,"hive_id":7001,"notes":"Viewer must not edit","updated_at":3000}',
+        updated_at = 3000,
+        updated_by = '00000000-0000-0000-0000-000000000002'
+    where workspace_id = (select value::uuid from stage3_workspace_document_context where key = 'workspace_id')
+      and entity_type = 'inspection_note_draft' and entity_id = 7001;
+    get diagnostics affected = row_count;
+    if affected <> 0 then
+        raise exception 'Viewer unexpectedly updated a shared inspection note';
     end if;
 
     begin
