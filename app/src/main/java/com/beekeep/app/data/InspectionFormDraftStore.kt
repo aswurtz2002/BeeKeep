@@ -21,6 +21,9 @@ internal object InspectionFormDraftStore {
     fun pendingKey(key: String): String = "${key}_pending"
 
     fun legacyKey(hiveId: Long): String = "$LEGACY_PREFIX$hiveId"
+    fun beeCountHistoryStartKey(workspaceId: String?, hiveId: Long): String = "bee_count_history_start_${scope(workspaceId)}_$hiveId"
+
+    fun legacyBeeCountHistoryStartKey(hiveId: Long): String = "bee_count_history_start_$hiveId"
 
     fun readRaw(prefs: SharedPreferences, workspaceId: String?, hiveId: Long): String? {
         prefs.getString(key(workspaceId, hiveId), null)?.let { return it }
