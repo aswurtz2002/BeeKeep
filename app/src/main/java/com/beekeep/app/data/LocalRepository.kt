@@ -639,11 +639,9 @@ class LocalHiveRepository(context: Context) {
             // other hive currently owns it. A released UID must be reusable even if
             // an older hive row still contains its former tag_uid cache value.
             matchingCacheOwners.forEach { cachedHive ->
+                // Clear a legacy cached UID without pretending the hive profile changed.
+                // The UID history/tombstone below is the only shared mutation.
                 db.hives().refreshTagCache(cachedHive.id)
-                val refreshed = db.hives().get(cachedHive.id) ?: return@forEach
-                val repaired = refreshed.copy(updatedAt = now)
-                db.hives().upsert(repaired)
-                enqueue("hive", cachedHive.id, "upsert", hivePayload(repaired))
             }
             // Close every active ledger conflict, rather than trusting LIMIT 1 lookups.
             val rowsToClose = (tagConflicts + targetAssignments).distinctBy { it.id }
