@@ -66,6 +66,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.mutableDoubleStateOf
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -75,6 +76,12 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.beekeep.app.data.IdGenerator
+import com.beekeep.app.data.INSPECTION_NOTE_DRAFTS
+import com.beekeep.app.data.InspectionNoteDraftUpdate
+import com.beekeep.app.data.inspectionNoteDraftKey
+import com.beekeep.app.data.inspectionNoteDraftRecordedAtKey
+import com.beekeep.app.data.inspectionNoteDraftUpdatedAtKey
+import com.beekeep.app.data.migrateLegacyInspectionNoteDraft
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.onFocusChanged
@@ -95,14 +102,14 @@ import com.beekeep.app.data.Hive
 import com.beekeep.app.data.Inspection
 import com.beekeep.app.location.LocationController
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import java.text.DateFormat
 import java.util.Date
 import java.util.Locale
 import kotlin.math.roundToInt
 import org.json.JSONObject
-
-internal const val INSPECTION_NOTE_DRAFTS = "beekeep_inspection_note_drafts"
 
 private fun normalizeBroodStoresGauge(value: Double): Double =
     (value.coerceIn(0.0, 10.0) * 2.0).roundToInt() / 2.0
@@ -345,6 +352,8 @@ internal fun InspectionScreen(
     activity: ComponentActivity,
     locationController: LocationController,
     hive: Hive,
+    workspaceId: String?,
+    noteDraftUpdates: Flow<InspectionNoteDraftUpdate>,
     priorInspections: List<Inspection>,
     beeCountHistory: List<ActivityEvent>,
     defaultMiteSampleSize: Int,
@@ -361,6 +370,7 @@ internal fun InspectionScreen(
     onBack: () -> Unit,
     onHome: () -> Unit,
     onSave: suspend (Inspection) -> Boolean,
+    onSaveNoteDraft: suspend (Long, String, Long?, Long) -> Long,
     onSaved: () -> Unit
 ) {
     val haptic = LocalHapticFeedback.current
@@ -369,11 +379,18 @@ internal fun InspectionScreen(
     val noteDraftPrefs = remember(context) {
         context.getSharedPreferences(INSPECTION_NOTE_DRAFTS, android.content.Context.MODE_PRIVATE)
     }
+    val cleanDraftWorkspaceId = workspaceId?.trim()?.takeIf { it.isNotEmpty() }
+    val legacyDraftNeedsSync = remember(cleanDraftWorkspaceId, hive.id, noteDraftPrefs) {
+        migrateLegacyInspectionNoteDraft(noteDraftPrefs, cleanDraftWorkspaceId, hive.id)
+    }
     val formDraftPrefs = remember(context) {
         context.getSharedPreferences(INSPECTION_FORM_DRAFTS, android.content.Context.MODE_PRIVATE)
     }
-    val noteDraftKey = remember(hive.id) { "hive_${hive.id}" }
-    val noteDraftTimestampKey = remember(hive.id) { "${noteDraftKey}_recorded_at" }
+    val noteDraftKey = remember(cleanDraftWorkspaceId, hive.id) {
+        inspectionNoteDraftKey(cleanDraftWorkspaceId, hive.id)
+    }
+    val noteDraftTimestampKey = remember(noteDraftKey) { inspectionNoteDraftRecordedAtKey(noteDraftKey) }
+    val noteDraftUpdatedAtKey = remember(noteDraftKey) { inspectionNoteDraftUpdatedAtKey(noteDraftKey) }
     // The inspection list may briefly still contain the previous hive while NFC
     // switches the selected hive. Never let another hive's latest inspection seed this form.
     val lastInspection = remember(hive.id, priorInspections) {
@@ -385,10 +402,10 @@ internal fun InspectionScreen(
     // Load unfinished field values for this specific hive; if none exist, use the last saved inspection.
     val formDraft = remember(hive.id) { readInspectionFormDraft(formDraftPrefs, hive.id) }
     val formStateKey = formDraft?.updatedAt ?: 0L
-    val hasSavedNoteDraft = remember(hive.id) { noteDraftPrefs.contains(noteDraftKey) }
-    val savedNoteDraft = remember(hive.id) { noteDraftPrefs.getString(noteDraftKey, "").orEmpty() }
+    val hasSavedNoteDraft = remember(cleanDraftWorkspaceId, hive.id) { noteDraftPrefs.contains(noteDraftKey) }
+    val savedNoteDraft = remember(cleanDraftWorkspaceId, hive.id) { noteDraftPrefs.getString(noteDraftKey, "").orEmpty() }
     // A stored empty string means the beekeeper deliberately cleared the notes; don't restore older text.
-    val startingNotes = remember(hive.id, hasSavedNoteDraft, savedNoteDraft, lastInspection?.id, lastInspection?.notes) {
+    val startingNotes = remember(cleanDraftWorkspaceId, hive.id, hasSavedNoteDraft, savedNoteDraft, lastInspection?.id, lastInspection?.notes) {
         val loadedNotes = if (hasSavedNoteDraft) savedNoteDraft else lastInspection?.notes.orEmpty()
         if (loadedNotes.isBlank() || hasInlineInspectionNoteDate(loadedNotes)) {
             loadedNotes
