@@ -773,7 +773,7 @@ class SupabaseGateway(
             _account.value = _account.value.copy(syncing = false)
             throw cancelled
         } catch (error: Throwable) {
-            val message = error.message ?: "Team workspace sync failed"
+            val message = TeamWorkspaceSyncError.userFacing(error.message)
             _account.value = _account.value.copy(syncing = false, error = message)
             return CloudResult.Failure(message)
         }
