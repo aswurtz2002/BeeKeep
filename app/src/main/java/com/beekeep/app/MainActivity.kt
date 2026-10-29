@@ -574,7 +574,34 @@ fun BeeKeepApp(
         }
     }
     val hasUltimateWorkspaceAccess = isUltimatePlan || hasServerUltimateEntitlement
-    val showWorkspaceDestination = hasUltimateWorkspaceAccess || hasJoinedTeamWorkspace ||
+    var workspaceMembershipResolvedForUser by rememberSaveable { mutableStateOf(false) }
+
+    // Discover team access from the signed-in account on every device. A saved local workspace
+    // selection is only a convenience and must not decide whether a real member can open the page.
+    androidx.compose.runtime.LaunchedEffect(account.signedIn, account.email) {
+        if (!account.signedIn) {
+            workspaceMembershipResolvedForUser = false
+        } else {
+            workspaceMembershipResolvedForUser = false
+            val membership = cloud.listWorkspaces()
+            if (membership.isSuccess) {
+                val hasTeamMembership = membership.value.orEmpty().any { workspace -> !workspace.is_personal }
+                hasJoinedTeamWorkspace = hasTeamMembership
+                workspaceMembershipResolvedForUser = true
+                if (!hasTeamMembership) {
+                    autoVoicePrefs.edit { remove("selected_team_workspace_id") }
+                }
+            } else {
+                // Do not trap a valid member outside the Workspace page during a transient
+                // membership lookup failure; the page can surface the error and allow a retry.
+                hasJoinedTeamWorkspace = true
+                workspaceMembershipResolvedForUser = true
+            }
+        }
+    }
+
+    val showWorkspaceDestination = hasUltimateWorkspaceAccess ||
+        (account.signedIn && (hasJoinedTeamWorkspace || !workspaceMembershipResolvedForUser)) ||
         !activeWorkspaceId.isNullOrBlank()
     androidx.compose.runtime.LaunchedEffect(activeWorkspaceId) {
         if (!activeWorkspaceId.isNullOrBlank()) hasJoinedTeamWorkspace = true
