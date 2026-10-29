@@ -462,6 +462,7 @@ class SupabaseGateway(
 
             // Recover note edits saved locally before their debounce queued an outbox row.
             repository.queuePendingInspectionNoteDrafts()
+            repository.queuePendingInspectionFormDrafts()
 
             // Pull first so an older offline edit cannot overwrite a newer cloud record.
             // Drain the entire outbox in bounded batches: the old single-batch sync could
@@ -708,6 +709,7 @@ class SupabaseGateway(
                 repository.switchWorkspace(workspaceId, readOnly = !isWritable)
             }
             if (isWritable) repository.queuePendingInspectionNoteDrafts()
+            repository.queuePendingInspectionFormDrafts()
             val remoteBefore = loadAllWorkspaceDocuments(workspaceId)
             val remoteByKey = remoteBefore.associateBy { "${it.entity_type}:${it.entity_id}" }.toMutableMap()
             if (isWritable) {
