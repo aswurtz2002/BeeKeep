@@ -91,12 +91,76 @@ internal fun PreMadeHiveSetupScreen(
     var errorMessage by rememberSaveable { mutableStateOf<String?>(null) }
     var hiveLimitPromptVisible by rememberSaveable { mutableStateOf(false) }
     var apiaryLimitPromptVisible by rememberSaveable { mutableStateOf(false) }
+    var largeBatchConfirmationVisible by rememberSaveable { mutableStateOf(false) }
 
     val totalHives = hiveCounts.sumOf { it.toIntOrNull() ?: 0 }
     val existingApiaryNamesNormalized = remember(existingApiaryNames) {
         existingApiaryNames.map { it.trim().lowercase(Locale.ROOT) }.toSet()
     }
-    BackHandler { if (!isSaving) onBack() }
+    BackHandler { if (!isSaving && !largeBatchConfirmationVisible) onBack() }
+
+    fun submitSetup(confirmedLargeBatch: Boolean = false) {
+        val cleanedNames = apiaryNames.map { it.trim() }
+        val normalizedNames = cleanedNames.map { it.lowercase(Locale.ROOT) }
+        val starts = startNumbers.map { it.toIntOrNull() }
+        val counts = hiveCounts.map { if (it.isBlank()) 0 else it.toIntOrNull() ?: -1 }
+        errorMessage = when {
+            apiaryNames.size > maximumNewApiaries -> {
+                apiaryLimitPromptVisible = true
+                null
+            }
+            totalHives > maximumNewHives && hiveLimit != Int.MAX_VALUE -> {
+                hiveLimitPromptVisible = true
+                null
+            }
+            totalHives > maximumNewHives ->
+                "This batch is too large to process at once. Split it into smaller batches."
+            cleanedNames.any(String::isBlank) -> "Enter a name for every apiary."
+            normalizedNames.distinct().size != normalizedNames.size -> "Each apiary needs a unique name."
+            addToExistingWorkspace && cleanedNames.any { it.lowercase(Locale.ROOT) in existingApiaryNamesNormalized } ->
+                "An apiary with that name already exists. Choose a different name."
+            starts.any { it?.let { value -> value !in 1..999_999 } ?: true } ->
+                "Starting numbers must be between 1 and 999,999."
+            counts.any { it < 0 || it > 9_999 } ->
+                "Each hive count must be between 0 and 9,999 (or left blank)."
+            starts.indices.any { i ->
+                starts[i]?.let { start -> counts[i] > 0 && start.toLong() + counts[i].toLong() - 1L > 999_999L } ?: false
+            } -> "A hive range cannot end above 999,999."
+            SetupBatchSafety.requiresConfirmation(totalHives) && !confirmedLargeBatch -> {
+                largeBatchConfirmationVisible = true
+                null
+            }
+            else -> null
+        }
+        // The confirmation dialog is a hard stop until the beekeeper explicitly approves
+        // the exact batch size; do not fall through into the creation path.
+        if (largeBatchConfirmationVisible) return
+
+        if (errorMessage == null && totalHives <= maximumNewHives && apiaryNames.size <= maximumNewApiaries) {
+            isSaving = true
+            vm.createPreMadeSetup(
+                hivePrefix = hivePrefix.trim(),
+                apiaryNames = cleanedNames,
+                startingHiveNumbers = starts.map { it!! },
+                hiveCounts = counts,
+                allowExistingWorkspace = addToExistingWorkspace
+            ) { success, error ->
+                isSaving = false
+                if (success) {
+                    hiveLimitPromptVisible = false
+                    onComplete(cleanedNames.size, counts.sum())
+                } else if (BeeKeepEntitlements.isHiveLimitError(error)) {
+                    errorMessage = null
+                    hiveLimitPromptVisible = true
+                } else if (BeeKeepEntitlements.isApiaryLimitError(error)) {
+                    errorMessage = null
+                    apiaryLimitPromptVisible = true
+                } else {
+                    errorMessage = error ?: "Could not create your setup. Please try again."
+                }
+            }
+        }
+    }
 
     fun updateName(index: Int, value: String) {
         apiaryNames = apiaryNames.mapIndexed { i, old -> if (i == index) value.take(48) else old }
@@ -345,62 +409,8 @@ internal fun PreMadeHiveSetupScreen(
                         color = MaterialTheme.colorScheme.onSurface
                     )
                     Button(
-                        onClick = {
-                            val cleanedNames = apiaryNames.map { it.trim() }
-                            val normalizedNames = cleanedNames.map { it.lowercase(Locale.ROOT) }
-                            val starts = startNumbers.map { it.toIntOrNull() }
-                            val counts = hiveCounts.map { if (it.isBlank()) 0 else it.toIntOrNull() ?: -1 }
-                            errorMessage = when {
-                                apiaryNames.size > maximumNewApiaries -> {
-                                    apiaryLimitPromptVisible = true
-                                    null
-                                }
-                                totalHives > maximumNewHives && hiveLimit != Int.MAX_VALUE -> {
-                                    // Use the same honey-themed upgrade prompt as individual hive creation.
-                                    hiveLimitPromptVisible = true
-                                    null
-                                }
-                                totalHives > maximumNewHives ->
-                                    "This batch is too large to process at once. Split it into smaller batches."
-                                cleanedNames.any(String::isBlank) -> "Enter a name for every apiary."
-                                normalizedNames.distinct().size != normalizedNames.size -> "Each apiary needs a unique name."
-                                addToExistingWorkspace && cleanedNames.any { it.lowercase(Locale.ROOT) in existingApiaryNamesNormalized } ->
-                                    "An apiary with that name already exists. Choose a different name."
-                                starts.any { it?.let { value -> value !in 1..999_999 } ?: true } -> "Starting numbers must be between 1 and 999,999."
-                                counts.any { it < 0 || it > 9_999 } -> "Each hive count must be between 0 and 9,999 (or left blank)."
-                                starts.indices.any { i ->
-                                    starts[i]?.let { start -> counts[i] > 0 && start.toLong() + counts[i].toLong() - 1L > 999_999L } ?: false
-                                } -> "A hive range cannot end above 999,999."
-                                else -> null
-                            }
-                            if (errorMessage == null && totalHives <= maximumNewHives && apiaryNames.size <= maximumNewApiaries) {
-                                isSaving = true
-                                vm.createPreMadeSetup(
-                                    hivePrefix = hivePrefix.trim(),
-                                    apiaryNames = cleanedNames,
-                                    startingHiveNumbers = starts.map { it!! },
-                                    hiveCounts = counts,
-                                    allowExistingWorkspace = addToExistingWorkspace
-                                ) { success, error ->
-                                    isSaving = false
-                                    if (success) {
-                                        hiveLimitPromptVisible = false
-                                        onComplete(cleanedNames.size, counts.sum())
-                                    } else if (BeeKeepEntitlements.isHiveLimitError(error)) {
-                                        // The repository is the source of truth if another action
-                                        // changed the count between UI validation and this transaction.
-                                        errorMessage = null
-                                        hiveLimitPromptVisible = true
-                                    } else if (BeeKeepEntitlements.isApiaryLimitError(error)) {
-                                        errorMessage = null
-                                        apiaryLimitPromptVisible = true
-                                    } else {
-                                        errorMessage = error ?: "Could not create your setup. Please try again."
-                                    }
-                                }
-                            }
-                        },
-                        modifier = Modifier.fillMaxWidth(),
+                        onClick = { submitSetup() },
+                       modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(14.dp),
                         enabled = !isSaving
                     ) {
@@ -416,6 +426,51 @@ internal fun PreMadeHiveSetupScreen(
                     }
                 }
             }
+        }
+        if (largeBatchConfirmationVisible) {
+            AlertDialog(
+                onDismissRequest = { largeBatchConfirmationVisible = false },
+                shape = RoundedCornerShape(26.dp),
+                containerColor = androidx.compose.ui.graphics.Color(0xFFFFFBEB),
+                titleContentColor = androidx.compose.ui.graphics.Color(0xFF78350F),
+                textContentColor = androidx.compose.ui.graphics.Color(0xFF654321),
+                title = {
+                    Text("Confirm Bulk Hive Creation", fontWeight = FontWeight.ExtraBold)
+                },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(
+                            "You're about to create ${String.format(Locale.CANADA, "%,d", totalHives)} hives " +
+                                "across ${apiaryNames.size} new ${if (apiaryNames.size == 1) "apiary" else "apiaries"}."
+                        )
+                        apiaryNames.indices.forEach { index ->
+                            val count = hiveCounts[index].toIntOrNull() ?: 0
+                            Text("${apiaryNames[index].ifBlank { "Apiary ${index + 1}" }}: ${String.format(Locale.CANADA, "%,d", count)} hives")
+                        }
+                        Text(
+                            "This creates new records. Fast Tag Assignment only assigns NFC tags to hives that already exist; it does not create apiaries or hives."
+                        )
+                        Text("Review the count carefully before proceeding.")
+                    }
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            largeBatchConfirmationVisible = false
+                            submitSetup(confirmedLargeBatch = true)
+                        },
+                        enabled = !isSaving,
+                        shape = RoundedCornerShape(14.dp)
+                    ) {
+                        Text("CREATE ${String.format(Locale.CANADA, "%,d", totalHives)} HIVES", fontWeight = FontWeight.ExtraBold)
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { largeBatchConfirmationVisible = false }) {
+                        Text("CANCEL", color = androidx.compose.ui.graphics.Color(0xFF78350F))
+                    }
+                }
+            )
         }
         if (hiveLimitPromptVisible) {
             AlertDialog(

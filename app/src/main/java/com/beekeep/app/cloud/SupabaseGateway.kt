@@ -769,7 +769,7 @@ class SupabaseGateway(
 
             repository.pruneSync()
             val now = System.currentTimeMillis()
-            val warning = if (!isWritable && pending.isNotEmpty()) {
+            val warning = if (!isWritable && repository.pendingSync(1).isNotEmpty()) {
                 "This workspace is view-only. Pending local edits were not uploaded."
             } else null
             _account.value = _account.value.copy(
