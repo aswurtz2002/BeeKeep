@@ -429,8 +429,9 @@ class SupabaseGateway(
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (error: Throwable) {
-            _account.value = _account.value.copy(syncing = false, error = error.message ?: "Could not restore your cloud session")
-            return CloudResult.Failure(error.message ?: "Could not restore your cloud session")
+            val message = TeamWorkspaceSyncError.userFacing(error.message)
+            _account.value = _account.value.copy(syncing = false, error = message)
+            return CloudResult.Failure(message)
         }
         val session = client.auth.currentSessionOrNull() ?: run {
             refreshAccount()
@@ -508,8 +509,9 @@ class SupabaseGateway(
             _account.value = _account.value.copy(syncing = false)
             throw t
         } catch (t: Throwable) {
-            _account.value = _account.value.copy(syncing = false, error = t.message ?: "Sync failed")
-            CloudResult.Failure(t.message ?: "Sync failed")
+            val message = TeamWorkspaceSyncError.userFacing(t.message)
+            _account.value = _account.value.copy(syncing = false, error = message)
+            CloudResult.Failure(message)
         }
     }
 

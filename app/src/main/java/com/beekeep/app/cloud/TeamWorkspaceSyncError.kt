@@ -1,9 +1,8 @@
 package com.beekeep.app.cloud
 
 /**
- * Converts the verbose PostgREST RLS denial for shared workspace documents into an actionable
- * message. The outbox item is only marked synced after the upsert succeeds, so failed edits remain
- * queued locally and can be retried after the workspace access issue is fixed.
+ * Keeps verbose database/HTTP implementation details out of the field UI while preserving
+ * actionable messages. Failed outbox records remain pending until an upload succeeds.
  */
 internal object TeamWorkspaceSyncError {
     const val RLS_DENIED_MESSAGE =
@@ -12,16 +11,38 @@ internal object TeamWorkspaceSyncError {
             "(owner, admin, or member). Check the owner's plan sync and your role, then retry " +
             "Sync Now. Your edits remain saved locally and queued."
 
+    const val MISSING_DELETED_FLAG_MESSAGE =
+        "Sync failed because a record was sent without its required deletion flag. Your edits " +
+            "remain saved locally and queued. Update BeeKeep to the newest build, then retry Sync Now."
+
+    const val GENERIC_SYNC_ERROR_MESSAGE =
+        "BeeKeep couldn't complete the sync because Cloud returned a technical error. Your edits " +
+            "remain saved locally and queued. Retry Sync Now; if it continues, contact support."
+
     fun userFacing(rawMessage: String?): String {
-        val message = rawMessage.orEmpty()
+        val message = rawMessage.orEmpty().trim()
+        val lower = message.lowercase()
         val isSharedDocumentRlsDenial =
-            message.contains("row-level security policy", ignoreCase = true) &&
-                message.contains("beekeep_workspace_documents", ignoreCase = true)
+            lower.contains("row-level security policy") &&
+                lower.contains("beekeep_workspace_documents")
+        val isMissingDeletedFlag =
+            lower.contains("null value in column") &&
+                lower.contains("deleted") &&
+                (lower.contains("not-null constraint") || lower.contains("not null constraint"))
 
         return when {
             isSharedDocumentRlsDenial -> RLS_DENIED_MESSAGE
-            message.isNotBlank() -> message
-            else -> "Team workspace sync failed"
+            isMissingDeletedFlag -> MISSING_DELETED_FLAG_MESSAGE
+            message.isBlank() -> "Sync failed. Your edits remain saved locally and queued. Retry Sync Now."
+            message.length > 240 ||
+                '\n' in message ||
+                lower.contains("headers:") ||
+                lower.contains("url:") ||
+                lower.contains("response body") ||
+                lower.contains("stacktrace") ||
+                lower.contains("could not execute statement") ||
+                lower.contains("exception:") -> GENERIC_SYNC_ERROR_MESSAGE
+            else -> message
         }
     }
 }
