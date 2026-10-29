@@ -488,9 +488,22 @@ internal fun InspectionScreen(
     var sample by rememberSaveable(hive.id, formStateKey, lastInspection?.id) {
         mutableIntStateOf(formDraft?.sampleSize ?: (if (rememberLastInspectionValues) lastInspection?.sampleSize else null) ?: defaultMiteSampleSize.coerceIn(1, 10000))
     }
-    var notes by rememberSaveable(hive.id) { mutableStateOf(startingNotes) }
-    var noteSaveStatus by rememberSaveable(hive.id) {
-        mutableStateOf(if (startingNotes.isBlank()) "" else if (hasSavedNoteDraft) "Auto-saved note restored" else "Saved notes loaded")
+    var notes by rememberSaveable(cleanDraftWorkspaceId, hive.id) { mutableStateOf(startingNotes) }
+    var noteRevision by rememberSaveable(cleanDraftWorkspaceId, hive.id) {
+        mutableLongStateOf(noteDraftPrefs.getLong(noteDraftUpdatedAtKey, 0L))
+    }
+    var needsCloudSave by rememberSaveable(cleanDraftWorkspaceId, hive.id) {
+        mutableStateOf(legacyDraftNeedsSync)
+    }
+    var noteSaveStatus by rememberSaveable(cleanDraftWorkspaceId, hive.id) {
+        mutableStateOf(
+            when {
+                legacyDraftNeedsSync -> "Restored local note - syncing to workspace"
+                startingNotes.isBlank() -> ""
+                hasSavedNoteDraft -> "Saved draft restored"
+                else -> "Saved notes loaded"
+            }
+        )
     }
     var eggs by rememberSaveable(hive.id, formStateKey, lastInspection?.id) {
         mutableDoubleStateOf(normalizeBroodStoresGauge(formDraft?.eggs ?: (if (rememberLastInspectionValues) lastInspection?.eggs else null) ?: 0.0))
