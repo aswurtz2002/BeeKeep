@@ -74,11 +74,12 @@ internal fun PurchaseScreen(
             current = currentPlan == BeeKeepPlan.PRO,
             highlighted = false,
             actionLabel = when {
+                debugBuild && currentPlan == BeeKeepPlan.PRO -> "SYNC PRO MONTHLY TO CLOUD"
                 currentPlan == BeeKeepPlan.PRO -> "PRO MONTHLY ACTIVE"
                 debugBuild -> "SIMULATE PRO MONTHLY"
                 else -> "PURCHASES COMING SOON"
             },
-            actionEnabled = debugBuild && currentPlan != BeeKeepPlan.PRO,
+            actionEnabled = debugBuild,
             onAction = { onChoosePlan(BeeKeepPlan.PRO) }
         )
 
@@ -92,11 +93,12 @@ internal fun PurchaseScreen(
             highlighted = false,
             badgeText = "${BeeKeepPricing.proYearlyDiscountPercent}% OFF",
             actionLabel = when {
+                debugBuild && currentPlan == BeeKeepPlan.PRO_YEARLY -> "SYNC PRO YEARLY TO CLOUD"
                 currentPlan == BeeKeepPlan.PRO_YEARLY -> "PRO YEARLY ACTIVE"
                 debugBuild -> "SIMULATE PRO YEARLY"
                 else -> "PURCHASES COMING SOON"
             },
-            actionEnabled = debugBuild && currentPlan != BeeKeepPlan.PRO_YEARLY,
+            actionEnabled = debugBuild,
             onAction = { onChoosePlan(BeeKeepPlan.PRO_YEARLY) }
         )
 
@@ -114,11 +116,12 @@ internal fun PurchaseScreen(
             current = currentPlan == BeeKeepPlan.ULTIMATE,
             highlighted = false,
             actionLabel = when {
+                debugBuild && currentPlan == BeeKeepPlan.ULTIMATE -> "SYNC ULTIMATE MONTHLY TO CLOUD"
                 currentPlan == BeeKeepPlan.ULTIMATE -> "ULTIMATE MONTHLY ACTIVE"
                 debugBuild -> "SIMULATE ULTIMATE MONTHLY"
                 else -> "PURCHASES COMING SOON"
             },
-            actionEnabled = debugBuild && currentPlan != BeeKeepPlan.ULTIMATE,
+            actionEnabled = debugBuild,
             onAction = { onChoosePlan(BeeKeepPlan.ULTIMATE) }
         )
 
@@ -137,11 +140,12 @@ internal fun PurchaseScreen(
             highlighted = true,
             badgeText = "${BeeKeepPricing.ultimateYearlyDiscountPercent}% OFF",
             actionLabel = when {
+                debugBuild && currentPlan == BeeKeepPlan.ULTIMATE_YEARLY -> "SYNC ULTIMATE YEARLY TO CLOUD"
                 currentPlan == BeeKeepPlan.ULTIMATE_YEARLY -> "ULTIMATE YEARLY ACTIVE"
                 debugBuild -> "SIMULATE ULTIMATE YEARLY"
                 else -> "PURCHASES COMING SOON"
             },
-            actionEnabled = debugBuild && currentPlan != BeeKeepPlan.ULTIMATE_YEARLY,
+            actionEnabled = debugBuild,
             onAction = { onChoosePlan(BeeKeepPlan.ULTIMATE_YEARLY) }
         )
 
