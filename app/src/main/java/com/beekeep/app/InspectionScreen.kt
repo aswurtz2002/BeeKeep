@@ -514,6 +514,27 @@ internal fun InspectionScreen(
             }
         )
     }
+    // Cloud pulls write drafts to the same workspace-scoped preference file.
+    // Observe those writes so an already-open inspection refreshes without reopening the hive.
+    DisposableEffect(noteDraftPrefs, noteDraftKey, noteDraftUpdatedAtKey) {
+        val listener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, changedKey ->
+            if (changedKey == noteDraftKey || changedKey == noteDraftUpdatedAtKey) {
+                scope.launch {
+                    val incoming = noteDraftPrefs.getString(noteDraftKey, "").orEmpty()
+                    val incomingRevision = noteDraftPrefs.getLong(noteDraftUpdatedAtKey, 0L)
+                    if (!needsCloudSave && incomingRevision >= noteRevision &&
+                        (incomingRevision > noteRevision || incoming != notes)
+                    ) {
+                        notes = incoming
+                        noteRevision = incomingRevision
+                        noteSaveStatus = if (incoming.isBlank()) "" else "Updated from another device"
+                    }
+                }
+            }
+        }
+        noteDraftPrefs.registerOnSharedPreferenceChangeListener(listener)
+        onDispose { noteDraftPrefs.unregisterOnSharedPreferenceChangeListener(listener) }
+    }
     var eggs by rememberSaveable(hive.id, formStateKey, lastInspection?.id) {
         mutableDoubleStateOf(normalizeBroodStoresGauge(formDraft?.eggs ?: (if (rememberLastInspectionValues) lastInspection?.eggs else null) ?: 0.0))
     }
