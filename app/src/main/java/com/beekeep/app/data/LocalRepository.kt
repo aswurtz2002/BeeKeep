@@ -187,7 +187,10 @@ class LocalHiveRepository(context: Context) {
             val formDraftEditor = inspectionFormDraftPrefs.edit()
             (scopedFormDraftIds + legacyPersonalFormDraftIds + hives.map { it.id }).distinct().forEach { hiveId ->
                 val key = InspectionFormDraftStore.key(activeDraftWorkspaceId, hiveId)
-                formDraftEditor.remove(key).remove(InspectionFormDraftStore.pendingKey(key))
+                formDraftEditor.remove(key)
+                    .remove(InspectionFormDraftStore.pendingKey(key))
+                    .remove(InspectionFormDraftStore.beeCountHistoryStartKey(activeDraftWorkspaceId, hiveId))
+                    .remove(InspectionFormDraftStore.legacyBeeCountHistoryStartKey(hiveId))
                 if (activeDraftWorkspaceId == null) formDraftEditor.remove(InspectionFormDraftStore.legacyKey(hiveId))
             }
             formDraftEditor.apply()
