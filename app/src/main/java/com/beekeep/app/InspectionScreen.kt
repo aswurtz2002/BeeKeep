@@ -1000,6 +1000,20 @@ internal fun InspectionScreen(
                                             try {
                                                 val saved = onSave(inspection)
                                                 if (saved) {
+                                                    // Flush the current note buffer before leaving the inspection screen.
+                                                    try {
+                                                        val revision = maxOf(
+                                                            System.currentTimeMillis(),
+                                                            noteRevision + 1L,
+                                                            noteDraftPrefs.getLong(noteDraftUpdatedAtKey, 0L) + 1L
+                                                        )
+                                                        val recordedAt = noteDraftPrefs.getLong(noteDraftTimestampKey, 0L)
+                                                            .takeIf { it > 0L && notes.isNotBlank() }
+                                                        noteRevision = onSaveNoteDraft(hive.id, notes.trim(), recordedAt, revision)
+                                                        needsCloudSave = false
+                                                    } catch (_: Exception) {
+                                                        noteSaveStatus = "Inspection saved - note sync pending"
+                                                    }
                                                     // Clear only after durable save succeeds; keep the independent note draft.
                                                     discardSavedFormDraftOnDispose.value = true
                                                     formDraftPrefs.edit { remove("hive_${hive.id}") }
