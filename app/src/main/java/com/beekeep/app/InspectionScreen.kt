@@ -76,7 +76,6 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.beekeep.app.data.IdGenerator
-import com.beekeep.app.data.InspectionNoteDraftUpdate
 import com.beekeep.app.data.inspectionNoteDraftKey
 import com.beekeep.app.data.inspectionNoteDraftRecordedAtKey
 import com.beekeep.app.data.inspectionNoteDraftUpdatedAtKey
@@ -101,7 +100,6 @@ import com.beekeep.app.data.Hive
 import com.beekeep.app.data.Inspection
 import com.beekeep.app.location.LocationController
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import java.text.DateFormat
@@ -360,8 +358,6 @@ internal fun InspectionScreen(
     activity: ComponentActivity,
     locationController: LocationController,
     hive: Hive,
-    workspaceId: String?,
-    noteDraftUpdates: Flow<InspectionNoteDraftUpdate>,
     priorInspections: List<Inspection>,
     beeCountHistory: List<ActivityEvent>,
     defaultMiteSampleSize: Int,
@@ -378,7 +374,12 @@ internal fun InspectionScreen(
     onBack: () -> Unit,
     onHome: () -> Unit,
     onSave: suspend (Inspection) -> Boolean,
-    onSaveNoteDraft: suspend (Long, String, Long?, Long) -> Long,
+    onSaveNoteDraft: suspend (Long, String, Long?, Long) -> Long = { hiveId, draftNotes, recordedAt, updatedAt ->
+        val draftRepository = com.beekeep.app.data.LocalHiveRepository(activity.applicationContext)
+        val queuedAt = draftRepository.saveInspectionNoteDraft(hiveId, draftNotes, recordedAt, updatedAt)
+        com.beekeep.app.cloud.CloudSyncScheduler.runNow(activity)
+        queuedAt
+    },
     onSaved: () -> Unit
 ) {
     val haptic = LocalHapticFeedback.current
