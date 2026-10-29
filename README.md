@@ -10,7 +10,7 @@ BeeKeep is a mobile-first, native Kotlin app for managing apiaries, hive records
 - **Hive logs:** record feeding, treatments, and harvests.
 - **NFC:** scan tags to open hives, assign or replace tags, verify or remove assignments, and write/read back BeeKeep tag data. Conflicting tag assignments are guarded to avoid silently changing the wrong hive.
 - **Field usability:** high-contrast yellow-and-black mode, large controls, and local records that remain available without a network connection.
-- **Optional cloud sync:** sign in to a configured Supabase backend to synchronize records between devices. Core record entry remains local-first.
+- **Cloud sync and workspaces:** the standard Debug app is preconfigured to use the existing BeeKeep Supabase project. Sign in to sync records and team workspaces between devices; core record entry remains local-first.
 
 The current app intentionally does **not** include the Calendar, Analytics, camera-capture, photo-album, or PC/browser test-lab features. Legacy records are preserved where supported; these removed UI features are not exposed.
 
@@ -20,19 +20,21 @@ New installations start with an empty apiary list rather than fabricated demo co
 
 Use JDK 17 and the Android SDK required by the project.
 
-Build the debug APK:
+Build the development APK:
 
 ```bash
 ./gradlew :app:assembleDebug
 ```
 
-Run available JVM unit tests and build the APK:
+Run available JVM unit tests, lint, and the APK build:
 
 ```bash
-./gradlew :app:testDebugUnitTest :app:assembleDebug
+./gradlew :app:testDebugUnitTest :app:lintDebug :app:assembleDebug
 ```
 
-The debug APK is written to `app/build/outputs/apk/debug/app-debug.apk`. GitHub Actions also builds and uploads a debug APK for repository pushes.
+The development APK is written to `app/build/outputs/apk/debug/app-debug.apk`. GitHub Actions builds and uploads this Debug APK for repository pushes and pull requests. The separate staging build has been retired; use the standard BeeKeep Debug app for development and testing.
+
+The Debug build uses the existing BeeKeep Supabase project by default. A local Gradle property can override the configured project with `-PsupabaseUrl=...` and `-PsupabaseKey=...`. Android builds must use a Supabase publishable/anon key only; never embed a service-role key in the app.
 
 For Windows environment checks and install helpers, see `BUILD_ANDROID.md`, `scripts/verify-build-host.sh`, `scripts/build-debug.sh`, and the Windows build/install scripts in `scripts/`.
 

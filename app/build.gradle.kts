@@ -5,6 +5,18 @@ plugins {
     id("com.google.devtools.ksp")
 }
 
+val defaultDebugSupabaseUrl = (
+    (project.findProperty("supabaseUrl") as String?)
+        ?.takeIf { it.isNotBlank() }
+        ?: "https://nnmcwsdunpwdktexgivr.supabase.co"
+).replace("\\", "\\\\").replace("\"", "\\\"")
+
+val defaultDebugSupabaseKey = (
+    (project.findProperty("supabaseKey") as String?)
+        ?.takeIf { it.isNotBlank() }
+        ?: "sb_publishable_74dplURrV6VbGnQHKGTbLw_lpX-pS20"
+).replace("\\", "\\\\").replace("\"", "\\\"")
+
 android {
     namespace = "com.beekeep.app"
     compileSdk = 37
@@ -25,21 +37,15 @@ android {
         buildConfigField("String", "AUTH_REDIRECT_HOST", "\"auth-callback\"")
     }
     buildTypes {
-        release { isMinifyEnabled = false }
-
-        // A separately installable, preconfigured app that connects only to BeeKeep-Staging.
-        // Supabase publishable keys are intended for client-side use; never place a secret/service-role key here.
-        create("staging") {
-            initWith(getByName("debug"))
-            applicationIdSuffix = ".staging"
-            versionNameSuffix = "-staging"
-            manifestPlaceholders["appLabel"] = "BeeKeep Staging"
-            manifestPlaceholders["authScheme"] = "com.beekeep.app.staging"
-            manifestPlaceholders["authHost"] = "auth-callback"
-            buildConfigField("String", "SUPABASE_URL", "\"https://nnmcwsdunpwdktexgivr.supabase.co\"")
-            buildConfigField("String", "SUPABASE_PUBLISHABLE_KEY", "\"sb_publishable_74dplURrV6VbGnQHKGTbLw_lpX-pS20\"")
-            buildConfigField("String", "AUTH_REDIRECT_SCHEME", "\"com.beekeep.app.staging\"")
+        debug {
+            // The normal debug APK is the primary development app and syncs with the existing BeeKeep Supabase project.
+            // Only use a publishable/anon client key here; never put a service-role key in an Android app.
+            buildConfigField("String", "SUPABASE_URL", "\"$defaultDebugSupabaseUrl\"")
+            buildConfigField("String", "SUPABASE_PUBLISHABLE_KEY", "\"$defaultDebugSupabaseKey\"")
+            buildConfigField("String", "AUTH_REDIRECT_SCHEME", "\"com.beekeep.app\"")
+            buildConfigField("String", "AUTH_REDIRECT_HOST", "\"auth-callback\"")
         }
+        release { isMinifyEnabled = false }
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
