@@ -587,7 +587,7 @@ class SupabaseGateway(
             // Make the imported team dataset the active local dataset and pull the server's result.
             repository.switchWorkspace(cleanId, readOnly = false)
             val teamSync = syncNowUnlocked()
-            return when (teamSync) {
+            return@withLock when (teamSync) {
                 CloudResult.Success -> WorkspaceOperationResult(value = copy.copied_count)
                 is CloudResult.Failure -> WorkspaceOperationResult(
                     value = copy.copied_count,
