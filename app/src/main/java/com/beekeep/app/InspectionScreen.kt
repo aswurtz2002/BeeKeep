@@ -521,9 +521,16 @@ internal fun InspectionScreen(
         val listener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, changedKey ->
             if (changedKey == noteDraftKey || changedKey == noteDraftUpdatedAtKey) {
                 scope.launch {
+                    val incomingExists = noteDraftPrefs.contains(noteDraftKey)
                     val incoming = noteDraftPrefs.getString(noteDraftKey, "").orEmpty()
                     val incomingRevision = noteDraftPrefs.getLong(noteDraftUpdatedAtKey, 0L)
-                    if (!needsCloudSave && incomingRevision >= noteRevision &&
+                    if (!needsCloudSave && !incomingExists) {
+                        // A cloud tombstone (or workspace reset) removes the draft keys.
+                        // Clear the open editor too, without turning that deletion into a new cloud write.
+                        notes = ""
+                        noteRevision = 0L
+                        noteSaveStatus = ""
+                    } else if (!needsCloudSave && incomingRevision >= noteRevision &&
                         (incomingRevision > noteRevision || incoming != notes)
                     ) {
                         notes = incoming
