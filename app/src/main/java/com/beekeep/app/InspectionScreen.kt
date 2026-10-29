@@ -675,10 +675,19 @@ internal fun InspectionScreen(
             val datedSpokenText = "${inspectionNoteDatePrefix(recordedAt)}$cleanSpokenText"
             val updatedNotes = if (latestNotes.isBlank()) datedSpokenText else "${latestNotes.trimEnd()}\n$datedSpokenText"
             notes = updatedNotes
+            val nextRevision = maxOf(
+                System.currentTimeMillis(),
+                noteRevision + 1L,
+                noteDraftPrefs.getLong(noteDraftUpdatedAtKey, 0L) + 1L
+            )
+            noteRevision = nextRevision
+            needsCloudSave = !isReadOnlyWorkspace
             noteDraftPrefs.edit {
                 putString(noteDraftKey, updatedNotes)
+                putLong(noteDraftUpdatedAtKey, nextRevision)
+                putLong(noteDraftTimestampKey, recordedAt)
             }
-            noteSaveStatus = "Note auto-saved"
+            noteSaveStatus = if (isReadOnlyWorkspace) "View-only workspace" else "Saved locally"
             voicePartialText = ""
             voiceStatus = "Saved • continuing to listen"
         }
