@@ -1030,19 +1030,30 @@ internal fun InspectionScreen(
                         OutlinedTextField(
                             value = notes,
                             onValueChange = {
-                                val updatedNotes = addDateToNewInspectionNoteLines(notes, it)
-                                notes = updatedNotes
-                                noteDraftPrefs.edit {
-                                    putString(noteDraftKey, updatedNotes)
-                                    if (updatedNotes.isBlank()) {
-                                        remove(noteDraftTimestampKey)
-                                    } else if (!noteDraftPrefs.contains(noteDraftTimestampKey)) {
-                                        putLong(noteDraftTimestampKey, System.currentTimeMillis())
+                                if (!isReadOnlyWorkspace) {
+                                    val updatedNotes = addDateToNewInspectionNoteLines(notes, it)
+                                    notes = updatedNotes
+                                    val nextRevision = maxOf(
+                                        System.currentTimeMillis(),
+                                        noteRevision + 1L,
+                                        noteDraftPrefs.getLong(noteDraftUpdatedAtKey, 0L) + 1L
+                                    )
+                                    noteRevision = nextRevision
+                                    needsCloudSave = true
+                                    noteDraftPrefs.edit {
+                                        putString(noteDraftKey, updatedNotes)
+                                        putLong(noteDraftUpdatedAtKey, nextRevision)
+                                        if (updatedNotes.isBlank()) {
+                                            remove(noteDraftTimestampKey)
+                                        } else if (!noteDraftPrefs.contains(noteDraftTimestampKey)) {
+                                            putLong(noteDraftTimestampKey, System.currentTimeMillis())
+                                        }
                                     }
+                                    noteSaveStatus = "Saving note..."
                                 }
-                                noteSaveStatus = if (updatedNotes.isBlank()) "" else "Saving note…"
                             },
                             modifier = Modifier.fillMaxWidth().height(124.dp),
+                            enabled = !isReadOnlyWorkspace,
                             label = { Text("What did you see?") }
                         )
                         if (noteSaveStatus.isNotBlank()) {
