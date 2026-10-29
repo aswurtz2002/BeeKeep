@@ -1,9 +1,9 @@
 package com.beekeep.app.cloud
 
 /**
- * Cloud results are stored in entity_type order, which places event/history rows before hives.
- * Room ignores children that reference a hive not yet inserted, so always apply records in
- * dependency order to avoid silently dropping those rows on a first sync to a device.
+ * Cloud results are stored in entity_type order, which is not dependency-aware.
+ * Room ignores child rows that reference a hive not yet inserted, and unfinished inspection
+ * drafts must be applied after saved inspection history so a completed save can retire stale drafts.
  */
 internal object CloudDocumentOrder {
     private val priorities = mapOf(
