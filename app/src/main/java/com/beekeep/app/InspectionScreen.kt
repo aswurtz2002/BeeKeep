@@ -818,15 +818,36 @@ internal fun InspectionScreen(
         onDispose { voiceLifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
-    androidx.compose.runtime.LaunchedEffect(hive.id, notes) {
-        // Debounce edits so a longer note is stored when the user pauses typing.
+    androidx.compose.runtime.LaunchedEffect(
+        hive.id, cleanDraftWorkspaceId, notes, noteRevision, needsCloudSave, isReadOnlyWorkspace
+    ) {
         delay(400)
-        // Store blank too: it records an intentional manual clear rather than reviving old notes later.
+        val capturedRevision = noteRevision
+        val capturedNotes = notes
+        val recordedAt = noteDraftPrefs.getLong(noteDraftTimestampKey, 0L)
+            .takeIf { it > 0L && capturedNotes.isNotBlank() }
         noteDraftPrefs.edit {
-            putString(noteDraftKey, notes)
-            if (notes.isBlank()) remove(noteDraftTimestampKey)
+            putString(noteDraftKey, capturedNotes)
+            putLong(noteDraftUpdatedAtKey, capturedRevision)
+            if (recordedAt != null) putLong(noteDraftTimestampKey, recordedAt)
+            else remove(noteDraftTimestampKey)
         }
-        noteSaveStatus = if (notes.isBlank()) "" else "Note auto-saved"
+        if (needsCloudSave && !isReadOnlyWorkspace) {
+            try {
+                val queuedRevision = onSaveNoteDraft(hive.id, capturedNotes, recordedAt, capturedRevision)
+                if (noteRevision == capturedRevision) {
+                    noteRevision = queuedRevision
+                    needsCloudSave = false
+                    noteSaveStatus = "Saved locally - cloud sync queued"
+                }
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (_: Throwable) {
+                noteSaveStatus = "Saved locally - sync pending"
+            }
+        } else if (capturedNotes.isNotBlank() && noteSaveStatus.isBlank()) {
+            noteSaveStatus = if (isReadOnlyWorkspace) "View-only workspace" else "Saved on device"
+        }
     }
 
     BackHandler { onBack() }
