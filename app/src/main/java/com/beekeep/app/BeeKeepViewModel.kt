@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import com.beekeep.app.cloud.CloudSyncScheduler
 import com.beekeep.app.data.*
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -16,7 +17,7 @@ import kotlin.math.roundToInt
 
 class BeeKeepViewModel(
     private val repo: LocalHiveRepository,
-    @Suppress("unused") private val appContext: Context
+    private val appContext: Context
 ) : ViewModel() {
     private val _hives = MutableStateFlow<List<Hive>>(emptyList())
     val hives: StateFlow<List<Hive>> = _hives
@@ -43,6 +44,14 @@ class BeeKeepViewModel(
     val readOnlyWriteAttempt: StateFlow<Long> = repo.readOnlyWriteAttempt
     private var detailJob: Job? = null
     private var selectionRequestGeneration = 0L
+
+    /**
+     * Room/outbox is the durable save. Ask WorkManager to push it promptly without
+     * turning a successful local write into a failure if work scheduling is unavailable.
+     */
+    private fun requestCloudSync() {
+        runCatching { CloudSyncScheduler.runNow(appContext) }
+    }
 
     init {
         viewModelScope.launch {
@@ -222,6 +231,7 @@ class BeeKeepViewModel(
                 )
             }
                 .onSuccess { createdHiveIds ->
+                    requestCloudSync()
                     if (planAtCreation.isProSubscription) {
                         BeeKeepEntitlements.rememberProCreatedHives(appContext, createdHiveIds)
                     }
@@ -262,6 +272,7 @@ class BeeKeepViewModel(
                 val tagError = tagUid?.takeIf { it.isNotBlank() }?.let { tag ->
                     runCatching { repo.assignNfcTag(hiveId, tag) }.exceptionOrNull()?.message?.let { "Hive created. $it" }
                 }
+                requestCloudSync()
                 onResult(true, tagError)
             }.onFailure { onResult(false, it.message ?: "Could not create the hive.") }
         }
@@ -276,6 +287,7 @@ class BeeKeepViewModel(
         viewModelScope.launch {
             runCatching { repo.updateHiveLocation(hiveId, latitude, longitude) }
                 .onSuccess {
+                    requestCloudSync()
                     refreshSelectedHiveIfCurrent(hiveId)
                     onResult(null)
                 }
@@ -287,6 +299,7 @@ class BeeKeepViewModel(
         viewModelScope.launch {
             runCatching {
                 repo.markHiveDead(hiveId)
+                requestCloudSync()
                 refreshSelectedHiveIfCurrent(hiveId)
             }.onSuccess { onResult(true, null) }
                 .onFailure { onResult(false, it.message ?: "Could not mark the colony dead.") }
@@ -297,6 +310,7 @@ class BeeKeepViewModel(
         viewModelScope.launch {
             runCatching {
                 repo.restoreHive(hiveId)
+                requestCloudSync()
                 refreshSelectedHiveIfCurrent(hiveId)
             }.onSuccess { onResult(true, null) }
                 .onFailure { onResult(false, it.message ?: "Could not restore the colony.") }
@@ -307,6 +321,7 @@ class BeeKeepViewModel(
         viewModelScope.launch {
             runCatching {
                 repo.deleteHivePermanently(hiveId)
+                requestCloudSync()
                 if (_selected.value?.id == hiveId) clearHive()
             }.onSuccess { onResult(true, null) }
                 .onFailure { onResult(false, it.message ?: "Could not delete the hive.") }
@@ -323,6 +338,7 @@ class BeeKeepViewModel(
         viewModelScope.launch {
             runCatching {
                 repo.assignNfcTag(hiveId, normalized, reassign)
+                requestCloudSync()
                 refreshSelectedHiveIfCurrent(hiveId)
             }.onSuccess { onResult(true, null) }
                 .onFailure { onResult(false, it.message ?: "Could not assign the NFC tag.") }
@@ -341,6 +357,7 @@ class BeeKeepViewModel(
         viewModelScope.launch {
             runCatching { repo.unassignNfcTag(hiveId) }
                 .onSuccess { removed ->
+                    if (removed) requestCloudSync()
                     refreshSelectedHiveIfCurrent(hiveId)
                     onResult(
                         removed,
@@ -357,6 +374,7 @@ class BeeKeepViewModel(
         val h = _selected.value ?: return
         viewModelScope.launch {
             repo.saveHive(h.copy(queenStatus = status, queenMarkColor = markColor, queenOrigin = origin, queenAgeMonths = ageMonths, queenTemperament = temperament.coerceIn(1, 5)))
+            requestCloudSync()
             refreshSelectedHiveIfCurrent(h.id)
         }
     }
@@ -370,7 +388,7 @@ class BeeKeepViewModel(
         viewModelScope.launch {
             runCatching {
                 repo.recordBeeCountChange(hiveId, previousFrames, newFrames, changedAt)
-            }
+            }.onSuccess { requestCloudSync() }
         }
     }
 
@@ -398,6 +416,7 @@ class BeeKeepViewModel(
         )
         return runCatching {
             repo.saveInspection(normalized)
+            requestCloudSync()
             refreshSelectedHiveIfCurrent(h.id)
             true
         }.getOrElse { false }
@@ -409,7 +428,7 @@ class BeeKeepViewModel(
         val now = System.currentTimeMillis()
         viewModelScope.launch {
             runCatching { repo.saveFeeding(Feeding(IdGenerator.nextLong(), h.id, now, feedType, ratio, amount, unit, notes)) }
-                .onSuccess { onResult(true, null) }
+                .onSuccess { requestCloudSync(); onResult(true, null) }
                 .onFailure { onResult(false, it.message ?: "Could not save feeding.") }
         }
     }
@@ -426,7 +445,7 @@ class BeeKeepViewModel(
                 val withdrawal = if (removal != null && withdrawalDays > 0) localPlusDays(removal, withdrawalDays.toLong()) else null
                 val treatment = Treatment(IdGenerator.nextLong(), h.id, now, treatmentType, product, now, removal, withdrawal, notes)
                 repo.saveTreatment(treatment)
-            }.onSuccess { onResult(true, null) }
+            }.onSuccess { requestCloudSync(); onResult(true, null) }
                 .onFailure { onResult(false, it.message ?: "Could not save treatment.") }
         }
     }
@@ -437,7 +456,7 @@ class BeeKeepViewModel(
         val now = System.currentTimeMillis()
         viewModelScope.launch {
             runCatching { repo.saveHarvest(Harvest(IdGenerator.nextLong(), h.id, now, supers, wet, dry, unit, wax, propolis, notes)) }
-                .onSuccess { onResult(true, null) }
+                .onSuccess { requestCloudSync(); onResult(true, null) }
                 .onFailure { onResult(false, it.message ?: "Could not save harvest.") }
         }
     }
@@ -452,7 +471,7 @@ class BeeKeepViewModel(
         }
         viewModelScope.launch {
             runCatching { repo.saveApiary(Apiary(IdGenerator.nextLong(), clean, notes, lat, lon, forage, water)) }
-                .onSuccess { onResult(true, null) }
+                .onSuccess { requestCloudSync(); onResult(true, null) }
                 .onFailure { onResult(false, it.message ?: "Could not save apiary.") }
         }
     }
@@ -464,6 +483,7 @@ class BeeKeepViewModel(
             runCatching {
                 val hive = repo.getHive(hiveId) ?: throw IllegalArgumentException("Hive not found.")
                 repo.saveHive(hive.copy(apiary = target))
+                requestCloudSync()
                 refreshSelectedHiveIfCurrent(hiveId)
             }.onSuccess { onResult(true, null) }
                 .onFailure { onResult(false, it.message ?: "Could not move the hive.") }
@@ -477,7 +497,7 @@ class BeeKeepViewModel(
             val existing = _apiaries.value.firstOrNull { it.id == id }
             if (existing == null) { onResult(false, "Apiary not found. Refresh and try again."); return@launch }
             runCatching { repo.saveApiary(Apiary(id, clean, notes, lat, lon, forage, water)) }
-                .onSuccess { onResult(true, null) }
+                .onSuccess { requestCloudSync(); onResult(true, null) }
                 .onFailure { onResult(false, it.message ?: "Could not update apiary.") }
         }
     }
@@ -487,6 +507,7 @@ class BeeKeepViewModel(
         viewModelScope.launch {
             runCatching { repo.deleteApiaryPermanently(id) }
                 .onSuccess {
+                    requestCloudSync()
                     if (deletedApiaryName != null &&
                         _selected.value?.apiary?.equals(deletedApiaryName, ignoreCase = true) == true
                     ) {
