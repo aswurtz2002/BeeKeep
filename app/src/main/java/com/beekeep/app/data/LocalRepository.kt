@@ -674,9 +674,8 @@ class LocalHiveRepository(context: Context) {
             previousOwners.forEach { ownerHiveId ->
                 db.hives().refreshTagCache(ownerHiveId)
                 val ownerHive = db.hives().get(ownerHiveId)
-                if (ownerHive != null) {
-                    enqueue("hive", ownerHiveId, "upsert", hivePayload(ownerHive))
-                }
+                // This is a tag-cache-only change. The assignment ledger is authoritative;
+                // do not publish a possibly stale full hive-profile snapshot.
                 val ownerNumber = ownerHive?.number ?: ownerHiveId.toString()
                 val event = ActivityEventEntity(
                     IdGenerator.nextLong(), ownerHiveId, now, "tag", "NFC tag removed",
@@ -689,10 +688,8 @@ class LocalHiveRepository(context: Context) {
             val assignment = NfcTagAssignmentEntity(IdGenerator.nextLong(), normalized, hiveId, now)
             db.nfcTagAssignments().upsert(assignment)
             db.hives().refreshTagCache(hiveId)
-            val updatedHive = db.hives().get(hiveId)
-            if (updatedHive != null) {
-                enqueue("hive", hiveId, "upsert", hivePayload(updatedHive))
-            }
+            // A tag assignment changes UID -> hiveId, not the hive's profile.
+            // Sync the ledger only; each client derives its tag cache from the ledger.
             enqueue("nfc_assignment", assignment.id, "upsert", nfcAssignmentPayload(assignment))
             val event = ActivityEventEntity(IdGenerator.nextLong(), hiveId, now, "tag", "NFC tag assigned", "Tag $normalized")
             db.events().upsert(event)
@@ -741,14 +738,9 @@ class LocalHiveRepository(context: Context) {
                 enqueue("nfc_assignment", legacyTombstone.id, "upsert", nfcAssignmentPayload(legacyTombstone))
             }
 
-            // Clear both the assignment ledger and the cached UID on the hive.
-            // The explicit hive upsert also syncs legacy-cache cleanup to cloud.
+            // Only the assignment ledger is shared. The cached tag UID is derived locally;
+            // do not advance the hive profile timestamp for a tag-only change.
             db.hives().refreshTagCache(hiveId)
-            val refreshedHive = db.hives().get(hiveId)
-                ?: throw IllegalArgumentException("Hive not found.")
-            val clearedHive = refreshedHive.copy(tagUid = null, updatedAt = now)
-            db.hives().upsert(clearedHive)
-            enqueue("hive", hiveId, "upsert", hivePayload(clearedHive))
 
             val releasedTags = (activeAssignments.map { it.tagUid } + listOfNotNull(cachedTag))
                 .distinctBy { NfcUid.normalize(it) ?: it.trim().uppercase(java.util.Locale.ROOT) }
@@ -1143,7 +1135,7 @@ class LocalHiveRepository(context: Context) {
                 val incomingUpdatedAt = json.optLong("updated_at", doc.updated_at)
                 if (existing != null && existing.updatedAt >= incomingUpdatedAt) return@withContext
                 db.apiaries().upsert(ApiaryEntity(
-                    id = json.optLong("id", doc.entity_id),
+                    id = doc.entity_id,
                     name = json.optString("name"),
                     notes = json.optString("notes"),
                     latitude = json.doubleOrNull("latitude"),
@@ -1164,7 +1156,7 @@ class LocalHiveRepository(context: Context) {
                 val lifecycleWins = existing == null || incomingStatusChangedAt > existing.statusChangedAt
                 val status = if (lifecycleWins) json.optString("status", HiveStatus.ACTIVE) else existing.status
                 db.hives().upsert(HiveEntity(
-                    id = json.optLong("id", doc.entity_id), number = json.optString("number").trim(),
+                    id = doc.entity_id, number = json.optString("number").trim(),
                     apiaryName = json.optString("apiary").trim().ifBlank { "Unassigned Yard" }, apiaryId = json.longOrNull("apiary_id")?.takeIf { db.apiaries().get(it) != null },
                     queenStatus = json.optString("queen_status", "Laying"),
                     queenMarkColor = json.optString("queen_mark_color"), queenOrigin = json.optString("queen_origin"),
@@ -1227,7 +1219,7 @@ class LocalHiveRepository(context: Context) {
             }
             "nfc_assignment" -> {
                 val incoming = NfcTagAssignmentEntity(
-                    id = json.optLong("id", doc.entity_id),
+                    id = doc.entity_id,
                     tagUid = json.optString("tag_uid"),
                     hiveId = json.optLong("hive_id"),
                     assignedAt = json.optLong("assigned_at", doc.updated_at),
@@ -1239,7 +1231,7 @@ class LocalHiveRepository(context: Context) {
                 val hiveId = json.optLong("hive_id")
                 if (!db.hives().exists(hiveId)) return@withContext
                 val incoming = InspectionEntity(
-                    id = json.optLong("id", doc.entity_id),
+                    id = doc.entity_id,
                     hiveId = hiveId,
                     createdAt = json.optLong("created_at", doc.updated_at),
                     strength = json.optInt("strength").coerceIn(0, 10),
@@ -1271,10 +1263,10 @@ class LocalHiveRepository(context: Context) {
                 // from whichever inspection is actually latest in local history.
                 refreshHiveInspectionSummary(hiveId)
             }
-            "feeding" -> if (db.hives().exists(json.optLong("hive_id"))) db.feedings().upsert(FeedingEntity(json.optLong("id",doc.entity_id),json.optLong("hive_id"),json.optLong("created_at",doc.updated_at),json.optString("feed_type"),json.optString("ratio"),json.optDouble("amount").coerceAtLeast(0.0),json.optString("unit"),json.optString("notes"))) else Unit
-            "treatment" -> if (db.hives().exists(json.optLong("hive_id"))) db.treatments().upsert(TreatmentEntity(json.optLong("id",doc.entity_id),json.optLong("hive_id"),json.optLong("created_at",doc.updated_at),json.optString("treatment_type"),json.optString("product"),json.longOrNull("inserted_at"),json.longOrNull("removal_at"),json.longOrNull("withdrawal_until"),json.optString("notes"))) else Unit
-            "harvest" -> if (db.hives().exists(json.optLong("hive_id"))) db.harvests().upsert(HarvestEntity(json.optLong("id",doc.entity_id),json.optLong("hive_id"),json.optLong("created_at",doc.updated_at),json.optInt("supers_pulled").coerceAtLeast(0),json.optDouble("wet_honey_weight").coerceAtLeast(0.0),json.optDouble("dry_honey_weight").coerceAtLeast(0.0),json.optString("weight_unit","lb"),json.optDouble("wax_weight").coerceAtLeast(0.0),json.optDouble("propolis_weight").coerceAtLeast(0.0),json.optString("notes"))) else Unit
-            "event" -> if (db.hives().exists(json.optLong("hive_id"))) db.events().upsert(ActivityEventEntity(json.optLong("id",doc.entity_id),json.optLong("hive_id"),json.optLong("created_at",doc.updated_at),json.optString("type"),json.optString("title"),json.optString("detail"))) else Unit
+            "feeding" -> if (db.hives().exists(json.optLong("hive_id"))) db.feedings().upsert(FeedingEntity(doc.entity_id,json.optLong("hive_id"),json.optLong("created_at",doc.updated_at),json.optString("feed_type"),json.optString("ratio"),json.optDouble("amount").coerceAtLeast(0.0),json.optString("unit"),json.optString("notes"))) else Unit
+            "treatment" -> if (db.hives().exists(json.optLong("hive_id"))) db.treatments().upsert(TreatmentEntity(doc.entity_id,json.optLong("hive_id"),json.optLong("created_at",doc.updated_at),json.optString("treatment_type"),json.optString("product"),json.longOrNull("inserted_at"),json.longOrNull("removal_at"),json.longOrNull("withdrawal_until"),json.optString("notes"))) else Unit
+            "harvest" -> if (db.hives().exists(json.optLong("hive_id"))) db.harvests().upsert(HarvestEntity(doc.entity_id,json.optLong("hive_id"),json.optLong("created_at",doc.updated_at),json.optInt("supers_pulled").coerceAtLeast(0),json.optDouble("wet_honey_weight").coerceAtLeast(0.0),json.optDouble("dry_honey_weight").coerceAtLeast(0.0),json.optString("weight_unit","lb"),json.optDouble("wax_weight").coerceAtLeast(0.0),json.optDouble("propolis_weight").coerceAtLeast(0.0),json.optString("notes"))) else Unit
+            "event" -> if (db.hives().exists(json.optLong("hive_id"))) db.events().upsert(ActivityEventEntity(doc.entity_id,json.optLong("hive_id"),json.optLong("created_at",doc.updated_at),json.optString("type"),json.optString("title"),json.optString("detail"))) else Unit
         }
     }
 
@@ -1647,15 +1639,9 @@ class LocalHiveRepository(context: Context) {
 
             val affectedHiveIds = (merge.toClose.map { it.hiveId } + merge.incoming.hiveId).distinct()
             affectedHiveIds.forEach { affectedHiveId ->
-                val beforeTagUid = db.hives().get(affectedHiveId)?.tagUid
+                // Cache-only tag changes stay local. Shared ownership is synchronized by
+                // the nfc_assignment document, not by a whole hive-profile snapshot.
                 db.hives().refreshTagCache(affectedHiveId)
-                db.hives().get(affectedHiveId)?.let { updatedHive ->
-                    if (beforeTagUid != updatedHive.tagUid) {
-                        // Keep legacy hive documents aligned with the assignment ledger or an
-                        // older device could re-import a stale cached UID as a new assignment.
-                        enqueue("hive", affectedHiveId, "upsert", hivePayload(updatedHive))
-                    }
-                }
             }
         }
     }
