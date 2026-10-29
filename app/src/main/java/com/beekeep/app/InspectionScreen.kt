@@ -701,10 +701,13 @@ internal fun InspectionScreen(
         hive.id, cleanDraftWorkspaceId, strength, beeCountHalfSteps, queen, mites, sample, eggs, openBrood, cappedBrood,
         honey, pollen, emptyComb, emergency, supercedure, swarm, diseasesCsv, lat, lon
     ) {
+        if (discardSavedFormDraftOnDispose.value) return@LaunchedEffect
         val changed = saveInspectionFormDraft(formDraftPrefs, cleanDraftWorkspaceId, hive.id, currentFormDraft)
         if (changed) {
             delay(600)
-            com.beekeep.app.cloud.CloudSyncScheduler.runNow(context)
+            if (!discardSavedFormDraftOnDispose.value) {
+                com.beekeep.app.cloud.CloudSyncScheduler.runNow(context)
+            }
         }
     }
     androidx.compose.runtime.LaunchedEffect(hive.id, beeCountHistoryStartHalfSteps) {
