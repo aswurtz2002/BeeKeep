@@ -6,6 +6,7 @@ BeeKeep is offline-first. Local writes are committed to Room first, then queued 
 
 - The existing `beekeep_documents` table retains the per-user data model for personal workspaces and older app versions.
 - Personal apiaries, hives, inspections, feedings, treatments, harvests, events and NFC history continue to synchronize under the signed-in user.
+- NFC tag ownership is synchronized through immutable `nfc_assignment` history, not by uploading a whole hive profile when only its cached tag UID changes. Assignment release is monotonic by assignment ID: a delayed active copy cannot reopen a locally released assignment, and an ID reused with a different UID, hive or assignment time fails closed. Each device derives its hive tag cache from the assignment ledger.
 - Signing out switches the active local dataset back to the personal/offline database.
 - The foreground app and background WorkManager sync share one process-wide Supabase client and sync mutex. Do not create a separate auto-refreshing Auth client for each gateway: independent refresh loops can race on the same persisted rotating refresh token and cause `refresh_token_already_used` session failures.
 
