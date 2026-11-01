@@ -23,6 +23,34 @@ class InspectionNoteDraftTest {
     }
 
     @Test
+    fun permanentHiveDeleteClearsOnlyScopedNoteDraftKeys() {
+        assertEquals(
+            setOf(
+                "workspace-a_hive_42",
+                "workspace-a_hive_42_recorded_at",
+                "workspace-a_hive_42_updated_at",
+                "workspace-a_hive_42_sync_pending"
+            ),
+            inspectionNoteDraftKeysForDeletedHive("workspace-a", 42L)
+        )
+    }
+
+    @Test
+    fun permanentPersonalHiveDeleteAlsoClearsLegacyNoteDraftKeys() {
+        assertEquals(
+            setOf(
+                "personal_hive_42",
+                "personal_hive_42_recorded_at",
+                "personal_hive_42_updated_at",
+                "personal_hive_42_sync_pending",
+                "hive_42",
+                "hive_42_recorded_at"
+            ),
+            inspectionNoteDraftKeysForDeletedHive(null, 42L)
+        )
+    }
+
+    @Test
     fun onlyNewerOrEqualCloudDraftsApplyWhenNoLocalEditIsPending() {
         assertTrue(shouldApplyInspectionNoteDraft(incomingUpdatedAt = 120L, localUpdatedAt = 100L))
         assertTrue(shouldApplyInspectionNoteDraft(incomingUpdatedAt = 100L, localUpdatedAt = 100L))

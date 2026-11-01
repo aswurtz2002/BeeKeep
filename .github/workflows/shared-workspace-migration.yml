@@ -127,3 +127,9 @@ jobs:
         run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261101200000_beekeep_document_conflict_guards.sql
       - name: Verify stale cloud writes and permanent tombstones are blocked
         run: psql -v ON_ERROR_STOP=1 -f supabase/tests/document_conflict_guards.sql
+      - name: Apply explicit deletion timestamp reconciliation
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261101203000_beekeep_delete_timestamp_reconciliation.sql
+      - name: Re-verify stale writes, permanent tombstones and reusable drafts
+        run: psql -v ON_ERROR_STOP=1 -f supabase/tests/document_conflict_guards.sql
+      - name: Verify explicit deletion overrides device clock skew
+        run: psql -v ON_ERROR_STOP=1 -f supabase/tests/delete_timestamp_reconciliation.sql

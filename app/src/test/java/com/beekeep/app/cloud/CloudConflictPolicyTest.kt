@@ -1,10 +1,59 @@
 package com.beekeep.app.cloud
 
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class CloudConflictPolicyTest {
+    @Test
+    fun explicitDeleteWinsEvenWhenDeviceClockIsBehindTheCloudRow() {
+        assertTrue(
+            CloudConflictPolicy.shouldUploadLocal(
+                localUpdatedAt = 100L,
+                remoteUpdatedAt = 900L,
+                localDeleted = true
+            )
+        )
+        assertEquals(
+            901L,
+            CloudConflictPolicy.effectiveUploadTimestamp(
+                localUpdatedAt = 100L,
+                remoteUpdatedAt = 900L,
+                localDeleted = true
+            )
+        )
+        assertEquals(
+            100L,
+            CloudConflictPolicy.effectiveUploadTimestamp(
+                localUpdatedAt = 100L,
+                remoteUpdatedAt = 900L,
+                localDeleted = false
+            )
+        )
+    }
+
+    @Test
+    fun draftClearDoesNotOverrideANewerDraftWhenTheDeviceClockIsBehind() {
+        assertFalse(
+            CloudConflictPolicy.shouldUploadLocal(
+                localUpdatedAt = 100L,
+                remoteUpdatedAt = 900L,
+                localDeleted = true,
+                allowDraftRecreation = true
+            )
+        )
+        assertEquals(
+            100L,
+            CloudConflictPolicy.effectiveUploadTimestamp(
+                localUpdatedAt = 100L,
+                remoteUpdatedAt = 900L,
+                localDeleted = true,
+                allowDraftRecreation = true
+            )
+        )
+    }
+
     @Test
     fun localUploadOnlyWinsWhenItsTimestampIsStrictlyNewer() {
         assertTrue(CloudConflictPolicy.shouldUploadLocal(101L, 100L))
@@ -37,7 +86,7 @@ class CloudConflictPolicyTest {
                 allowDraftRecreation = true
             )
         )
-        assertTrue(
+        assertFalse(
             CloudConflictPolicy.shouldUploadLocal(
                 localUpdatedAt = 500L,
                 remoteUpdatedAt = 100L,

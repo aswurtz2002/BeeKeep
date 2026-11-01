@@ -34,8 +34,8 @@ data class CloudWorkspaceDocumentRow(
 
 /**
  * The cloud row is the tie-break authority for equal client timestamps. Server-side guards
- * reject older writes; clients apply an equal-time cloud row so every replica converges on
- * the version committed last by Postgres.
+ * reject older edits; explicit permanent deletions are advanced beyond the current row.
+ * Clients apply equal-time cloud rows so replicas converge on the version committed last.
  */
 internal object CloudConflictPolicy {
     fun shouldUploadLocal(
@@ -46,8 +46,25 @@ internal object CloudConflictPolicy {
         allowDraftRecreation: Boolean = false
     ): Boolean {
         if (remoteUpdatedAt == null) return true
-        if (remoteDeleted && !localDeleted && !allowDraftRecreation) return false
+        if (remoteDeleted) {
+            // Only a newer active draft may reuse the intentionally hive-scoped draft ID.
+            return !localDeleted && allowDraftRecreation && localUpdatedAt > remoteUpdatedAt
+        }
+        // Permanent entity deletes are explicit actions. Reusable draft clears retain
+        // timestamp conflict checks so an old clear cannot erase a newer draft.
+        if (localDeleted && !allowDraftRecreation) return true
         return localUpdatedAt > remoteUpdatedAt
+    }
+
+    fun effectiveUploadTimestamp(
+        localUpdatedAt: Long,
+        remoteUpdatedAt: Long?,
+        localDeleted: Boolean,
+        allowDraftRecreation: Boolean = false
+    ): Long = if (localDeleted && !allowDraftRecreation && remoteUpdatedAt != null) {
+        maxOf(localUpdatedAt, remoteUpdatedAt + 1L)
+    } else {
+        localUpdatedAt
     }
 
     fun shouldApplyRemote(incomingUpdatedAt: Long, localUpdatedAt: Long): Boolean =

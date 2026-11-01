@@ -20,6 +20,24 @@ internal fun inspectionNoteDraftRecordedAtKey(draftKey: String): String = "${dra
 internal fun inspectionNoteDraftUpdatedAtKey(draftKey: String): String = "${draftKey}_updated_at"
 internal fun inspectionNoteDraftPendingKey(draftKey: String): String = "${draftKey}_sync_pending"
 
+internal fun inspectionNoteDraftKeysForDeletedHive(
+    workspaceId: String?,
+    hiveId: Long
+): Set<String> {
+    require(hiveId > 0L) { "Inspection note draft requires a valid hive ID." }
+    val key = inspectionNoteDraftKey(workspaceId, hiveId)
+    return buildSet {
+        add(key)
+        add(inspectionNoteDraftRecordedAtKey(key))
+        add(inspectionNoteDraftUpdatedAtKey(key))
+        add(inspectionNoteDraftPendingKey(key))
+        if (workspaceId?.trim().isNullOrEmpty()) {
+            add("hive_$hiveId")
+            add("hive_${hiveId}_recorded_at")
+        }
+    }
+}
+
 /**
  * Move the old device-only personal draft into the personal namespace on first use.
  * Team workspace screens never read or migrate the old unscoped key.

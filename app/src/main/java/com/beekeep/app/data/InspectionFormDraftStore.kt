@@ -89,6 +89,29 @@ internal object InspectionFormDraftStore {
         return true
     }
 
+    /**
+     * Keys removed when the parent hive is permanently deleted. This intentionally includes
+     * pending drafts and bee-count history markers: there is no valid local draft for a dead ID.
+     */
+    fun keysForDeletedHive(workspaceId: String?, hiveId: Long): Set<String> {
+        require(hiveId > 0L) { "Inspection form draft requires a valid hive ID." }
+        val key = key(workspaceId, hiveId)
+        return buildSet {
+            add(key)
+            add(pendingKey(key))
+            add(beeCountHistoryStartKey(workspaceId, hiveId))
+            if (workspaceId.isNullOrBlank()) {
+                add(legacyKey(hiveId))
+                add(legacyBeeCountHistoryStartKey(hiveId))
+            }
+        }
+    }
+
+    fun clearForDeletedHive(prefs: SharedPreferences, workspaceId: String?, hiveId: Long) {
+        val keys = keysForDeletedHive(workspaceId, hiveId)
+        prefs.edit { keys.forEach { remove(it) } }
+    }
+
     /** Creates a cloud tombstone so another device discards its unfinished copy after save. */
     fun markDeleted(prefs: SharedPreferences, workspaceId: String?, hiveId: Long) {
         require(hiveId > 0L) { "Inspection form draft requires a valid hive ID." }
