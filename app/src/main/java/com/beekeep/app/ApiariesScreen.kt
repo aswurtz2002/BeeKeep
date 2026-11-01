@@ -84,11 +84,14 @@ internal fun ApiariesScreen(
         val savedSet = savedIdList.toSet()
         savedIdList.mapNotNull { byId[it] } + apiaries.filterNot { it.id in savedSet }
     }
-    val filtered = orderedApiaries.filter { it.name.contains(query, ignoreCase = true) }
-    val currentOrderedIds = rememberUpdatedState(orderedApiaries.map { it.id })
+    val filtered = remember(orderedApiaries, query) {
+        orderedApiaries.filter { it.name.contains(query, ignoreCase = true) }
+    }
+    val orderedApiaryIds = remember(orderedApiaries) { orderedApiaries.map { it.id } }
+    val currentOrderedIds = rememberUpdatedState(orderedApiaryIds)
     val moveApiaryByIds = rememberUpdatedState<(Long, Long) -> Unit> { fromId, targetId ->
         if (fromId != targetId && query.isBlank()) {
-            val currentIds = orderedApiaries.map { it.id }
+            val currentIds = orderedApiaryIds
             val fromIndex = currentIds.indexOf(fromId)
             val targetIndex = currentIds.indexOf(targetId)
             if (fromIndex >= 0 && targetIndex >= 0 && fromIndex != targetIndex) {
