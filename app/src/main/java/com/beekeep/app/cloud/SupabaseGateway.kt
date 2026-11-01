@@ -136,7 +136,8 @@ class SupabaseGateway(
             _account.value = CloudAccountState(
                 configured = true,
                 signedIn = userId != null,
-                email = session?.user?.email ?: ""
+                email = session?.user?.email ?: "",
+                userId = userId
             )
             if (enableRealtime && userId != null) startRealtime() else stopRealtime()
         } catch (cancelled: CancellationException) {
