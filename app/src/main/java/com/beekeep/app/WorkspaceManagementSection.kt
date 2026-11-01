@@ -437,7 +437,6 @@ fun WorkspaceManagementSection(
                                     },
                                     onClick = {
                                         selectedWorkspaceId = workspace.id
-                                        memberMenuId = null
                                         roleMenuExpanded = false
                                         activity.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE).edit()
                                             .putString("selected_team_workspace_id", workspace.id).apply()
