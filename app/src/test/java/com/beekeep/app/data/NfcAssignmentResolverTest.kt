@@ -276,7 +276,7 @@ class NfcAssignmentResolverTest {
     @Test
     fun `exact active same-ID replay remains idempotently active`() {
         val stored = assignment(10, "A123", 83, at = 50)
-        val replay = assignment(10, "AA:12:3", 83, at = 50)
+        val replay = assignment(10, "A1:23", 83, at = 50)
 
         val result = NfcAssignmentResolver.merge(
             tagConflicts = emptyList(),
