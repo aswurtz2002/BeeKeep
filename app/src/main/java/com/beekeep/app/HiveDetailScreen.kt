@@ -61,10 +61,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.foundation.layout.widthIn
 import com.beekeep.app.data.ActivityEvent
-import com.beekeep.app.data.Harvest
 import com.beekeep.app.data.Hive
 import com.beekeep.app.data.Inspection
-import com.beekeep.app.data.Treatment
 import com.beekeep.app.nfc.BeeKeepNfcPayload
 import com.beekeep.app.nfc.NfcController
 import com.beekeep.app.nfc.NfcResult
