@@ -637,9 +637,6 @@ fun BeeKeepApp(
     val selected by vm.selected.collectAsStateWithLifecycle()
     val inspections by vm.inspections.collectAsStateWithLifecycle()
     val events by vm.events.collectAsStateWithLifecycle()
-    val feedings by vm.feedings.collectAsStateWithLifecycle()
-    val treatments by vm.treatments.collectAsStateWithLifecycle()
-    val harvests by vm.harvests.collectAsStateWithLifecycle()
     val ready by vm.ready.collectAsStateWithLifecycle()
 
     // Keep a Pro session's expiry live while BeeKeep stays open, not only on app resume.
@@ -2000,6 +1997,7 @@ fun BeeKeepApp(
             ?.let { hivesInThisApiary.getOrNull(it + 1) }
         HiveDetailScreen(
             hive = hiveForDetail,
+            viewModel = vm,
             fastTagAssignmentMode = fastTagAssignmentActive,
             autoStartTagWriting = pendingAutoTagWriteHiveId == hiveForDetail.id,
             autoStartTagWritingIgnoreUid = if (pendingAutoTagWriteHiveId == hiveForDetail.id) pendingAutoTagWriteIgnoredUid else null,
@@ -2043,9 +2041,6 @@ fun BeeKeepApp(
             },
             inspections = inspections,
             events = events,
-            feedings = feedings,
-            treatments = treatments,
-            harvests = harvests,
             nfc = nfc,
             activity = activity,
             onBack = {
