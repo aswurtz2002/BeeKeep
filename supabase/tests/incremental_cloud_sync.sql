@@ -180,7 +180,18 @@ begin
 end;
 $personal_isolation_assertions$;
 
+-- Team-workspace creation is Ultimate-gated. Give the disposable fixture account
+-- a temporary trusted entitlement inside this test transaction; ROLLBACK restores it.
+reset role;
+update auth.users
+set raw_app_meta_data = jsonb_build_object(
+    'beekeep_plan', 'ultimate_yearly',
+    'beekeep_subscription_expires_at', '2099-01-01T00:00:00Z'
+)
+where id = '00000000-0000-0000-0000-000000000001';
+
 -- Create a private team workspace as the owner, then verify insert/update/tombstone deltas.
+set role authenticated;
 select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-000000000001', false);
 insert into incremental_sync_test_context(key, value)
 select 'workspace_id', id::text
