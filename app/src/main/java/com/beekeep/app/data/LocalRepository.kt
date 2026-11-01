@@ -7,6 +7,7 @@ import com.beekeep.app.BeeKeepEntitlements
 
 import android.content.Context
 import androidx.room.withTransaction
+import com.beekeep.app.cloud.CloudConflictPolicy
 import com.beekeep.app.cloud.CloudDocumentRow
 import com.beekeep.app.cloud.LegacyNfcProfileSnapshotGuard
 import com.beekeep.app.cloud.NfcMutationSyncTimestamp
