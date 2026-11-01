@@ -960,15 +960,20 @@ class SupabaseGateway(
                 repository.queuePendingInspectionNoteDrafts()
             }
             repository.queuePendingInspectionFormDrafts()
-            val remoteBefore = loadAllWorkspaceDocuments(workspaceId)
-            val remoteByKey = remoteBefore.associateBy { "${it.entity_type}:${it.entity_id}" }.toMutableMap()
+            val cursorKey = workspaceSyncCursorKey(userId, workspaceId)
+            val previousCursor = readSyncCursor(cursorKey)
             if (isWritable) {
                 // Keep uploading bounded chunks until the selected workspace outbox drains.
-                // Older queued history must not starve a newly-created apiary's hive rows.
+                // Conflict checks now read only the cloud records for this pending outbox batch.
                 while (true) {
                     val pending = repository.pendingSync(SYNC_UPLOAD_BATCH_SIZE)
                     if (pending.isEmpty()) break
 
+                    val remoteRows = loadWorkspaceDocumentsForEntityIds(
+                        workspaceId,
+                        pending.map { it.entityId }
+                    )
+                    val remoteByKey = remoteRows.associateBy { "${it.entity_type}:${it.entity_id}" }
                     val uploadable = mutableListOf<CloudWorkspaceDocumentRow>()
                     val uploadableIds = mutableSetOf<Long>()
                     val supersededIds = mutableListOf<Long>()
@@ -1002,15 +1007,24 @@ class SupabaseGateway(
                         }
                         // Only acknowledge uploads after the remote upsert succeeds.
                         repository.markSyncDone(uploadableIds)
-                        uploadable.forEach { row ->
-                            remoteByKey["${row.entity_type}:${row.entity_id}"] = row
-                        }
                     }
                 }
             }
 
-            val workspaceDocuments = remoteByKey.values.toList()
-            val legacyNfcHiveIds = legacyNfcOnlyWorkspaceHiveSnapshotIds(workspaceDocuments)
+            // A fixed head bounds each pull. Writes committed during pagination receive
+            // a higher version and will be fetched on the next sync.
+            val headVersion = loadWorkspaceSyncHead(workspaceId)
+            val afterVersion = previousCursor?.takeIf { it <= headVersion } ?: 0L
+            val workspaceDocuments = loadWorkspaceChanges(
+                workspaceId,
+                afterVersion,
+                headVersion
+            )
+            val knownNfcMutations = repository.nfcMutationSyncTimestamps()
+            val legacyNfcHiveIds = legacyNfcOnlyWorkspaceHiveSnapshotIds(
+                workspaceDocuments,
+                knownMutations = knownNfcMutations
+            )
             val localDocuments = CloudDocumentOrder.workspace(workspaceDocuments).map { document ->
                 CloudDocumentRow(
                     user_id = userId,
@@ -1026,6 +1040,8 @@ class SupabaseGateway(
                 documents = localDocuments,
                 ignoreLegacyNfcProfileSnapshotHiveIds = legacyNfcHiveIds
             )
+            // Only advance after all downloaded changes have been applied to Room.
+            saveSyncCursor(cursorKey, headVersion)
 
             repository.pruneSync()
             val now = System.currentTimeMillis()
