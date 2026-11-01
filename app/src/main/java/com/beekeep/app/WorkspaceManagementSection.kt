@@ -283,8 +283,7 @@ fun WorkspaceManagementSection(
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         WorkspacePanel(
-            title = "Your teams",
-            description = "Choose a team, manage its members, or join with an invitation code."
+            title = "Your teams"
         ) {
             if (!account.signedIn) {
                 Text(
@@ -787,11 +786,6 @@ fun WorkspaceManagementSection(
                 if (selectedWorkspaceSection == "people" && canManage) {
                     WorkspacePanel(
                         title = "Invite team members",
-                        description = if (invitations.isEmpty()) {
-                            "Create an invitation code for a teammate."
-                        } else {
-                            "${invitations.size} pending ${if (invitations.size == 1) "invitation" else "invitations"} · create or manage codes"
-                        },
                         collapsible = true,
                         expanded = showInvitePanel,
                         onToggle = {
