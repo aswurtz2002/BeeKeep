@@ -118,3 +118,8 @@ jobs:
         run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261027130000_beekeep_pro_and_ultimate_hive_limit_overrides.sql
       - name: Verify Pro and Ultimate custom hive limits and audit trail
         run: psql -v ON_ERROR_STOP=1 -f supabase/tests/pro_hive_limit_overrides.sql
+
+      - name: Apply incremental cloud sync version ledger
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261101143217_beekeep_incremental_sync_versions.sql
+      - name: Verify incremental cloud sync versions, paging and RLS isolation
+        run: psql -v ON_ERROR_STOP=1 -f supabase/tests/incremental_cloud_sync.sql
