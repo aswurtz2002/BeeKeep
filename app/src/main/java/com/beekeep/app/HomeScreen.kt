@@ -58,8 +58,6 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.beekeep.app.data.Apiary
-import com.beekeep.app.data.Hive
 import com.beekeep.app.ui.theme.BeeKeepAccent
 
 @Composable
@@ -196,8 +194,8 @@ internal fun HoneycombNfcIndicator(nfcEnabled: Boolean, size: Dp = 220.dp) {
 
 @Composable
 internal fun HomeScreen(
-    hives: List<Hive>,
-    apiaries: List<Apiary>,
+    hiveCount: Int,
+    apiaryCount: Int,
     padding: androidx.compose.foundation.layout.PaddingValues,
     nfcEnabled: Boolean,
     currentPlan: BeeKeepPlan = BeeKeepPlan.FREE,
@@ -342,8 +340,8 @@ internal fun HomeScreen(
                 Modifier.fillMaxWidth().padding(top = 4.dp),
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                MetricCard("Apiaries", apiaries.size.toString(), Modifier.weight(1f), onClick = onOpenApiaries)
-                MetricCard("Hives", hives.size.toString(), Modifier.weight(1f))
+                MetricCard("Apiaries", apiaryCount.toString(), Modifier.weight(1f), onClick = onOpenApiaries)
+                MetricCard("Hives", hiveCount.toString(), Modifier.weight(1f))
             }
         }
         item { HomeHelpMenu() }
