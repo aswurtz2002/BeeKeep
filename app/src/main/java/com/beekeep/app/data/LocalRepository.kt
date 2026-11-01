@@ -1731,11 +1731,19 @@ class LocalHiveRepository(context: Context) {
     }
 
     private suspend fun enqueue(type: String, entityId: Long, operation: String, payload: String) {
-        // Remote hydration for a viewer may adjust local caches. Never turn that into
-        // a pending client write for a read-only role.
-        if (_activeWorkspaceReadOnly.value) return
-        db.outbox().deletePendingForEntity(type, entityId)
-        db.outbox().enqueue(SyncOutboxEntity(IdGenerator.nextLong(), type, entityId, operation, payload))
+        // Replacing an older pending write and inserting its replacement must be atomic.
+        // Capture the current database so a workspace switch cannot split this operation
+        // across two Room instances.
+        val database = db
+        database.withTransaction {
+            // Remote hydration for a viewer may adjust local caches. Never turn that into
+            // a pending client write for a read-only role.
+            if (_activeWorkspaceReadOnly.value) return@withTransaction
+            database.outbox().deletePendingForEntity(type, entityId)
+            database.outbox().enqueue(
+                SyncOutboxEntity(IdGenerator.nextLong(), type, entityId, operation, payload)
+            )
+        }
     }
 
     private fun hivePayload(e: HiveEntity) = JSONObject().put("id",e.id).put("number",e.number).put("apiary",e.apiaryName).put("apiary_id",e.apiaryId).put("queen_status",e.queenStatus).put("queen_mark_color",e.queenMarkColor).put("queen_origin",e.queenOrigin).put("queen_age_months",e.queenAgeMonths).put("queen_temperament",e.queenTemperament).put("strength",e.strength).put("mite_percent",e.mitePercent).put("tag_uid",e.tagUid).put("updated_at",e.updatedAt).put("deleted",e.deleted).put("status",e.status).put("dead_at",e.deadAt).put("status_changed_at",e.statusChangedAt).put("latitude",e.latitude).put("longitude",e.longitude).put("bee_count_frames",e.beeCountFrames).toString()
