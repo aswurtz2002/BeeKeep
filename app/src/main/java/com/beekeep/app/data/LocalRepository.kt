@@ -1147,39 +1147,34 @@ class LocalHiveRepository(context: Context) {
             when (doc.entity_type) {
                 "inspection_note_draft" -> clearLocalInspectionNoteDraft(doc.entity_id, doc.updated_at)
                 "inspection_form_draft" -> clearLocalInspectionFormDraft(doc.entity_id, doc.updated_at)
+                // Permanent cloud tombstones are authoritative even when a device's local
+                // clock is ahead. The server prevents these identities from being revived.
                 "apiary" -> db.apiaries().get(doc.entity_id)?.let {
-                    // A newer cloud tombstone removes the row locally as well, freeing
-                    // the apiary name and ensuring the map pin disappears on this device.
-                    if (doc.updated_at >= it.updatedAt) db.withTransaction { db.apiaries().hardDelete(doc.entity_id) }
+                    db.withTransaction { db.apiaries().hardDelete(doc.entity_id) }
                 }
                 "hive" -> db.hives().get(doc.entity_id)?.let {
-                    // A remote permanent delete only wins over genuinely newer local edits.
-                    if (doc.updated_at >= it.updatedAt) db.withTransaction { permanentlyDeleteHiveLocal(doc.entity_id) }
+                    db.withTransaction { permanentlyDeleteHiveLocal(doc.entity_id) }
                 }
                 "inspection" -> db.inspections().get(doc.entity_id)?.let { existing ->
-                    if (doc.updated_at >= existing.updatedAt) {
-                        db.withTransaction { db.inspections().hardDelete(doc.entity_id) }
-                        refreshHiveInspectionSummary(existing.hiveId)
-                    }
+                    db.withTransaction { db.inspections().hardDelete(doc.entity_id) }
+                    refreshHiveInspectionSummary(existing.hiveId)
                 }
                 "feeding" -> db.feedings().get(doc.entity_id)?.let {
-                    if (doc.updated_at >= it.createdAt) db.withTransaction { db.feedings().hardDelete(doc.entity_id) }
+                    db.withTransaction { db.feedings().hardDelete(doc.entity_id) }
                 }
                 "treatment" -> db.treatments().get(doc.entity_id)?.let {
-                    if (doc.updated_at >= it.createdAt) db.withTransaction { db.treatments().hardDelete(doc.entity_id) }
+                    db.withTransaction { db.treatments().hardDelete(doc.entity_id) }
                 }
                 "harvest" -> db.harvests().get(doc.entity_id)?.let {
-                    if (doc.updated_at >= it.createdAt) db.withTransaction { db.harvests().hardDelete(doc.entity_id) }
+                    db.withTransaction { db.harvests().hardDelete(doc.entity_id) }
                 }
                 "event" -> db.events().get(doc.entity_id)?.let {
-                    if (doc.updated_at >= it.createdAt) db.withTransaction { db.events().hardDelete(doc.entity_id) }
+                    db.withTransaction { db.events().hardDelete(doc.entity_id) }
                 }
                 "nfc_assignment" -> db.nfcTagAssignments().get(doc.entity_id)?.let { assignment ->
-                    if (doc.updated_at >= maxOf(assignment.assignedAt, assignment.unassignedAt ?: 0L)) {
-                        db.withTransaction {
-                            db.nfcTagAssignments().hardDelete(doc.entity_id)
-                            db.hives().refreshTagCache(assignment.hiveId)
-                        }
+                    db.withTransaction {
+                        db.nfcTagAssignments().hardDelete(doc.entity_id)
+                        db.hives().refreshTagCache(assignment.hiveId)
                     }
                 }
             }
