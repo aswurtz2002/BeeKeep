@@ -1756,7 +1756,8 @@ class LocalHiveRepository(context: Context) {
     ) {
         val normalizedUid = NfcUid.normalize(incoming.tagUid)
         db.withTransaction {
-            val incomingAlreadyStored = db.nfcTagAssignments().get(incoming.id) != null
+            val existingSameId = db.nfcTagAssignments().get(incoming.id)
+            val incomingAlreadyStored = existingSameId != null
             // Imported/cloud data is not trusted to be normalized. Keep malformed rows
             // as closed history, never as an active route to a hive.
             val safeIncoming = if (normalizedUid == null) {
@@ -1778,16 +1779,23 @@ class LocalHiveRepository(context: Context) {
                     )
                 )
             } else safeIncoming
-            val merge = if (normalizedUid == null || !lifecycleSafeIncoming.isActive) {
-                NfcAssignmentResolver.MergeResult(lifecycleSafeIncoming, emptyList())
-            } else {
-                NfcAssignmentResolver.merge(
-                    tagConflicts = db.nfcTagAssignments().allActiveAssignments()
-                        .filter { NfcUid.matches(it.tagUid, normalizedUid) },
-                    hiveConflicts = db.nfcTagAssignments().activeAssignmentsForHive(lifecycleSafeIncoming.hiveId),
-                    incoming = lifecycleSafeIncoming
-                )
-            }
+            // Always reconcile the same assignment ID, including closed incoming rows.
+            // A local release is monotonic; an older active payload must not reopen it.
+            val merge = NfcAssignmentResolver.merge(
+                tagConflicts = if (normalizedUid != null && lifecycleSafeIncoming.isActive) {
+                    db.nfcTagAssignments().allActiveAssignments()
+                        .filter { NfcUid.matches(it.tagUid, normalizedUid) }
+                } else {
+                    emptyList()
+                },
+                hiveConflicts = if (normalizedUid != null && lifecycleSafeIncoming.isActive) {
+                    db.nfcTagAssignments().activeAssignmentsForHive(lifecycleSafeIncoming.hiveId)
+                } else {
+                    emptyList()
+                },
+                incoming = lifecycleSafeIncoming,
+                existingSameId = existingSameId
+            )
 
             merge.toClose.forEach { closed ->
                 db.nfcTagAssignments().upsert(closed)

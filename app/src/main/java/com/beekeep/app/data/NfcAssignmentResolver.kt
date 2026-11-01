@@ -74,25 +74,76 @@ object NfcAssignmentResolver {
     fun merge(
         tagConflicts: List<NfcTagAssignmentEntity>,
         hiveConflicts: List<NfcTagAssignmentEntity>,
-        incoming: NfcTagAssignmentEntity
+        incoming: NfcTagAssignmentEntity,
+        existingSameId: NfcTagAssignmentEntity? = null
     ): MergeResult {
-        if (!incoming.isActive) return MergeResult(incoming, emptyList())
+        // Assignment IDs are immutable identities. In particular, an active copy arriving
+        // from another device must never reopen a row that this device has already closed.
+        val storedSameId = existingSameId
+            ?: (tagConflicts + hiveConflicts).firstOrNull { it.id == incoming.id }
+        val canonicalIncoming = storedSameId?.let { mergeSameId(it, incoming) } ?: incoming
+        if (!canonicalIncoming.isActive) return MergeResult(canonicalIncoming, emptyList())
 
         val conflicts = (tagConflicts + hiveConflicts)
             .distinctBy { it.id }
-            .filter { it.id != incoming.id && it.isActive }
+            .filter { it.id != canonicalIncoming.id && it.isActive }
 
         val losingConflict = conflicts
-            .filterNot { winsOver(incoming, it) }
+            .filterNot { winsOver(canonicalIncoming, it) }
             .maxWithOrNull(compareBy<NfcTagAssignmentEntity> { it.assignedAt }.thenBy { it.id })
 
         if (losingConflict != null) {
-            return MergeResult(incoming.copy(unassignedAt = losingConflict.assignedAt), emptyList())
+            return MergeResult(
+                canonicalIncoming.copy(unassignedAt = maxOf(canonicalIncoming.assignedAt, losingConflict.assignedAt)),
+                emptyList()
+            )
         }
 
         return MergeResult(
-            incoming,
-            conflicts.map { it.copy(unassignedAt = incoming.assignedAt) }
+            canonicalIncoming,
+            conflicts.map { it.copy(unassignedAt = maxOf(it.assignedAt, canonicalIncoming.assignedAt)) }
         )
+    }
+
+    /**
+     * Merge two payloads for the same immutable assignment ID.
+     *
+     * A release is monotonic: once either replica has closed an assignment, an older
+     * active copy cannot reopen it. If the same ID arrives with a different UID, hive,
+     * or assignment time, treat it as an ID collision/corrupt payload and close the
+     * stored identity rather than routing the tag to an ambiguous hive.
+     */
+    private fun mergeSameId(
+        stored: NfcTagAssignmentEntity,
+        incoming: NfcTagAssignmentEntity
+    ): NfcTagAssignmentEntity {
+        val sameIdentity =
+            NfcUid.normalize(stored.tagUid) == NfcUid.normalize(incoming.tagUid) &&
+                stored.hiveId == incoming.hiveId &&
+                stored.assignedAt == incoming.assignedAt
+
+        val storedClosedAt = stored.unassignedAt
+        val incomingClosedAt = incoming.unassignedAt
+        if (!sameIdentity) {
+            val closedAt = maxOf(
+                stored.assignedAt,
+                incoming.assignedAt,
+                storedClosedAt ?: 0L,
+                incomingClosedAt ?: 0L
+            )
+            return stored.copy(unassignedAt = closedAt)
+        }
+
+        val isClosed = storedClosedAt != null || incomingClosedAt != null
+        val mergedClosedAt = if (isClosed) {
+            maxOf(
+                stored.assignedAt,
+                storedClosedAt ?: 0L,
+                incomingClosedAt ?: 0L
+            )
+        } else {
+            null
+        }
+        return incoming.copy(unassignedAt = mergedClosedAt)
     }
 }

@@ -218,5 +218,75 @@ class NfcAssignmentResolverTest {
         assertTrue(result.toClose.isEmpty())
     }
 
-}
 
+    @Test
+    fun `stale active copy cannot reopen a locally released assignment with the same ID`() {
+        val released = assignment(10, "A123", 83, at = 50, unassignedAt = 80)
+        val staleActive = assignment(10, "A123", 83, at = 50)
+
+        val result = NfcAssignmentResolver.merge(
+            tagConflicts = emptyList(),
+            hiveConflicts = emptyList(),
+            incoming = staleActive,
+            existingSameId = released
+        )
+
+        assertEquals(released, result.incoming)
+        assertFalse(result.incoming.isActive)
+        assertTrue(result.toClose.isEmpty())
+    }
+
+    @Test
+    fun `closed copy closes a same-ID active local assignment`() {
+        val active = assignment(10, "A123", 83, at = 50)
+        val released = assignment(10, "A123", 83, at = 50, unassignedAt = 90)
+
+        val result = NfcAssignmentResolver.merge(
+            tagConflicts = listOf(active),
+            hiveConflicts = listOf(active),
+            incoming = released,
+            existingSameId = active
+        )
+
+        assertEquals(90L, result.incoming.unassignedAt)
+        assertFalse(result.incoming.isActive)
+        assertTrue(result.toClose.isEmpty())
+    }
+
+    @Test
+    fun `same ID with conflicting identity fails closed and preserves stored owner`() {
+        val stored = assignment(10, "A123", 83, at = 50)
+        val conflictingPayload = assignment(10, "B456", 99, at = 60)
+
+        val result = NfcAssignmentResolver.merge(
+            tagConflicts = emptyList(),
+            hiveConflicts = emptyList(),
+            incoming = conflictingPayload,
+            existingSameId = stored
+        )
+
+        assertEquals("A123", result.incoming.tagUid)
+        assertEquals(83L, result.incoming.hiveId)
+        assertEquals(50L, result.incoming.assignedAt)
+        assertEquals(60L, result.incoming.unassignedAt)
+        assertFalse(result.incoming.isActive)
+        assertTrue(result.toClose.isEmpty())
+    }
+
+    @Test
+    fun `exact active same-ID replay remains idempotently active`() {
+        val stored = assignment(10, "A123", 83, at = 50)
+        val replay = assignment(10, "A1:23", 83, at = 50)
+
+        val result = NfcAssignmentResolver.merge(
+            tagConflicts = emptyList(),
+            hiveConflicts = emptyList(),
+            incoming = replay,
+            existingSameId = stored
+        )
+
+        assertTrue(result.incoming.isActive)
+        assertTrue(result.toClose.isEmpty())
+    }
+
+}
