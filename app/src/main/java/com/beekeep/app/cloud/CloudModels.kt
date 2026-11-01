@@ -46,11 +46,14 @@ internal object CloudConflictPolicy {
         allowDraftRecreation: Boolean = false
     ): Boolean {
         if (remoteUpdatedAt == null) return true
-        if (remoteDeleted && !localDeleted && !allowDraftRecreation) return false
+        if (remoteDeleted) {
+            // An existing tombstone already represents this delete. Do not rewrite it;
+            // an active draft can still recreate its intentionally reusable hive-scoped ID.
+            return !localDeleted && allowDraftRecreation && localUpdatedAt > remoteUpdatedAt
+        }
         // A delete is an explicit user action. Its server timestamp is advanced over
         // the current row below so device clock skew cannot silently discard it.
         if (localDeleted) return true
-        if (remoteDeleted && allowDraftRecreation) return localUpdatedAt > remoteUpdatedAt
         return localUpdatedAt > remoteUpdatedAt
     }
 

@@ -65,7 +65,7 @@ class CloudConflictPolicyTest {
                 allowDraftRecreation = true
             )
         )
-        assertTrue(
+        assertFalse(
             CloudConflictPolicy.shouldUploadLocal(
                 localUpdatedAt = 500L,
                 remoteUpdatedAt = 100L,
