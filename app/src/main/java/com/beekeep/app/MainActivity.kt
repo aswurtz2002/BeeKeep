@@ -1969,15 +1969,7 @@ fun BeeKeepApp(
     if (selectedHiveOpen) {
         val hiveForDetail = selected
         if (hiveForDetail == null) {
-            Box(
-                Modifier.fillMaxSize(),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    "Loading hive…",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
+            HiveDetailLoadingScreen()
             return
         }
         if (hiveForDetail.id in lockedHiveIds) {
