@@ -27,8 +27,8 @@ class BeeKeepViewModel(
     val apiaries: StateFlow<List<Apiary>> = _apiaries
     // Expose only the per-apiary totals needed by the Apiaries screen. MutableStateFlow
     // suppresses equal maps, so hive profile edits do not invalidate that screen.
-    private val _apiaryHiveCounts = MutableStateFlow<Map<String, Int>>(emptyMap())
-    val apiaryHiveCounts: StateFlow<Map<String, Int>> = _apiaryHiveCounts
+    private val _apiaryHiveCounts = MutableStateFlow(ApiaryHiveCounts(emptyMap()))
+    val apiaryHiveCounts: StateFlow<ApiaryHiveCounts> = _apiaryHiveCounts
     private val _selected = MutableStateFlow<Hive?>(null)
     val selected: StateFlow<Hive?> = _selected
     private val _inspections = MutableStateFlow<List<Inspection>>(emptyList())
@@ -57,8 +57,8 @@ class BeeKeepViewModel(
         runCatching { CloudSyncScheduler.runNow(appContext) }
     }
 
-    private fun countHivesByApiary(hives: List<Hive>): Map<String, Int> =
-        hives.groupingBy { it.apiary.lowercase(java.util.Locale.ROOT) }.eachCount()
+    private fun countHivesByApiary(hives: List<Hive>): ApiaryHiveCounts =
+        ApiaryHiveCounts(hives.groupingBy { it.apiary.lowercase(java.util.Locale.ROOT) }.eachCount())
 
     init {
         viewModelScope.launch {
