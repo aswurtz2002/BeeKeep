@@ -1098,13 +1098,10 @@ class LocalHiveRepository(context: Context) {
     }
 
     private fun forceClearLocalInspectionNoteDraft(hiveId: Long) {
-        val key = inspectionNoteDraftKey(_activeWorkspaceId.value, hiveId)
-        inspectionNoteDraftPrefs.edit()
-            .remove(key)
-            .remove(inspectionNoteDraftRecordedAtKey(key))
-            .remove(inspectionNoteDraftUpdatedAtKey(key))
-            .remove(inspectionNoteDraftPendingKey(key))
-            .apply()
+        val keys = inspectionNoteDraftKeysForDeletedHive(_activeWorkspaceId.value, hiveId)
+        val editor = inspectionNoteDraftPrefs.edit()
+        keys.forEach { editor.remove(it) }
+        editor.apply()
     }
 
     private fun clearLocalInspectionNoteDraft(hiveId: Long, deletedAt: Long) {
