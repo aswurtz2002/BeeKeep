@@ -1092,6 +1092,40 @@ class LocalHiveRepository(context: Context) {
         doc: CloudDocumentRow,
         ignoreLegacyNfcProfileSnapshot: Boolean = false
     ) = withContext(Dispatchers.IO) {
+        applyCloudDocumentInternal(doc, ignoreLegacyNfcProfileSnapshot)
+    }
+
+    /**
+     * Applies dependency-ordered cloud records in bounded Room transactions.
+     *
+     * Each chunk is committed atomically, so observers see a coherent batch instead of
+     * invalidating and reloading the UI for every individual cloud row. The bounded size
+     * avoids holding the database transaction for an entire large workspace download.
+     */
+    suspend fun applyCloudDocuments(
+        documents: List<CloudDocumentRow>,
+        ignoreLegacyNfcProfileSnapshotHiveIds: Set<Long> = emptySet(),
+        batchSize: Int = 100
+    ) = withContext(Dispatchers.IO) {
+        require(batchSize in 1..500) { "Cloud apply batch size must be between 1 and 500." }
+        documents.chunked(batchSize).forEach { batch ->
+            db.withTransaction {
+                batch.forEach { document ->
+                    applyCloudDocumentInternal(
+                        document,
+                        ignoreLegacyNfcProfileSnapshot =
+                            document.entity_type == "hive" &&
+                                document.entity_id in ignoreLegacyNfcProfileSnapshotHiveIds
+                    )
+                }
+            }
+        }
+    }
+
+    private suspend fun applyCloudDocumentInternal(
+        doc: CloudDocumentRow,
+        ignoreLegacyNfcProfileSnapshot: Boolean
+    ) {
         if (doc.deleted) {
             when (doc.entity_type) {
                 "inspection_note_draft" -> clearLocalInspectionNoteDraft(doc.entity_id, doc.updated_at)
@@ -1132,16 +1166,16 @@ class LocalHiveRepository(context: Context) {
                     }
                 }
             }
-            return@withContext
+            return
         }
         // Older clients published a complete hive profile just to assign/remove its NFC tag.
         // If the batch identifies that legacy snapshot, keep an existing local profile intact;
         // the canonical assignment/event rows are still applied and refresh the tag cache.
         if (doc.entity_type == "hive" && ignoreLegacyNfcProfileSnapshot &&
             db.hives().get(doc.entity_id) != null
-        ) return@withContext
+        ) return
 
-        val json = runCatching { JSONObject(doc.payload) }.getOrNull() ?: return@withContext
+        val json = runCatching { JSONObject(doc.payload) }.getOrNull() ?: return
         when (doc.entity_type) {
             "inspection_note_draft" -> {
                 val workspaceId = _activeWorkspaceId.value
@@ -1150,8 +1184,8 @@ class LocalHiveRepository(context: Context) {
                 val localUpdatedAt = inspectionNoteDraftPrefs.getLong(inspectionNoteDraftUpdatedAtKey(key), 0L)
                 // A local edit may already be persisted but not yet in the Room outbox.
                 // Preserve it until the pre-sync recovery path queues it.
-                if (inspectionNoteDraftPrefs.getBoolean(inspectionNoteDraftPendingKey(key), false)) return@withContext
-                if (!shouldApplyInspectionNoteDraft(incomingUpdatedAt, localUpdatedAt)) return@withContext
+                if (inspectionNoteDraftPrefs.getBoolean(inspectionNoteDraftPendingKey(key), false)) return
+                if (!shouldApplyInspectionNoteDraft(incomingUpdatedAt, localUpdatedAt)) return
 
                 val notes = json.optString("notes", "")
                 val recordedAt = json.longOrNull("recorded_at")?.takeIf { it > 0L && notes.isNotBlank() }
@@ -1166,12 +1200,12 @@ class LocalHiveRepository(context: Context) {
             "inspection_form_draft" -> {
                 val workspaceId = _activeWorkspaceId.value
                 val hiveId = json.optLong("hive_id", doc.entity_id)
-                if (!db.hives().exists(hiveId)) return@withContext
-                if (InspectionFormDraftStore.isPending(inspectionFormDraftPrefs, workspaceId, hiveId)) return@withContext
+                if (!db.hives().exists(hiveId)) return
+                if (InspectionFormDraftStore.isPending(inspectionFormDraftPrefs, workspaceId, hiveId)) return
 
                 val incomingUpdatedAt = json.optLong("updated_at", doc.updated_at)
                 val existingRaw = InspectionFormDraftStore.readRaw(inspectionFormDraftPrefs, workspaceId, hiveId)
-                if (incomingUpdatedAt <= InspectionFormDraftStore.updatedAt(existingRaw)) return@withContext
+                if (incomingUpdatedAt <= InspectionFormDraftStore.updatedAt(existingRaw)) return
 
                 // A completed inspection wins over an older unfinished form. A genuinely
                 // newer draft may still be restored on another device.
@@ -1180,7 +1214,7 @@ class LocalHiveRepository(context: Context) {
                     InspectionFormDraftStore.clearRemote(
                         inspectionFormDraftPrefs, workspaceId, hiveId, latestInspection.createdAt
                     )
-                    return@withContext
+                    return
                 }
                 InspectionFormDraftStore.applyRemote(
                     inspectionFormDraftPrefs, workspaceId, hiveId, doc.payload
@@ -1189,7 +1223,7 @@ class LocalHiveRepository(context: Context) {
             "apiary" -> {
                 val existing = db.apiaries().get(doc.entity_id)
                 val incomingUpdatedAt = json.optLong("updated_at", doc.updated_at)
-                if (existing != null && existing.updatedAt >= incomingUpdatedAt) return@withContext
+                if (existing != null && existing.updatedAt >= incomingUpdatedAt) return
                 db.apiaries().upsert(ApiaryEntity(
                     id = doc.entity_id,
                     name = json.optString("name"),
@@ -1205,7 +1239,7 @@ class LocalHiveRepository(context: Context) {
             "hive" -> {
                 val existing = db.hives().get(doc.entity_id)
                 val incomingUpdatedAt = json.optLong("updated_at", doc.updated_at)
-                if (existing != null && existing.updatedAt >= incomingUpdatedAt) return@withContext
+                if (existing != null && existing.updatedAt >= incomingUpdatedAt) return
                 val incomingStatusChangedAt = json.optLong("status_changed_at", 0L)
                 // Lifecycle (ACTIVE/DEAD) resolves by status_changed_at so a stale
                 // offline save can merge field edits without resurrecting the colony.
@@ -1271,7 +1305,7 @@ class LocalHiveRepository(context: Context) {
             }
             "inspection" -> {
                 val hiveId = json.optLong("hive_id")
-                if (!db.hives().exists(hiveId)) return@withContext
+                if (!db.hives().exists(hiveId)) return
                 val incoming = InspectionEntity(
                     id = doc.entity_id,
                     hiveId = hiveId,
@@ -1311,7 +1345,6 @@ class LocalHiveRepository(context: Context) {
             "event" -> if (db.hives().exists(json.optLong("hive_id"))) db.events().upsert(ActivityEventEntity(doc.entity_id,json.optLong("hive_id"),json.optLong("created_at",doc.updated_at),json.optString("type"),json.optString("title"),json.optString("detail"))) else Unit
         }
     }
-
 
     /**
      * Portable export of apiaries and their hive history. Sync transport

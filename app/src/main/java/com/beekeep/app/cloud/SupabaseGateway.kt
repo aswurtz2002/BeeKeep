@@ -577,13 +577,10 @@ class SupabaseGateway(
             // hive rows; the matching assignment can arrive in this same sync.
             val documents = loadAllPersonalDocuments()
             val legacyNfcHiveIds = legacyNfcOnlyPersonalHiveSnapshotIds(documents)
-            CloudDocumentOrder.personal(documents).forEach { document ->
-                repository.applyCloudDocument(
-                    document,
-                    ignoreLegacyNfcProfileSnapshot =
-                        document.entity_type == "hive" && document.entity_id in legacyNfcHiveIds
-                )
-            }
+            repository.applyCloudDocuments(
+                documents = CloudDocumentOrder.personal(documents),
+                ignoreLegacyNfcProfileSnapshotHiveIds = legacyNfcHiveIds
+            )
 
             repository.pruneSync()
             val now = System.currentTimeMillis()
@@ -837,21 +834,21 @@ class SupabaseGateway(
 
             val workspaceDocuments = remoteByKey.values.toList()
             val legacyNfcHiveIds = legacyNfcOnlyWorkspaceHiveSnapshotIds(workspaceDocuments)
-            CloudDocumentOrder.workspace(workspaceDocuments).forEach { document ->
-                repository.applyCloudDocument(
-                    CloudDocumentRow(
-                        user_id = userId,
-                        entity_type = document.entity_type,
-                        entity_id = document.entity_id,
-                        payload = document.payload,
-                        updated_at = document.updated_at,
-                        deleted = document.deleted,
-                        device_id = document.device_id
-                    ),
-                    ignoreLegacyNfcProfileSnapshot =
-                        document.entity_type == "hive" && document.entity_id in legacyNfcHiveIds
+            val localDocuments = CloudDocumentOrder.workspace(workspaceDocuments).map { document ->
+                CloudDocumentRow(
+                    user_id = userId,
+                    entity_type = document.entity_type,
+                    entity_id = document.entity_id,
+                    payload = document.payload,
+                    updated_at = document.updated_at,
+                    deleted = document.deleted,
+                    device_id = document.device_id
                 )
             }
+            repository.applyCloudDocuments(
+                documents = localDocuments,
+                ignoreLegacyNfcProfileSnapshotHiveIds = legacyNfcHiveIds
+            )
 
             repository.pruneSync()
             val now = System.currentTimeMillis()
