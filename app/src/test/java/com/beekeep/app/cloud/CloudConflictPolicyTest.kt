@@ -34,6 +34,27 @@ class CloudConflictPolicyTest {
     }
 
     @Test
+    fun draftClearDoesNotOverrideANewerDraftWhenTheDeviceClockIsBehind() {
+        assertFalse(
+            CloudConflictPolicy.shouldUploadLocal(
+                localUpdatedAt = 100L,
+                remoteUpdatedAt = 900L,
+                localDeleted = true,
+                allowDraftRecreation = true
+            )
+        )
+        assertEquals(
+            100L,
+            CloudConflictPolicy.effectiveUploadTimestamp(
+                localUpdatedAt = 100L,
+                remoteUpdatedAt = 900L,
+                localDeleted = true,
+                allowDraftRecreation = true
+            )
+        )
+    }
+
+    @Test
     fun localUploadOnlyWinsWhenItsTimestampIsStrictlyNewer() {
         assertTrue(CloudConflictPolicy.shouldUploadLocal(101L, 100L))
         assertTrue(CloudConflictPolicy.shouldUploadLocal(100L, null))
