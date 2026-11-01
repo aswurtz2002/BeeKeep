@@ -779,7 +779,11 @@ class SupabaseGateway(
                         entity_id = item.entityId,
                         payload = item.payload,
                         updated_at = CloudConflictPolicy.effectiveUploadTimestamp(
-                            payloadTimestamp, remote?.updated_at, isDelete
+                            payloadTimestamp,
+                            remote?.updated_at,
+                            isDelete,
+                            allowDraftRecreation = item.entityType == "inspection_note_draft" ||
+                                item.entityType == "inspection_form_draft"
                         ),
                         deleted = isDelete,
                         device_id = deviceId
@@ -1101,7 +1105,11 @@ class SupabaseGateway(
                             entity_id = item.entityId,
                             payload = item.payload,
                             updated_at = CloudConflictPolicy.effectiveUploadTimestamp(
-                                payloadTimestamp, remote?.updated_at, isDelete
+                                payloadTimestamp,
+                                remote?.updated_at,
+                                isDelete,
+                                allowDraftRecreation = item.entityType == "inspection_note_draft" ||
+                                    item.entityType == "inspection_form_draft"
                             ),
                             deleted = isDelete,
                             device_id = deviceId,
