@@ -59,10 +59,15 @@ class LocalHiveRepository(context: Context) {
         }
         val cleanReadOnly = cleanId != null && (readOnly
             ?: prefs.getBoolean("active_team_workspace_read_only", false))
+        val storedWorkspaceId = prefs.getString("active_team_workspace_id", "")
+            .orEmpty().trim().ifBlank { null }
+        val storedReadOnly = prefs.getBoolean("active_team_workspace_read_only", false)
         val storedOwnerUserId = prefs.getString("active_team_workspace_user_id", null)
             ?.trim()?.takeIf { it.isNotEmpty() }
         if (_activeWorkspaceId.value == cleanId &&
             _activeWorkspaceReadOnly.value == cleanReadOnly &&
+            storedWorkspaceId == cleanId &&
+            storedReadOnly == cleanReadOnly &&
             storedOwnerUserId == cleanOwnerUserId
         ) return@withContext
 
