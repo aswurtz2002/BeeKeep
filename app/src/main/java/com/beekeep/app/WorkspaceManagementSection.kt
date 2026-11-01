@@ -110,7 +110,14 @@ fun WorkspaceManagementSection(
     var deleteWorkspaceTarget by remember { mutableStateOf<BeeKeepWorkspace?>(null) }
     var removeMemberTarget by remember { mutableStateOf<BeeKeepWorkspaceMember?>(null) }
 
-    val sharedWorkspaces = workspaces.filterNot { it.is_personal }
+    val accountWorkspaceDataReady = account.signedIn &&
+        !account.userId.isNullOrBlank() &&
+        loadedWorkspaceAccountId == account.userId
+    val sharedWorkspaces = if (accountWorkspaceDataReady) {
+        workspaces.filterNot { it.is_personal }
+    } else {
+        emptyList()
+    }
     val selectedWorkspace = sharedWorkspaces.firstOrNull { it.id == selectedWorkspaceId }
     val canManage = selectedWorkspace?.member_role == "owner" || selectedWorkspace?.member_role == "admin"
     val canAssignAdmin = selectedWorkspace?.member_role == "owner"
@@ -500,7 +507,7 @@ fun WorkspaceManagementSection(
             }
         }
 
-            if (account.signedIn && selectedWorkspace != null) {
+            if (accountWorkspaceDataReady && selectedWorkspace != null) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -1060,7 +1067,7 @@ fun WorkspaceManagementSection(
         }
     }
 
-    copyPersonalTarget?.let { target ->
+    if (accountWorkspaceDataReady) copyPersonalTarget?.let { target ->
         AlertDialog(
             onDismissRequest = { if (!loading) copyPersonalTarget = null },
             title = { Text("Copy personal records to ${target.name}?") },
@@ -1100,7 +1107,7 @@ fun WorkspaceManagementSection(
         )
     }
 
-    removeMemberTarget?.let { target ->
+    if (accountWorkspaceDataReady) removeMemberTarget?.let { target ->
         AlertDialog(
             onDismissRequest = { if (!loading) removeMemberTarget = null },
             title = { Text("Remove ${target.username.takeIf { it.isNotBlank() }?.let { "@$it" } ?: target.email}?") },
@@ -1141,7 +1148,7 @@ fun WorkspaceManagementSection(
         )
     }
 
-    deleteWorkspaceTarget?.let { target ->
+    if (accountWorkspaceDataReady) deleteWorkspaceTarget?.let { target ->
         AlertDialog(
             onDismissRequest = { if (!loading) deleteWorkspaceTarget = null },
             title = { Text("Delete ${target.name}?") },
@@ -1206,7 +1213,7 @@ fun WorkspaceManagementSection(
         )
     }
 
-    if (showUltimateRequiredDialog) {
+    if (accountWorkspaceDataReady && showUltimateRequiredDialog) {
         AlertDialog(
             onDismissRequest = { showUltimateRequiredDialog = false },
             title = { Text("Ultimate required") },
@@ -1232,7 +1239,7 @@ fun WorkspaceManagementSection(
         )
     }
 
-    if (showCreateDialog) {
+    if (accountWorkspaceDataReady && showCreateDialog) {
         AlertDialog(
             onDismissRequest = { showCreateDialog = false },
             title = { Text("Create team workspace") },
