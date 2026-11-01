@@ -18,7 +18,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.clickable
@@ -474,11 +473,13 @@ fun WorkspaceManagementSection(
                         selected = selectedWorkspaceSection == "people",
                         modifier = Modifier.weight(1f)
                     ) { selectedWorkspaceSection = "people" }
-                    WorkspaceSectionTab(
-                        label = "Settings",
-                        selected = selectedWorkspaceSection == "settings",
-                        modifier = Modifier.weight(1f)
-                    ) { selectedWorkspaceSection = "settings" }
+                    if (selectedWorkspace?.member_role in setOf("owner", "admin")) {
+                        WorkspaceSectionTab(
+                            label = "Settings",
+                            selected = selectedWorkspaceSection == "settings",
+                            modifier = Modifier.weight(1f)
+                        ) { selectedWorkspaceSection = "settings" }
+                    }
                 }
             }
 
