@@ -473,7 +473,7 @@ fun WorkspaceManagementSection(
                         selected = selectedWorkspaceSection == "people",
                         modifier = Modifier.weight(1f)
                     ) { selectedWorkspaceSection = "people" }
-                    if (selectedWorkspace?.member_role in setOf("owner", "admin")) {
+                    if (selectedWorkspace?.member_role == "owner" || selectedWorkspace?.member_role == "admin") {
                         WorkspaceSectionTab(
                             label = "Settings",
                             selected = selectedWorkspaceSection == "settings",
