@@ -582,9 +582,10 @@ class SupabaseGateway(
      * hasn't been applied to Room yet.
      */
     private fun legacyNfcOnlyHiveSnapshotIds(
-        documents: Collection<LegacyNfcSnapshotDocument>
+        documents: Collection<LegacyNfcSnapshotDocument>,
+        knownMutations: Collection<NfcMutationSyncTimestamp> = emptyList()
     ): Set<Long> {
-        val mutations = mutableListOf<NfcMutationSyncTimestamp>()
+        val mutations = knownMutations.toMutableList()
         documents.forEach { document ->
             val payload = runCatching { JSONObject(document.payload) }.getOrNull() ?: return@forEach
             when (document.entityType) {
@@ -625,16 +626,24 @@ class SupabaseGateway(
     }
 
     private fun legacyNfcOnlyPersonalHiveSnapshotIds(
-        documents: Collection<CloudDocumentRow>
-    ): Set<Long> = legacyNfcOnlyHiveSnapshotIds(documents.map {
-        LegacyNfcSnapshotDocument(it.entity_type, it.entity_id, it.payload, it.updated_at)
-    })
+        documents: Collection<CloudDocumentRow>,
+        knownMutations: Collection<NfcMutationSyncTimestamp> = emptyList()
+    ): Set<Long> = legacyNfcOnlyHiveSnapshotIds(
+        documents.map {
+            LegacyNfcSnapshotDocument(it.entity_type, it.entity_id, it.payload, it.updated_at)
+        },
+        knownMutations
+    )
 
     private fun legacyNfcOnlyWorkspaceHiveSnapshotIds(
-        documents: Collection<CloudWorkspaceDocumentRow>
-    ): Set<Long> = legacyNfcOnlyHiveSnapshotIds(documents.map {
-        LegacyNfcSnapshotDocument(it.entity_type, it.entity_id, it.payload, it.updated_at)
-    })
+        documents: Collection<CloudWorkspaceDocumentRow>,
+        knownMutations: Collection<NfcMutationSyncTimestamp> = emptyList()
+    ): Set<Long> = legacyNfcOnlyHiveSnapshotIds(
+        documents.map {
+            LegacyNfcSnapshotDocument(it.entity_type, it.entity_id, it.payload, it.updated_at)
+        },
+        knownMutations
+    )
 
     suspend fun syncNow(): CloudResult = syncMutex.withLock { syncNowUnlocked() }
 
