@@ -96,6 +96,7 @@ fun WorkspaceManagementSection(
     var loading by remember { mutableStateOf(false) }
     var hasUltimateEntitlement by remember { mutableStateOf(false) }
     var entitlementCheckFailed by remember { mutableStateOf(false) }
+    var loadedWorkspaceAccountId by remember { mutableStateOf<String?>(null) }
     var showUltimateRequiredDialog by rememberSaveable { mutableStateOf(false) }
     var message by rememberSaveable { mutableStateOf("") }
     var showCreateDialog by remember { mutableStateOf(false) }
@@ -204,6 +205,29 @@ fun WorkspaceManagementSection(
     }
 
     LaunchedEffect(account.signedIn, account.userId) {
+        val accountIdentityChanged = loadedWorkspaceAccountId != account.userId
+        if (accountIdentityChanged) {
+            // Do not render the previous account's team roster, invitations, or selection
+            // while the new account's memberships are loading.
+            loadedWorkspaceAccountId = account.userId
+            workspaces = emptyList()
+            selectedWorkspaceId = ""
+            activeWorkspaceId = ""
+            members = emptyList()
+            membersLoadedWorkspaceId = null
+            memberLoadError = null
+            invitations = emptyList()
+            createdInvite = null
+            showCopyPersonalData = false
+            showDangerZone = false
+            showJoinAnotherTeam = false
+            showPendingInvitations = false
+            showInvitePanel = false
+            selectedWorkspaceSection = "overview"
+            workspaceMenuExpanded = false
+            roleMenuExpanded = false
+            message = ""
+        }
         if (!account.signedIn || account.userId.isNullOrBlank()) {
             activeWorkspaceId = ""
             hasUltimateEntitlement = false
