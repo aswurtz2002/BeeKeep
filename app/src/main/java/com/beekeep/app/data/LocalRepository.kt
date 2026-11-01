@@ -1023,31 +1023,38 @@ class LocalHiveRepository(context: Context) {
      * bumped the hive profile timestamp. Publishing those rows can replace newer queen,
      * strength, and location details with an outdated whole-profile snapshot.
      */
+    internal suspend fun nfcMutationSyncTimestamps(): List<NfcMutationSyncTimestamp> =
+        withContext(Dispatchers.IO) {
+            val database = db
+            buildList {
+                database.nfcTagAssignments().allForBackup().forEach { assignment ->
+                    if (assignment.assignedAt > 0L) {
+                        add(NfcMutationSyncTimestamp(assignment.hiveId, assignment.assignedAt))
+                    }
+                    assignment.unassignedAt?.takeIf { it > 0L }?.let {
+                        add(NfcMutationSyncTimestamp(assignment.hiveId, it))
+                    }
+                }
+                database.events().allForBackup()
+                    .filter {
+                        it.type.equals("tag", ignoreCase = true) &&
+                            it.title.startsWith("NFC tag ", ignoreCase = true)
+                    }
+                    .forEach { event ->
+                        if (event.createdAt > 0L) {
+                            add(NfcMutationSyncTimestamp(event.hiveId, event.createdAt))
+                        }
+                    }
+            }
+        }
+
     suspend fun discardLegacyNfcProfileSnapshots(): Int = withContext(Dispatchers.IO) {
         if (_activeWorkspaceReadOnly.value) return@withContext 0
 
-        val mutations = mutableListOf<NfcMutationSyncTimestamp>()
-        db.nfcTagAssignments().allForBackup().forEach { assignment ->
-            if (assignment.assignedAt > 0L) {
-                mutations += NfcMutationSyncTimestamp(assignment.hiveId, assignment.assignedAt)
-            }
-            assignment.unassignedAt?.takeIf { it > 0L }?.let {
-                mutations += NfcMutationSyncTimestamp(assignment.hiveId, it)
-            }
-        }
-        db.events().allForBackup()
-            .filter {
-                it.type.equals("tag", ignoreCase = true) &&
-                    it.title.startsWith("NFC tag ", ignoreCase = true)
-            }
-            .forEach { event ->
-                if (event.createdAt > 0L) {
-                    mutations += NfcMutationSyncTimestamp(event.hiveId, event.createdAt)
-                }
-            }
-
+        val database = db
+        val mutations = nfcMutationSyncTimestamps()
         var discarded = 0
-        db.outbox().allPendingForReset()
+        database.outbox().allPendingForReset()
             .filter { it.entityType == "hive" && it.operation == "upsert" }
             .forEach { item ->
                 val updatedAt = runCatching {
@@ -1057,7 +1064,7 @@ class LocalHiveRepository(context: Context) {
                         item.entityId, updatedAt, mutations
                     )
                 ) {
-                    db.outbox().setState(item.id, "done")
+                    database.outbox().setState(item.id, "done")
                     discarded++
                 }
             }

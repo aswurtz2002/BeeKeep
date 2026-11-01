@@ -46,6 +46,8 @@ sealed interface CloudResult {
 }
 
 private const val SYNC_UPLOAD_BATCH_SIZE = 200
+private const val SYNC_DOWNLOAD_PAGE_SIZE = 500
+private const val SYNC_CONFLICT_LOOKUP_BATCH_SIZE = 100
 
 class SupabaseGateway(
     private val context: Context,
@@ -53,6 +55,9 @@ class SupabaseGateway(
     private val enableRealtime: Boolean = true
 ) {
     private val appContext = context.applicationContext
+    private val syncCursorPrefs = appContext.getSharedPreferences(
+        "beekeep_cloud_sync_cursors_v1", Context.MODE_PRIVATE
+    )
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val deviceId = appContext.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
         .getString("device_id", null)
@@ -422,6 +427,148 @@ class SupabaseGateway(
         return documents
     }
 
+    private fun personalSyncCursorKey(userId: String): String = "personal:$userId"
+
+    private fun workspaceSyncCursorKey(userId: String, workspaceId: String): String =
+        "workspace:$userId:$workspaceId"
+
+    private fun readSyncCursor(key: String): Long? =
+        if (syncCursorPrefs.contains(key)) syncCursorPrefs.getLong(key, 0L) else null
+
+    private fun saveSyncCursor(key: String, version: Long) {
+        check(syncCursorPrefs.edit().putLong(key, version).commit()) {
+            "Could not save the cloud sync cursor. The next sync will safely retry these changes."
+        }
+    }
+
+    private suspend fun loadPersonalSyncHead(): Long {
+        val supabase = client ?: return 0L
+        return supabase.postgrest.rpc("beekeep_personal_sync_head")
+            .decodeList<CloudSyncHead>()
+            .firstOrNull()?.head_version ?: 0L
+    }
+
+    private suspend fun loadWorkspaceSyncHead(workspaceId: String): Long {
+        val supabase = client ?: return 0L
+        return supabase.postgrest.rpc(
+            "beekeep_workspace_sync_head",
+            WorkspaceSyncHeadParams(workspaceId)
+        ).decodeList<CloudSyncHead>()
+            .firstOrNull()?.head_version ?: 0L
+    }
+
+    private suspend fun loadPersonalChanges(
+        afterVersion: Long,
+        throughVersion: Long
+    ): List<CloudDocumentRow> {
+        val supabase = client ?: return emptyList()
+        if (throughVersion <= afterVersion) return emptyList()
+
+        val documents = mutableListOf<CloudDocumentRow>()
+        var pageCursor = afterVersion.coerceAtLeast(0L)
+        while (pageCursor < throughVersion) {
+            val page = supabase.postgrest.rpc(
+                "beekeep_personal_sync_changes",
+                PersonalSyncChangesParams(
+                    after_version = pageCursor,
+                    through_version = throughVersion,
+                    requested_page_size = SYNC_DOWNLOAD_PAGE_SIZE
+                )
+            ).decodeList<CloudDocumentRow>()
+            if (page.isEmpty()) break
+
+            val nextCursor = page.last().sync_version
+            check(nextCursor > pageCursor && page.all {
+                it.sync_version > pageCursor && it.sync_version <= throughVersion
+            }) {
+                "The personal sync page returned an invalid version range."
+            }
+            documents += page
+            pageCursor = nextCursor
+            if (page.size < SYNC_DOWNLOAD_PAGE_SIZE) break
+        }
+        return documents
+    }
+
+    private suspend fun loadWorkspaceChanges(
+        workspaceId: String,
+        afterVersion: Long,
+        throughVersion: Long
+    ): List<CloudWorkspaceDocumentRow> {
+        val supabase = client ?: return emptyList()
+        if (throughVersion <= afterVersion) return emptyList()
+
+        val documents = mutableListOf<CloudWorkspaceDocumentRow>()
+        var pageCursor = afterVersion.coerceAtLeast(0L)
+        while (pageCursor < throughVersion) {
+            val page = supabase.postgrest.rpc(
+                "beekeep_workspace_sync_changes",
+                WorkspaceSyncChangesParams(
+                    target_workspace_id = workspaceId,
+                    after_version = pageCursor,
+                    through_version = throughVersion,
+                    requested_page_size = SYNC_DOWNLOAD_PAGE_SIZE
+                )
+            ).decodeList<CloudWorkspaceDocumentRow>()
+            if (page.isEmpty()) break
+
+            val nextCursor = page.last().sync_version
+            check(nextCursor > pageCursor && page.all {
+                it.sync_version > pageCursor && it.sync_version <= throughVersion
+            }) {
+                "The workspace sync page returned an invalid version range."
+            }
+            documents += page
+            pageCursor = nextCursor
+            if (page.size < SYNC_DOWNLOAD_PAGE_SIZE) break
+        }
+        return documents
+    }
+
+    /**
+     * Conflict checks now fetch only cloud rows for locally queued entity IDs. The previous
+     * implementation downloaded every document just to compare this small outbox batch.
+     */
+    private suspend fun loadPersonalDocumentsForEntityIds(
+        userId: String,
+        entityIds: Collection<Long>
+    ): List<CloudDocumentRow> {
+        val supabase = client ?: return emptyList()
+        val ids = entityIds.distinct()
+        if (ids.isEmpty()) return emptyList()
+
+        return ids.chunked(SYNC_CONFLICT_LOOKUP_BATCH_SIZE).flatMap { batch ->
+            supabase.from("beekeep_documents")
+                .select {
+                    filter {
+                        eq("user_id", userId)
+                        isIn("entity_id", batch.map { it as Any })
+                    }
+                }
+                .decodeList<CloudDocumentRow>()
+        }
+    }
+
+    private suspend fun loadWorkspaceDocumentsForEntityIds(
+        workspaceId: String,
+        entityIds: Collection<Long>
+    ): List<CloudWorkspaceDocumentRow> {
+        val supabase = client ?: return emptyList()
+        val ids = entityIds.distinct()
+        if (ids.isEmpty()) return emptyList()
+
+        return ids.chunked(SYNC_CONFLICT_LOOKUP_BATCH_SIZE).flatMap { batch ->
+            supabase.from("beekeep_workspace_documents")
+                .select {
+                    filter {
+                        eq("workspace_id", workspaceId)
+                        isIn("entity_id", batch.map { it as Any })
+                    }
+                }
+                .decodeList<CloudWorkspaceDocumentRow>()
+        }
+    }
+
     private data class LegacyNfcSnapshotDocument(
         val entityType: String,
         val entityId: Long,
@@ -435,9 +582,10 @@ class SupabaseGateway(
      * hasn't been applied to Room yet.
      */
     private fun legacyNfcOnlyHiveSnapshotIds(
-        documents: Collection<LegacyNfcSnapshotDocument>
+        documents: Collection<LegacyNfcSnapshotDocument>,
+        knownMutations: Collection<NfcMutationSyncTimestamp> = emptyList()
     ): Set<Long> {
-        val mutations = mutableListOf<NfcMutationSyncTimestamp>()
+        val mutations = knownMutations.toMutableList()
         documents.forEach { document ->
             val payload = runCatching { JSONObject(document.payload) }.getOrNull() ?: return@forEach
             when (document.entityType) {
@@ -478,16 +626,24 @@ class SupabaseGateway(
     }
 
     private fun legacyNfcOnlyPersonalHiveSnapshotIds(
-        documents: Collection<CloudDocumentRow>
-    ): Set<Long> = legacyNfcOnlyHiveSnapshotIds(documents.map {
-        LegacyNfcSnapshotDocument(it.entity_type, it.entity_id, it.payload, it.updated_at)
-    })
+        documents: Collection<CloudDocumentRow>,
+        knownMutations: Collection<NfcMutationSyncTimestamp> = emptyList()
+    ): Set<Long> = legacyNfcOnlyHiveSnapshotIds(
+        documents.map {
+            LegacyNfcSnapshotDocument(it.entity_type, it.entity_id, it.payload, it.updated_at)
+        },
+        knownMutations
+    )
 
     private fun legacyNfcOnlyWorkspaceHiveSnapshotIds(
-        documents: Collection<CloudWorkspaceDocumentRow>
-    ): Set<Long> = legacyNfcOnlyHiveSnapshotIds(documents.map {
-        LegacyNfcSnapshotDocument(it.entity_type, it.entity_id, it.payload, it.updated_at)
-    })
+        documents: Collection<CloudWorkspaceDocumentRow>,
+        knownMutations: Collection<NfcMutationSyncTimestamp> = emptyList()
+    ): Set<Long> = legacyNfcOnlyHiveSnapshotIds(
+        documents.map {
+            LegacyNfcSnapshotDocument(it.entity_type, it.entity_id, it.payload, it.updated_at)
+        },
+        knownMutations
+    )
 
     suspend fun syncNow(): CloudResult = syncMutex.withLock { syncNowUnlocked() }
 
@@ -536,12 +692,17 @@ class SupabaseGateway(
             // Pull first so an older offline edit cannot overwrite a newer cloud record.
             // Drain the entire outbox in bounded batches: the old single-batch sync could
             // publish an apiary while leaving its hive rows queued for a later run.
-            val remoteBefore = loadAllPersonalDocuments()
-            val remoteByKey = remoteBefore.associateBy { "${it.entity_type}:${it.entity_id}" }
+            val cursorKey = personalSyncCursorKey(userId)
+            val previousCursor = readSyncCursor(cursorKey)
             while (true) {
                 val pending = repository.pendingSync(SYNC_UPLOAD_BATCH_SIZE)
                 if (pending.isEmpty()) break
 
+                val remoteRows = loadPersonalDocumentsForEntityIds(
+                    userId,
+                    pending.map { it.entityId }
+                )
+                val remoteByKey = remoteRows.associateBy { "${it.entity_type}:${it.entity_id}" }
                 val uploadable = mutableListOf<CloudDocumentRow>()
                 val uploadableIds = mutableSetOf<Long>()
                 val supersededIds = mutableListOf<Long>()
@@ -577,14 +738,22 @@ class SupabaseGateway(
                 }
             }
 
-            // Find legacy NFC-only hive snapshots from the complete cloud batch before applying
-            // hive rows; the matching assignment can arrive in this same sync.
-            val documents = loadAllPersonalDocuments()
-            val legacyNfcHiveIds = legacyNfcOnlyPersonalHiveSnapshotIds(documents)
+            // A fixed high-water mark makes the pull resumable. Any write that commits after
+            // this read receives a higher server version and is picked up on the next sync.
+            val headVersion = loadPersonalSyncHead()
+            val afterVersion = previousCursor?.takeIf { it <= headVersion } ?: 0L
+            val documents = loadPersonalChanges(afterVersion, headVersion)
+            val knownNfcMutations = repository.nfcMutationSyncTimestamps()
+            val legacyNfcHiveIds = legacyNfcOnlyPersonalHiveSnapshotIds(
+                documents,
+                knownMutations = knownNfcMutations
+            )
             repository.applyCloudDocuments(
                 documents = CloudDocumentOrder.personal(documents),
                 ignoreLegacyNfcProfileSnapshotHiveIds = legacyNfcHiveIds
             )
+            // Advance only after every downloaded page has been applied successfully.
+            saveSyncCursor(cursorKey, headVersion)
 
             repository.pruneSync()
             val now = System.currentTimeMillis()
@@ -791,15 +960,20 @@ class SupabaseGateway(
                 repository.queuePendingInspectionNoteDrafts()
             }
             repository.queuePendingInspectionFormDrafts()
-            val remoteBefore = loadAllWorkspaceDocuments(workspaceId)
-            val remoteByKey = remoteBefore.associateBy { "${it.entity_type}:${it.entity_id}" }.toMutableMap()
+            val cursorKey = workspaceSyncCursorKey(userId, workspaceId)
+            val previousCursor = readSyncCursor(cursorKey)
             if (isWritable) {
                 // Keep uploading bounded chunks until the selected workspace outbox drains.
-                // Older queued history must not starve a newly-created apiary's hive rows.
+                // Conflict checks now read only the cloud records for this pending outbox batch.
                 while (true) {
                     val pending = repository.pendingSync(SYNC_UPLOAD_BATCH_SIZE)
                     if (pending.isEmpty()) break
 
+                    val remoteRows = loadWorkspaceDocumentsForEntityIds(
+                        workspaceId,
+                        pending.map { it.entityId }
+                    )
+                    val remoteByKey = remoteRows.associateBy { "${it.entity_type}:${it.entity_id}" }
                     val uploadable = mutableListOf<CloudWorkspaceDocumentRow>()
                     val uploadableIds = mutableSetOf<Long>()
                     val supersededIds = mutableListOf<Long>()
@@ -833,15 +1007,24 @@ class SupabaseGateway(
                         }
                         // Only acknowledge uploads after the remote upsert succeeds.
                         repository.markSyncDone(uploadableIds)
-                        uploadable.forEach { row ->
-                            remoteByKey["${row.entity_type}:${row.entity_id}"] = row
-                        }
                     }
                 }
             }
 
-            val workspaceDocuments = remoteByKey.values.toList()
-            val legacyNfcHiveIds = legacyNfcOnlyWorkspaceHiveSnapshotIds(workspaceDocuments)
+            // A fixed head bounds each pull. Writes committed during pagination receive
+            // a higher version and will be fetched on the next sync.
+            val headVersion = loadWorkspaceSyncHead(workspaceId)
+            val afterVersion = previousCursor?.takeIf { it <= headVersion } ?: 0L
+            val workspaceDocuments = loadWorkspaceChanges(
+                workspaceId,
+                afterVersion,
+                headVersion
+            )
+            val knownNfcMutations = repository.nfcMutationSyncTimestamps()
+            val legacyNfcHiveIds = legacyNfcOnlyWorkspaceHiveSnapshotIds(
+                workspaceDocuments,
+                knownMutations = knownNfcMutations
+            )
             val localDocuments = CloudDocumentOrder.workspace(workspaceDocuments).map { document ->
                 CloudDocumentRow(
                     user_id = userId,
@@ -857,6 +1040,8 @@ class SupabaseGateway(
                 documents = localDocuments,
                 ignoreLegacyNfcProfileSnapshotHiveIds = legacyNfcHiveIds
             )
+            // Only advance after all downloaded changes have been applied to Room.
+            saveSyncCursor(cursorKey, headVersion)
 
             repository.pruneSync()
             val now = System.currentTimeMillis()
