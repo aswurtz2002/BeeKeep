@@ -2292,8 +2292,8 @@ fun BeeKeepApp(
     ) { padding ->
         when (screen) {
             Screen.HOME -> HomeScreen(
-                hives = hives,
-                apiaries = apiaries,
+                hiveCount = hives.size,
+                apiaryCount = apiaries.size,
                 padding = padding,
                 nfcEnabled = nfcEnabledForIndicator,
                 currentPlan = purchasePlan,
