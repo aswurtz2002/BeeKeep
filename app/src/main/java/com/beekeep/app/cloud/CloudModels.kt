@@ -34,8 +34,8 @@ data class CloudWorkspaceDocumentRow(
 
 /**
  * The cloud row is the tie-break authority for equal client timestamps. Server-side guards
- * reject older writes; clients apply an equal-time cloud row so every replica converges on
- * the version committed last by Postgres.
+ * reject older edits; explicit permanent deletions are advanced beyond the current row.
+ * Clients apply equal-time cloud rows so replicas converge on the version committed last.
  */
 internal object CloudConflictPolicy {
     fun shouldUploadLocal(
