@@ -990,7 +990,9 @@ class SupabaseGateway(
         val prefs = appContext.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
         val previousWorkspaceCandidate = prefs.getString("active_team_workspace_id", "")
             .orEmpty().trim().ifBlank { null }
+        var previousWorkspaceId: String? = null
         val previousReadOnly = prefs.getBoolean("active_team_workspace_read_only", false)
+        var recoveryUserId: String? = null
         var copyCompleted = false
         var copiedCount: Int? = null
 
@@ -1000,6 +1002,7 @@ class SupabaseGateway(
                 ?: return@withLock WorkspaceOperationResult(error = "Sign in before copying personal records.")
             val userId = session.user?.id?.trim()?.takeIf { it.isNotEmpty() }
                 ?: return@withLock WorkspaceOperationResult(error = "Your cloud session has no user ID. Sign in again.")
+            recoveryUserId = userId
             val available = supabase.postgrest.rpc("beekeep_list_workspaces")
                 .decodeList<BeeKeepWorkspace>()
             val target = available.firstOrNull { it.id == cleanId && !it.is_personal }
@@ -1013,7 +1016,7 @@ class SupabaseGateway(
             val previousWorkspace = previousWorkspaceCandidate?.let { oldId ->
                 available.firstOrNull { it.id == oldId && !it.is_personal }
             }
-            val previousWorkspaceId = previousWorkspace?.id
+            previousWorkspaceId = previousWorkspace?.id
             val previousRole = previousWorkspace?.member_role
             suspend fun restorePreviousWorkspace() {
                 repository.switchWorkspace(
@@ -1075,9 +1078,9 @@ class SupabaseGateway(
             if (!copyCompleted) {
                 runCatching {
                     repository.switchWorkspace(
-                        previousWorkspaceId,
+                        workspaceId = previousWorkspaceId,
                         readOnly = previousReadOnly,
-                        ownerUserId = userId
+                        ownerUserId = recoveryUserId
                     )
                 }
             }
