@@ -19,7 +19,9 @@ begin
         -- An explicit delete is a new user action, not a stale content edit. Make
         -- its timestamp strictly newer than the row currently protected by this lock.
         -- This also handles a competing update committed after client preflight.
-        if new.deleted and not old.deleted then
+        if new.deleted
+           and not old.deleted
+           and new.entity_type not in ('inspection_note_draft', 'inspection_form_draft') then
             new.updated_at := greatest(new.updated_at, old.updated_at + 1);
             return new;
         end if;
