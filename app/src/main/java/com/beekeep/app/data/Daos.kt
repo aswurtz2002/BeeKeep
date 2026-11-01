@@ -36,6 +36,8 @@ interface HiveDao {
     @Query("SELECT * FROM hives WHERE deleted = 0 AND status != 'ACTIVE' ORDER BY dead_at DESC")
     fun observeDead(): Flow<List<HiveEntity>>
     @Query("SELECT * FROM hives WHERE id = :id AND deleted = 0")
+    fun observeById(id: Long): Flow<HiveEntity?>
+    @Query("SELECT * FROM hives WHERE id = :id AND deleted = 0")
     suspend fun get(id: Long): HiveEntity?
     @Query("SELECT * FROM hives WHERE apiary_id = :apiaryId OR (apiary_id IS NULL AND apiary = :oldName COLLATE NOCASE)")
     suspend fun forApiaryRename(apiaryId: Long, oldName: String): List<HiveEntity>
