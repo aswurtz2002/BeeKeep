@@ -420,11 +420,14 @@ class SupabaseGateway(
         synchronized(realtimeLock) {
             val previousJob = realtimeJob
             realtimeScopeKey = null
+            // Cancel synchronously so a new sign-in cannot cancel this cleanup task before
+            // it has actually stopped the old subscription.
+            previousJob?.cancel()
             realtimeJob = if (previousJob == null) {
                 null
             } else {
                 scope.launch {
-                    previousJob.cancelAndJoin()
+                    previousJob.join()
                     if (configured && supabase != null) {
                         runCatching { supabase.realtime.removeAllChannels() }
                     }
