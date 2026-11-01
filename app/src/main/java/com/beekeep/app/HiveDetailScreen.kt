@@ -57,6 +57,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.foundation.layout.widthIn
 import com.beekeep.app.data.ActivityEvent
@@ -81,13 +82,73 @@ private fun CompactStatItem(label: String, value: String, modifier: Modifier = M
 }
 
 @Composable
+private fun HiveDetailRecordsCard(viewModel: BeeKeepViewModel) {
+    // Keep log observers inside this card. A new feeding, treatment, or harvest
+    // should update these counters/latest entries without invalidating BeeKeepApp
+    // or the rest of the Hive Detail screen.
+    val feedings by viewModel.feedings.collectAsStateWithLifecycle()
+    val treatments by viewModel.treatments.collectAsStateWithLifecycle()
+    val harvests by viewModel.harvests.collectAsStateWithLifecycle()
+
+    Card(
+        shape = RoundedCornerShape(18.dp),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+    ) {
+        Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text("Records", fontWeight = FontWeight.ExtraBold, style = MaterialTheme.typography.titleMedium)
+                    Text("Feeding, treatment and harvest history", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Icon(Icons.Rounded.History, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(24.dp))
+            }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Column(
+                    Modifier.weight(1f).clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.surfaceVariant).padding(horizontal = 9.dp, vertical = 9.dp),
+                    verticalArrangement = Arrangement.spacedBy(1.dp)
+                ) {
+                    Text(feedings.size.toString(), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.ExtraBold)
+                    Text("FEEDINGS", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+                }
+                Column(
+                    Modifier.weight(1f).clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.surfaceVariant).padding(horizontal = 9.dp, vertical = 9.dp),
+                    verticalArrangement = Arrangement.spacedBy(1.dp)
+                ) {
+                    Text(treatments.size.toString(), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.ExtraBold)
+                    Text("TREATMENTS", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+                }
+                Column(
+                    Modifier.weight(1f).clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.surfaceVariant).padding(horizontal = 9.dp, vertical = 9.dp),
+                    verticalArrangement = Arrangement.spacedBy(1.dp)
+                ) {
+                    Text(harvests.size.toString(), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.ExtraBold)
+                    Text("HARVESTS", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+                }
+            }
+            val lastRecordLines = buildList {
+                feedings.firstOrNull()?.let { add("Last feed  ·  ${it.amount} ${it.unit} • ${it.feedType}") }
+                treatments.firstOrNull()?.let { add("Last treatment  ·  ${it.product}") }
+                harvests.firstOrNull()?.let { add("Last harvest  ·  ${it.dryHoneyWeight} ${it.weightUnit}") }
+            }
+            if (lastRecordLines.isNotEmpty()) {
+                Divider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.65f))
+                lastRecordLines.forEach { line ->
+                    Text(line, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            } else {
+                Text("No feeding, treatment or harvest records yet.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+    }
+}
+
+@Composable
 internal fun HiveDetailScreen(
     hive: Hive,
+    viewModel: BeeKeepViewModel,
     inspections: List<Inspection>,
     events: List<ActivityEvent>,
-    feedings: List<com.beekeep.app.data.Feeding>,
-    treatments: List<Treatment>,
-    harvests: List<Harvest>,
     nfc: NfcController,
     activity: ComponentActivity,
     onBack: () -> Unit,
@@ -402,57 +463,7 @@ internal fun HiveDetailScreen(
             }
         }
 
-        Card(
-            shape = RoundedCornerShape(18.dp),
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
-        ) {
-            Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                        Text("Records", fontWeight = FontWeight.ExtraBold, style = MaterialTheme.typography.titleMedium)
-                        Text("Feeding, treatment and harvest history", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                    Icon(Icons.Rounded.History, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(24.dp))
-                }
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Column(
-                        Modifier.weight(1f).clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.surfaceVariant).padding(horizontal = 9.dp, vertical = 9.dp),
-                        verticalArrangement = Arrangement.spacedBy(1.dp)
-                    ) {
-                        Text(feedings.size.toString(), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.ExtraBold)
-                        Text("FEEDINGS", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
-                    }
-                    Column(
-                        Modifier.weight(1f).clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.surfaceVariant).padding(horizontal = 9.dp, vertical = 9.dp),
-                        verticalArrangement = Arrangement.spacedBy(1.dp)
-                    ) {
-                        Text(treatments.size.toString(), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.ExtraBold)
-                        Text("TREATMENTS", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
-                    }
-                    Column(
-                        Modifier.weight(1f).clip(RoundedCornerShape(12.dp)).background(MaterialTheme.colorScheme.surfaceVariant).padding(horizontal = 9.dp, vertical = 9.dp),
-                        verticalArrangement = Arrangement.spacedBy(1.dp)
-                    ) {
-                        Text(harvests.size.toString(), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.ExtraBold)
-                        Text("HARVESTS", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
-                    }
-                }
-                val lastRecordLines = buildList {
-                    feedings.firstOrNull()?.let { add("Last feed  ·  ${it.amount} ${it.unit} • ${it.feedType}") }
-                    treatments.firstOrNull()?.let { add("Last treatment  ·  ${it.product}") }
-                    harvests.firstOrNull()?.let { add("Last harvest  ·  ${it.dryHoneyWeight} ${it.weightUnit}") }
-                }
-                if (lastRecordLines.isNotEmpty()) {
-                    Divider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.65f))
-                    lastRecordLines.forEach { line ->
-                        Text(line, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                } else {
-                    Text("No feeding, treatment or harvest records yet.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-            }
-        }
+        HiveDetailRecordsCard(viewModel)
 
         Card(
             shape = RoundedCornerShape(16.dp),
