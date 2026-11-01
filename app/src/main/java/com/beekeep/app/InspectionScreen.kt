@@ -72,6 +72,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -419,9 +420,8 @@ internal fun InspectionScreen(
     activity: ComponentActivity,
     locationController: LocationController,
     hive: Hive,
+    viewModel: BeeKeepViewModel,
     workspaceId: String?,
-    priorInspections: List<Inspection>,
-    beeCountHistory: List<ActivityEvent>,
     defaultMiteSampleSize: Int,
     defaultStartingStrength: Int,
     rememberLastInspectionValues: Boolean,
@@ -441,6 +441,15 @@ internal fun InspectionScreen(
     },
     onSaved: () -> Unit
 ) {
+    val priorInspections by viewModel.inspections.collectAsStateWithLifecycle()
+    val activityEvents by viewModel.events.collectAsStateWithLifecycle()
+    val beeCountHistory = remember(activityEvents, hive.id) {
+        activityEvents.filter {
+            it.type == "bee_count_change" &&
+                it.hiveId == hive.id &&
+                it.detail.startsWith("Frames of bees changed from ")
+        }
+    }
     val haptic = LocalHapticFeedback.current
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
