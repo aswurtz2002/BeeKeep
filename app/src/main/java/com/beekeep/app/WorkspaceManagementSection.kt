@@ -211,6 +211,7 @@ fun WorkspaceManagementSection(
             // while the new account's memberships are loading.
             loadedWorkspaceAccountId = account.userId
             workspaces = emptyList()
+            onWorkspaceMembershipChanged(false)
             selectedWorkspaceId = ""
             activeWorkspaceId = ""
             members = emptyList()
