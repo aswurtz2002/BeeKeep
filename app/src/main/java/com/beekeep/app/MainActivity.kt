@@ -607,6 +607,7 @@ fun BeeKeepApp(
         if (!activeWorkspaceId.isNullOrBlank()) hasJoinedTeamWorkspace = true
     }
     val apiaries by vm.apiaries.collectAsStateWithLifecycle()
+    val apiaryHiveCounts by vm.apiaryHiveCounts.collectAsStateWithLifecycle()
     var showViewOnlyDialog by rememberSaveable { mutableStateOf(false) }
 
     androidx.compose.runtime.LaunchedEffect(readOnlyWriteAttempt) {
@@ -2324,7 +2325,7 @@ fun BeeKeepApp(
                 )
             }
             Screen.APIARIES -> ApiariesScreen(
-                apiaries, hives, padding,
+                apiaries, apiaryHiveCounts, padding,
                 onAddApiary = { addApiaryOptionsVisible = true },
                 onEditApiary = { editingApiary = it },
                 onOpenMap = { apiary ->
