@@ -78,12 +78,9 @@ fun WorkspaceManagementSection(
                 .getString("selected_team_workspace_id", "").orEmpty()
         )
     }
-    var activeWorkspaceId by rememberSaveable {
-        mutableStateOf(
-            activity.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
-                .getString("active_team_workspace_id", "").orEmpty()
-        )
-    }
+    // Do not infer an active team from shared device preferences before the current
+    // account identity has been loaded and matched.
+    var activeWorkspaceId by rememberSaveable { mutableStateOf("") }
     var members by remember { mutableStateOf<List<BeeKeepWorkspaceMember>>(emptyList()) }
     var membersLoadedWorkspaceId by remember { mutableStateOf<String?>(null) }
     var memberLoadError by remember { mutableStateOf<String?>(null) }
@@ -206,10 +203,9 @@ fun WorkspaceManagementSection(
         return false
     }
 
-    LaunchedEffect(account.signedIn) {
-        if (!account.signedIn) {
-            activeWorkspaceId = activity.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
-                .getString("active_team_workspace_id", "").orEmpty()
+    LaunchedEffect(account.signedIn, account.userId) {
+        if (!account.signedIn || account.userId.isNullOrBlank()) {
+            activeWorkspaceId = ""
             hasUltimateEntitlement = false
             entitlementCheckFailed = false
             workspaces = emptyList()
@@ -220,8 +216,16 @@ fun WorkspaceManagementSection(
             createdInvite = null
             return@LaunchedEffect
         }
-        activeWorkspaceId = activity.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
-            .getString("active_team_workspace_id", "").orEmpty()
+        val workspacePrefs = activity.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
+        val savedWorkspaceOwnerId = workspacePrefs.getString("active_team_workspace_user_id", null)
+            ?.trim()?.takeIf { it.isNotEmpty() }
+        val savedActiveWorkspaceId = workspacePrefs.getString("active_team_workspace_id", "")
+            .orEmpty().trim()
+        activeWorkspaceId = if (savedWorkspaceOwnerId == account.userId?.trim()) {
+            savedActiveWorkspaceId
+        } else {
+            ""
+        }
         val entitlement = cloud.myActiveUltimateEntitlement()
         hasUltimateEntitlement = entitlement.value == true
         entitlementCheckFailed = !entitlement.isSuccess
@@ -231,6 +235,7 @@ fun WorkspaceManagementSection(
             workspaces = result.value.orEmpty()
             val available = workspaces.filterNot { it.is_personal }
             onWorkspaceMembershipChanged(available.isNotEmpty())
+            activeWorkspaceId = activeWorkspaceId.takeIf { id -> available.any { it.id == id } }.orEmpty()
             selectedWorkspaceId = selectedWorkspaceId.takeIf { id -> available.any { it.id == id } }
                 ?: available.firstOrNull()?.id.orEmpty()
             activity.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE).edit()
