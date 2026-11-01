@@ -54,12 +54,12 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import com.beekeep.app.data.Apiary
-import com.beekeep.app.data.Hive
+import java.util.Locale
 
 @Composable
 internal fun ApiariesScreen(
     apiaries: List<Apiary>,
-    hives: List<Hive>,
+    hiveCountsByApiary: Map<String, Int>,
     padding: androidx.compose.foundation.layout.PaddingValues,
     onAddApiary: () -> Unit,
     onEditApiary: (Apiary) -> Unit,
@@ -155,7 +155,7 @@ internal fun ApiariesScreen(
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     items(filtered, key = { it.id }) { apiary ->
-                        val count = hives.count { it.apiary.equals(apiary.name, ignoreCase = true) }
+                        val count = hiveCountsByApiary[apiary.name.lowercase(Locale.ROOT)] ?: 0
                         val isDragging = draggingApiaryId == apiary.id
                         val listItemInfo = lazyListState.layoutInfo.visibleItemsInfo.firstOrNull { it.key == apiary.id }
                         Card(
