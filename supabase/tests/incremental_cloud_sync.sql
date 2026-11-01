@@ -175,7 +175,7 @@ begin
     from public.beekeep_personal_sync_changes(0, 1000000, 500)
     where entity_type = 'event' and entity_id = 99001;
     if visible_count <> 0 then
-        raise exception 'Another user's personal sync changes were exposed';
+        raise exception 'Another user''s personal sync changes were exposed';
     end if;
 end;
 $personal_isolation_assertions$;
