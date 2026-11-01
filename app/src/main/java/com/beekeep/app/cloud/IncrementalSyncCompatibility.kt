@@ -19,7 +19,7 @@ internal object IncrementalSyncCompatibility {
             .joinToString("\n")
             .lowercase()
 
-        val referencesIncrementalRpc = incrementalRpcNames.any(messages::contains)
+        val referencesIncrementalRpc = incrementalRpcNames.any { rpcName -> messages.contains(rpcName) }
         if (!referencesIncrementalRpc) return false
 
         return "pgrst202" in messages ||
