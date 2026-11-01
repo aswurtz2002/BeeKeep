@@ -30,7 +30,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.debounce
-import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.launch
 import io.ktor.client.call.body
 import java.util.UUID
@@ -71,7 +70,11 @@ class SupabaseGateway(
     // Foreground and WorkManager gateways must share one client/session refresh loop.
     private val client = BeeKeepSupabaseRuntime.client()
 
+    @Volatile
     private var realtimeJob: Job? = null
+    @Volatile
+    private var realtimeScopeKey: String? = null
+    private val realtimeLock = Any()
     private val syncMutex = BeeKeepSupabaseRuntime.syncMutex
 
     private val _account = MutableStateFlow(
@@ -331,49 +334,93 @@ class SupabaseGateway(
         }
     }
 
+    private fun selectedRealtimeWorkspaceId(): String =
+        appContext.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
+            .getString("active_team_workspace_id", "")
+            .orEmpty().trim()
+
+    /**
+     * Subscribe only to the document scope this device is currently showing. A personal
+     * account does not need to wake up for team writes (or other users' personal writes),
+     * and a team member does not need events from other workspaces they belong to.
+     *
+     * The sync cursor remains the source of truth; Realtime is only a scoped wake-up signal.
+     */
     fun startRealtime() {
         val supabase = client
-        if (!configured || supabase == null || realtimeJob?.isActive == true) return
-        realtimeJob = scope.launch {
-            var backoffMs = 1_000L
-            while (true) {
-                try {
-                    if (supabase.auth.currentSessionOrNull() == null) return@launch
-                    val channel = supabase.channel("beekeep-doc-sync")
+        if (!configured || supabase == null) return
+        val session = supabase.auth.currentSessionOrNull() ?: return
+        val userId = session.user?.id?.trim()?.takeIf { it.isNotEmpty() } ?: return
+        val workspaceId = selectedRealtimeWorkspaceId()
+        val scopeKey = if (workspaceId.isBlank()) {
+            "personal:$userId"
+        } else {
+            "workspace:$userId:$workspaceId"
+        }
+
+        synchronized(realtimeLock) {
+            if (realtimeJob?.isActive == true && realtimeScopeKey == scopeKey) return
+            val previousJob = realtimeJob
+            realtimeScopeKey = scopeKey
+            // Stop the previous scope immediately; the replacement waits for its finally block.
+            previousJob?.cancel()
+            realtimeJob = scope.launch {
+                // Wait until the previous listener has unsubscribed before opening this channel.
+                // That prevents an old listener from removing the new one during a workspace switch.
+                previousJob?.join()
+                if (previousJob != null) {
+                    runCatching { supabase.realtime.removeAllChannels() }
+                }
+
+                var backoffMs = 1_000L
+                while (true) {
                     try {
-                        val privateChanges = channel.postgresChangeFlow<PostgresAction>(schema = "public") {
-                            table = "beekeep_documents"
+                        val currentUserId = supabase.auth.currentSessionOrNull()?.user?.id
+                        if (currentUserId != userId) return@launch
+                        if (selectedRealtimeWorkspaceId() != workspaceId) return@launch
+
+                        val channel = supabase.channel("beekeep-doc-sync")
+                        try {
+                            val changes = if (workspaceId.isBlank()) {
+                                channel.postgresChangeFlow<PostgresAction>(schema = "public") {
+                                    table = "beekeep_documents"
+                                    filter { eq("user_id", userId) }
+                                }
+                            } else {
+                                channel.postgresChangeFlow<PostgresAction>(schema = "public") {
+                                    table = "beekeep_workspace_documents"
+                                    filter { eq("workspace_id", workspaceId) }
+                                }
+                            }
+
+                            supabase.realtime.connect()
+                            channel.subscribe()
+                            _account.value = _account.value.copy(error = null)
+                            backoffMs = 1_000L
+                            changes.debounce(500).collect {
+                                syncNow()
+                            }
+                        } finally {
+                            runCatching { supabase.realtime.removeAllChannels() }
                         }
-                        val teamChanges = channel.postgresChangeFlow<PostgresAction>(schema = "public") {
-                            table = "beekeep_workspace_documents"
-                        }
-                        supabase.realtime.connect()
-                        channel.subscribe()
-                        _account.value = _account.value.copy(error = null)
-                        backoffMs = 1_000L
-                        merge(privateChanges, teamChanges).debounce(500).collect {
-                            syncNow()
-                        }
-                    } finally {
-                        runCatching { supabase.realtime.removeAllChannels() }
+                    } catch (t: CancellationException) {
+                        throw t
+                    } catch (t: Throwable) {
+                        _account.value = _account.value.copy(error = "Live sync unavailable: ${t.message ?: "connection failed"}")
+                        delay(backoffMs)
+                        backoffMs = (backoffMs * 2).coerceAtMost(60_000L)
                     }
-                } catch (t: CancellationException) {
-                    throw t
-                } catch (t: Throwable) {
-                    _account.value = _account.value.copy(error = "Live sync unavailable: ${t.message ?: "connection failed"}")
-                    delay(backoffMs)
-                    backoffMs = (backoffMs * 2).coerceAtMost(60_000L)
                 }
             }
         }
     }
 
     fun stopRealtime() {
-        realtimeJob?.cancel()
-        realtimeJob = null
-        val supabase = client
-        if (configured && supabase != null) {
-            scope.launch { runCatching { supabase.realtime.removeAllChannels() } }
+        synchronized(realtimeLock) {
+            // The listener's finally block owns channel removal. Keep its Job reference so a
+            // quick sign-in/reconnect can wait for that cleanup before opening a new channel.
+            realtimeScopeKey = null
+            realtimeJob?.cancel()
         }
     }
 
@@ -887,43 +934,50 @@ class SupabaseGateway(
      * Switches the app's active dataset to a team workspace or back to the user's personal data.
      * The repository stores team data in a separate Room file before the first team pull.
      */
-    suspend fun activateWorkspace(workspaceId: String?): WorkspaceOperationResult<Unit> = syncMutex.withLock {
-        val supabase = client
-        if (!configured || supabase == null) {
-            return@withLock WorkspaceOperationResult(error = "BeeKeep Cloud is not configured.")
-        }
-        try {
-            supabase.auth.awaitInitialization()
-            if (supabase.auth.currentSessionOrNull() == null) {
-                refreshAccount()
-                return@withLock WorkspaceOperationResult(error = "Sign in before switching workspaces.")
+    suspend fun activateWorkspace(workspaceId: String?): WorkspaceOperationResult<Unit> {
+        val result = syncMutex.withLock {
+            val supabase = client
+            if (!configured || supabase == null) {
+                return@withLock WorkspaceOperationResult(error = "BeeKeep Cloud is not configured.")
             }
-            val cleanId = workspaceId?.trim()?.takeIf { it.isNotEmpty() }
-            val workspace = if (cleanId == null) null else {
-                supabase.postgrest.rpc("beekeep_list_workspaces")
-                    .decodeList<BeeKeepWorkspace>()
-                    .firstOrNull { it.id == cleanId && !it.is_personal }
-                    ?: error("You no longer have access to that team workspace.")
-            }
-            repository.switchWorkspace(
-                workspaceId = cleanId,
-                readOnly = workspace?.member_role == "viewer"
-            )
-            val syncResult = syncNowUnlocked()
-            if (syncResult is CloudResult.Failure) {
-                WorkspaceOperationResult(
-                    value = Unit,
-                    error = "Workspace selected, but the first sync failed: ${syncResult.message}"
+            try {
+                supabase.auth.awaitInitialization()
+                if (supabase.auth.currentSessionOrNull() == null) {
+                    refreshAccount()
+                    return@withLock WorkspaceOperationResult(error = "Sign in before switching workspaces.")
+                }
+                val cleanId = workspaceId?.trim()?.takeIf { it.isNotEmpty() }
+                val workspace = if (cleanId == null) null else {
+                    supabase.postgrest.rpc("beekeep_list_workspaces")
+                        .decodeList<BeeKeepWorkspace>()
+                        .firstOrNull { it.id == cleanId && !it.is_personal }
+                        ?: error("You no longer have access to that team workspace.")
+                }
+                repository.switchWorkspace(
+                    workspaceId = cleanId,
+                    readOnly = workspace?.member_role == "viewer"
                 )
-            } else {
-                WorkspaceOperationResult(value = Unit)
+                val syncResult = syncNowUnlocked()
+                if (syncResult is CloudResult.Failure) {
+                    WorkspaceOperationResult(
+                        value = Unit,
+                        error = "Workspace selected, but the first sync failed: ${syncResult.message}"
+                    )
+                } else {
+                    WorkspaceOperationResult(value = Unit)
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Throwable) {
+                WorkspaceOperationResult(error = error.message?.takeIf { it.isNotBlank() }
+                    ?: "Could not switch workspace.")
             }
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (error: Throwable) {
-            WorkspaceOperationResult(error = error.message?.takeIf { it.isNotBlank() }
-                ?: "Could not switch workspace.")
         }
+
+        // Rebind Realtime after the Room database and active-workspace preference switch.
+        // Do this outside the sync lock so the previous listener can finish its own sync.
+        if (enableRealtime && _account.value.signedIn) startRealtime()
+        return result
     }
 
     private suspend fun syncSharedWorkspace(
