@@ -792,7 +792,15 @@ class SupabaseGateway(
                         "${it.entity_type}:${it.entity_id}" in supersededKeys
                     }
                     if (winningCloudRows.isNotEmpty()) {
-                        repository.applyCloudDocuments(CloudDocumentOrder.personal(winningCloudRows))
+                        val knownNfcMutations = repository.nfcMutationSyncTimestamps()
+                        val legacyNfcHiveIds = legacyNfcOnlyPersonalHiveSnapshotIds(
+                            winningCloudRows,
+                            knownMutations = knownNfcMutations
+                        )
+                        repository.applyCloudDocuments(
+                            documents = CloudDocumentOrder.personal(winningCloudRows),
+                            ignoreLegacyNfcProfileSnapshotHiveIds = legacyNfcHiveIds
+                        )
                     }
                 }
                 repository.markSyncDone(supersededIds)
@@ -1115,7 +1123,16 @@ class SupabaseGateway(
                             )
                         }
                         if (winningCloudRows.isNotEmpty()) {
-                            repository.applyCloudDocuments(winningCloudRows)
+                            val legacyNfcHiveIds = legacyNfcOnlyWorkspaceHiveSnapshotIds(
+                                remoteRows.filter {
+                                    "${it.entity_type}:${it.entity_id}" in supersededKeys
+                                },
+                                knownMutations = repository.nfcMutationSyncTimestamps()
+                            )
+                            repository.applyCloudDocuments(
+                                documents = winningCloudRows,
+                                ignoreLegacyNfcProfileSnapshotHiveIds = legacyNfcHiveIds
+                            )
                         }
                     }
                     repository.markSyncDone(supersededIds)
