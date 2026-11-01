@@ -13,6 +13,7 @@ BeeKeep is offline-first. Local writes are committed to Room first, then queued 
 ## Team workspace data
 
 - Each shared team workspace uses a separate local Room database file, so personal records are not silently copied into the team's dataset.
+- The active team preference is bound to the account user ID that selected it. A repository starts on personal/local data; startup restores a cached team only when that binding matches the signed-in account. A legacy unbound selection must pass a membership lookup before it is restored. Signing out or switching accounts returns to personal data. The same account can still reopen its cached team offline.
 - Shared records live in `public.beekeep_workspace_documents`, keyed by `workspace_id, entity_type, entity_id`. This separate table avoids changing the legacy private record table's shape.
 - Members can read records in their workspace. Owners, admins and members can write; viewers are read-only. Row-level security is enforced by Supabase; the app's local read-only guard is an additional user-experience safeguard, not the security boundary.
 - The app validates membership at sync time and only fetches/uploads records for the selected workspace. A revoked membership falls back to personal data.

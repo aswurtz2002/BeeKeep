@@ -30,35 +30,52 @@ class LocalHiveRepository(context: Context) {
     private val prefs = appContext.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
     private val inspectionNoteDraftPrefs = appContext.getSharedPreferences(INSPECTION_NOTE_DRAFTS, Context.MODE_PRIVATE)
     private val inspectionFormDraftPrefs = appContext.getSharedPreferences(InspectionFormDraftStore.PREFERENCES_NAME, Context.MODE_PRIVATE)
-    private val initialTeamWorkspaceId = prefs.getString("active_team_workspace_id", null)
-        ?.trim()?.takeIf { it.isNotEmpty() }
-    private val _activeWorkspaceId = MutableStateFlow(initialTeamWorkspaceId)
+    // Start on private/local data. The cloud gateway restores a cached team only after
+    // checking the signed-in account against the account that last selected that workspace.
+    private val _activeWorkspaceId = MutableStateFlow<String?>(null)
     val activeWorkspaceId: StateFlow<String?> = _activeWorkspaceId.asStateFlow()
-    private val _activeWorkspaceReadOnly = MutableStateFlow(
-        prefs.getBoolean("active_team_workspace_read_only", false)
-    )
+    private val _activeWorkspaceReadOnly = MutableStateFlow(false)
     val activeWorkspaceReadOnly: StateFlow<Boolean> = _activeWorkspaceReadOnly.asStateFlow()
     private val _readOnlyWriteAttempt = MutableStateFlow(0L)
     val readOnlyWriteAttempt: StateFlow<Long> = _readOnlyWriteAttempt.asStateFlow()
-    private val _database = MutableStateFlow(
-        BeeKeepRoomDb.getForWorkspace(appContext, initialTeamWorkspaceId)
-    )
+    private val _database = MutableStateFlow(BeeKeepRoomDb.get(appContext))
     private val db: BeeKeepRoomDb get() = _database.value
 
     /**
      * Moves the live repository to a distinct database for a team. Personal/offline records
      * remain in beekeep_room.db and are never merged into a team's local dataset.
      */
-    suspend fun switchWorkspace(workspaceId: String?, readOnly: Boolean? = null) = withContext(Dispatchers.IO) {
+    suspend fun switchWorkspace(
+        workspaceId: String?,
+        readOnly: Boolean? = null,
+        ownerUserId: String? = null
+    ) = withContext(Dispatchers.IO) {
         val cleanId = workspaceId?.trim()?.takeIf { it.isNotEmpty() }
+        val cleanOwnerUserId = if (cleanId == null) null else {
+            ownerUserId?.trim()?.takeIf { it.isNotEmpty() }
+        }
+        require(cleanId == null || cleanOwnerUserId != null) {
+            "A signed-in account is required to select a team workspace."
+        }
         val cleanReadOnly = cleanId != null && (readOnly
             ?: prefs.getBoolean("active_team_workspace_read_only", false))
-        if (_activeWorkspaceId.value == cleanId && _activeWorkspaceReadOnly.value == cleanReadOnly) return@withContext
+        val storedOwnerUserId = prefs.getString("active_team_workspace_user_id", null)
+            ?.trim()?.takeIf { it.isNotEmpty() }
+        if (_activeWorkspaceId.value == cleanId &&
+            _activeWorkspaceReadOnly.value == cleanReadOnly &&
+            storedOwnerUserId == cleanOwnerUserId
+        ) return@withContext
+
         val nextDatabase = BeeKeepRoomDb.getForWorkspace(appContext, cleanId)
-        check(prefs.edit()
+        val editor = prefs.edit()
             .putString("active_team_workspace_id", cleanId.orEmpty())
             .putBoolean("active_team_workspace_read_only", cleanReadOnly)
-            .commit()) {
+        if (cleanOwnerUserId != null) {
+            editor.putString("active_team_workspace_user_id", cleanOwnerUserId)
+        } else {
+            editor.remove("active_team_workspace_user_id")
+        }
+        check(editor.commit()) {
             "Could not save the active workspace selection."
         }
         _database.value = nextDatabase
