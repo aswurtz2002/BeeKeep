@@ -46,6 +46,8 @@ sealed interface CloudResult {
 }
 
 private const val SYNC_UPLOAD_BATCH_SIZE = 200
+private const val SYNC_DOWNLOAD_PAGE_SIZE = 500
+private const val SYNC_CONFLICT_LOOKUP_BATCH_SIZE = 100
 
 class SupabaseGateway(
     private val context: Context,
@@ -53,6 +55,9 @@ class SupabaseGateway(
     private val enableRealtime: Boolean = true
 ) {
     private val appContext = context.applicationContext
+    private val syncCursorPrefs = appContext.getSharedPreferences(
+        "beekeep_cloud_sync_cursors_v1", Context.MODE_PRIVATE
+    )
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val deviceId = appContext.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
         .getString("device_id", null)
@@ -420,6 +425,148 @@ class SupabaseGateway(
             offset += pageSize
         }
         return documents
+    }
+
+    private fun personalSyncCursorKey(userId: String): String = "personal:$userId"
+
+    private fun workspaceSyncCursorKey(userId: String, workspaceId: String): String =
+        "workspace:$userId:$workspaceId"
+
+    private fun readSyncCursor(key: String): Long? =
+        if (syncCursorPrefs.contains(key)) syncCursorPrefs.getLong(key, 0L) else null
+
+    private fun saveSyncCursor(key: String, version: Long) {
+        check(syncCursorPrefs.edit().putLong(key, version).commit()) {
+            "Could not save the cloud sync cursor. The next sync will safely retry these changes."
+        }
+    }
+
+    private suspend fun loadPersonalSyncHead(): Long {
+        val supabase = client ?: return 0L
+        return supabase.postgrest.rpc("beekeep_personal_sync_head")
+            .decodeList<CloudSyncHead>()
+            .firstOrNull()?.head_version ?: 0L
+    }
+
+    private suspend fun loadWorkspaceSyncHead(workspaceId: String): Long {
+        val supabase = client ?: return 0L
+        return supabase.postgrest.rpc(
+            "beekeep_workspace_sync_head",
+            WorkspaceSyncHeadParams(workspaceId)
+        ).decodeList<CloudSyncHead>()
+            .firstOrNull()?.head_version ?: 0L
+    }
+
+    private suspend fun loadPersonalChanges(
+        afterVersion: Long,
+        throughVersion: Long
+    ): List<CloudDocumentRow> {
+        val supabase = client ?: return emptyList()
+        if (throughVersion <= afterVersion) return emptyList()
+
+        val documents = mutableListOf<CloudDocumentRow>()
+        var pageCursor = afterVersion.coerceAtLeast(0L)
+        while (pageCursor < throughVersion) {
+            val page = supabase.postgrest.rpc(
+                "beekeep_personal_sync_changes",
+                PersonalSyncChangesParams(
+                    after_version = pageCursor,
+                    through_version = throughVersion,
+                    requested_page_size = SYNC_DOWNLOAD_PAGE_SIZE
+                )
+            ).decodeList<CloudDocumentRow>()
+            if (page.isEmpty()) break
+
+            val nextCursor = page.last().sync_version
+            check(nextCursor > pageCursor && page.all {
+                it.sync_version > pageCursor && it.sync_version <= throughVersion
+            }) {
+                "The personal sync page returned an invalid version range."
+            }
+            documents += page
+            pageCursor = nextCursor
+            if (page.size < SYNC_DOWNLOAD_PAGE_SIZE) break
+        }
+        return documents
+    }
+
+    private suspend fun loadWorkspaceChanges(
+        workspaceId: String,
+        afterVersion: Long,
+        throughVersion: Long
+    ): List<CloudWorkspaceDocumentRow> {
+        val supabase = client ?: return emptyList()
+        if (throughVersion <= afterVersion) return emptyList()
+
+        val documents = mutableListOf<CloudWorkspaceDocumentRow>()
+        var pageCursor = afterVersion.coerceAtLeast(0L)
+        while (pageCursor < throughVersion) {
+            val page = supabase.postgrest.rpc(
+                "beekeep_workspace_sync_changes",
+                WorkspaceSyncChangesParams(
+                    target_workspace_id = workspaceId,
+                    after_version = pageCursor,
+                    through_version = throughVersion,
+                    requested_page_size = SYNC_DOWNLOAD_PAGE_SIZE
+                )
+            ).decodeList<CloudWorkspaceDocumentRow>()
+            if (page.isEmpty()) break
+
+            val nextCursor = page.last().sync_version
+            check(nextCursor > pageCursor && page.all {
+                it.sync_version > pageCursor && it.sync_version <= throughVersion
+            }) {
+                "The workspace sync page returned an invalid version range."
+            }
+            documents += page
+            pageCursor = nextCursor
+            if (page.size < SYNC_DOWNLOAD_PAGE_SIZE) break
+        }
+        return documents
+    }
+
+    /**
+     * Conflict checks now fetch only cloud rows for locally queued entity IDs. The previous
+     * implementation downloaded every document just to compare this small outbox batch.
+     */
+    private suspend fun loadPersonalDocumentsForEntityIds(
+        userId: String,
+        entityIds: Collection<Long>
+    ): List<CloudDocumentRow> {
+        val supabase = client ?: return emptyList()
+        val ids = entityIds.distinct()
+        if (ids.isEmpty()) return emptyList()
+
+        return ids.chunked(SYNC_CONFLICT_LOOKUP_BATCH_SIZE).flatMap { batch ->
+            supabase.from("beekeep_documents")
+                .select {
+                    filter {
+                        eq("user_id", userId)
+                        isIn("entity_id", batch.map { it as Any })
+                    }
+                }
+                .decodeList<CloudDocumentRow>()
+        }
+    }
+
+    private suspend fun loadWorkspaceDocumentsForEntityIds(
+        workspaceId: String,
+        entityIds: Collection<Long>
+    ): List<CloudWorkspaceDocumentRow> {
+        val supabase = client ?: return emptyList()
+        val ids = entityIds.distinct()
+        if (ids.isEmpty()) return emptyList()
+
+        return ids.chunked(SYNC_CONFLICT_LOOKUP_BATCH_SIZE).flatMap { batch ->
+            supabase.from("beekeep_workspace_documents")
+                .select {
+                    filter {
+                        eq("workspace_id", workspaceId)
+                        isIn("entity_id", batch.map { it as Any })
+                    }
+                }
+                .decodeList<CloudWorkspaceDocumentRow>()
+        }
     }
 
     private data class LegacyNfcSnapshotDocument(
