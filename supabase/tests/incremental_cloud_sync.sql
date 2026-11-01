@@ -136,10 +136,6 @@ declare
     delta_count integer;
     is_deleted boolean;
     returned_version bigint;
-    note_count integer;
-    note_is_deleted boolean;
-    note_version bigint;
-    note_text text;
 begin
     select value::bigint into initial_head from incremental_sync_test_context where key = 'personal_head_initial';
     select value::bigint into inserted_head from incremental_sync_test_context where key = 'personal_head_insert';
@@ -282,6 +278,10 @@ declare
     delta_count integer;
     is_deleted boolean;
     returned_version bigint;
+    note_count integer;
+    note_is_deleted boolean;
+    note_version bigint;
+    note_text text;
 begin
     select value::uuid into workspace_id_value from incremental_sync_test_context where key = 'workspace_id';
     select value::bigint into initial_head from incremental_sync_test_context where key = 'workspace_head_initial';
