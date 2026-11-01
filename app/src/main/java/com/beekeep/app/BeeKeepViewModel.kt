@@ -25,6 +25,10 @@ class BeeKeepViewModel(
     val deadHives: StateFlow<List<Hive>> = _deadHives
     private val _apiaries = MutableStateFlow<List<Apiary>>(emptyList())
     val apiaries: StateFlow<List<Apiary>> = _apiaries
+    // Expose only the per-apiary totals needed by the Apiaries screen. MutableStateFlow
+    // suppresses equal maps, so hive profile edits do not invalidate that screen.
+    private val _apiaryHiveCounts = MutableStateFlow(ApiaryHiveCounts(emptyMap()))
+    val apiaryHiveCounts: StateFlow<ApiaryHiveCounts> = _apiaryHiveCounts
     private val _selected = MutableStateFlow<Hive?>(null)
     val selected: StateFlow<Hive?> = _selected
     private val _inspections = MutableStateFlow<List<Inspection>>(emptyList())
@@ -53,15 +57,24 @@ class BeeKeepViewModel(
         runCatching { CloudSyncScheduler.runNow(appContext) }
     }
 
+    private fun countHivesByApiary(hives: List<Hive>): ApiaryHiveCounts =
+        ApiaryHiveCounts(hives.groupingBy { it.apiary.lowercase(java.util.Locale.ROOT) }.eachCount())
+
     init {
         viewModelScope.launch {
             repo.initialize()
             // Hydrate active and inactive UID assignments before NFC auto-write is permitted.
             _hives.value = repo.observeHives().first()
+            _apiaryHiveCounts.value = countHivesByApiary(_hives.value)
             _deadHives.value = repo.observeDeadHives().first()
             _apiaries.value = repo.observeApiaries().first()
             _ready.value = true
-            launch { repo.observeHives().collect { _hives.value = it } }
+            launch {
+                repo.observeHives().collect { updatedHives ->
+                    _hives.value = updatedHives
+                    _apiaryHiveCounts.value = countHivesByApiary(updatedHives)
+                }
+            }
             launch { repo.observeDeadHives().collect { _deadHives.value = it } }
             launch { repo.observeApiaries().collect { _apiaries.value = it } }
         }

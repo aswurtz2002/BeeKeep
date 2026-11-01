@@ -54,12 +54,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import com.beekeep.app.data.Apiary
-import com.beekeep.app.data.Hive
 
 @Composable
 internal fun ApiariesScreen(
     apiaries: List<Apiary>,
-    hives: List<Hive>,
+    hiveCountsByApiary: ApiaryHiveCounts,
     padding: androidx.compose.foundation.layout.PaddingValues,
     onAddApiary: () -> Unit,
     onEditApiary: (Apiary) -> Unit,
@@ -85,11 +84,14 @@ internal fun ApiariesScreen(
         val savedSet = savedIdList.toSet()
         savedIdList.mapNotNull { byId[it] } + apiaries.filterNot { it.id in savedSet }
     }
-    val filtered = orderedApiaries.filter { it.name.contains(query, ignoreCase = true) }
-    val currentOrderedIds = rememberUpdatedState(orderedApiaries.map { it.id })
+    val filtered = remember(orderedApiaries, query) {
+        orderedApiaries.filter { it.name.contains(query, ignoreCase = true) }
+    }
+    val orderedApiaryIds = remember(orderedApiaries) { orderedApiaries.map { it.id } }
+    val currentOrderedIds = rememberUpdatedState(orderedApiaryIds)
     val moveApiaryByIds = rememberUpdatedState<(Long, Long) -> Unit> { fromId, targetId ->
         if (fromId != targetId && query.isBlank()) {
-            val currentIds = orderedApiaries.map { it.id }
+            val currentIds = orderedApiaryIds
             val fromIndex = currentIds.indexOf(fromId)
             val targetIndex = currentIds.indexOf(targetId)
             if (fromIndex >= 0 && targetIndex >= 0 && fromIndex != targetIndex) {
@@ -155,7 +157,7 @@ internal fun ApiariesScreen(
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     items(filtered, key = { it.id }) { apiary ->
-                        val count = hives.count { it.apiary.equals(apiary.name, ignoreCase = true) }
+                        val count = hiveCountsByApiary.countFor(apiary.name)
                         val isDragging = draggingApiaryId == apiary.id
                         val listItemInfo = lazyListState.layoutInfo.visibleItemsInfo.firstOrNull { it.key == apiary.id }
                         Card(
