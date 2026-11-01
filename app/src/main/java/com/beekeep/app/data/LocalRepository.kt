@@ -564,7 +564,12 @@ class LocalHiveRepository(context: Context) {
     }
 
     private suspend fun permanentlyDeleteHiveLocal(hiveId: Long) {
-        clearLocalInspectionNoteDraft(hiveId, System.currentTimeMillis())
+        // A permanent parent deletion overrides any pending child draft on this device.
+        // The local delete path queues draft tombstones before reaching this method.
+        forceClearLocalInspectionNoteDraft(hiveId)
+        InspectionFormDraftStore.clearForDeletedHive(
+            inspectionFormDraftPrefs, _activeWorkspaceId.value, hiveId
+        )
         db.events().deleteForHive(hiveId)
         // inspections, feedings, treatments, harvests and NFC assignments cascade.
         db.hives().hardDelete(hiveId)
@@ -1090,6 +1095,16 @@ class LocalHiveRepository(context: Context) {
         InspectionFormDraftStore.clearRemote(
             inspectionFormDraftPrefs, _activeWorkspaceId.value, hiveId, deletedAt
         )
+    }
+
+    private fun forceClearLocalInspectionNoteDraft(hiveId: Long) {
+        val key = inspectionNoteDraftKey(_activeWorkspaceId.value, hiveId)
+        inspectionNoteDraftPrefs.edit()
+            .remove(key)
+            .remove(inspectionNoteDraftRecordedAtKey(key))
+            .remove(inspectionNoteDraftUpdatedAtKey(key))
+            .remove(inspectionNoteDraftPendingKey(key))
+            .apply()
     }
 
     private fun clearLocalInspectionNoteDraft(hiveId: Long, deletedAt: Long) {
