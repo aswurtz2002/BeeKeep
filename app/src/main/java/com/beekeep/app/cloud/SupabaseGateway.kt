@@ -6,6 +6,7 @@ import com.beekeep.app.BuildConfig
 import com.beekeep.app.BeeKeepPlan
 import com.beekeep.app.BeeKeepEntitlements
 import com.beekeep.app.data.LocalHiveRepository
+import io.github.jan.supabase.SupabaseClient
 import io.github.jan.supabase.auth.auth
 import io.github.jan.supabase.auth.handleDeeplinks
 import io.github.jan.supabase.auth.providers.builtin.Email
@@ -94,9 +95,20 @@ class SupabaseGateway(
 
     init { scope.launch { refreshAccount() } }
 
-    suspend fun refreshAccount() {
+    suspend fun refreshAccount() = syncMutex.withLock {
+        refreshAccountUnlocked()
+    }
+
+    /**
+     * Restore a selected team only for the account that selected it. A legacy selection without
+     * an owner ID is restored only after a successful membership lookup; offline, the app stays
+     * on private/local data until the identity can be verified.
+     */
+    private suspend fun refreshAccountUnlocked() {
         val supabase = client
         if (!configured || supabase == null) {
+            stopRealtime()
+            repository.switchWorkspace(null)
             BeeKeepEntitlements.activateCloudHiveLimitOverride(appContext, null)
             _hiveLimitOverride.value = null
             _verifiedPlan.value = null
@@ -108,8 +120,10 @@ class SupabaseGateway(
             // Wait until stored credentials have been restored before showing signed-out UI.
             supabase.auth.awaitInitialization()
             val session = supabase.auth.currentSessionOrNull()
-            val userId = session?.user?.id
+            val userId = session?.user?.id?.trim()?.takeIf { it.isNotEmpty() }
             if (userId == null) {
+                stopRealtime()
+                repository.switchWorkspace(null)
                 BeeKeepEntitlements.activateCloudHiveLimitOverride(appContext, null)
                 _hiveLimitOverride.value = null
                 _verifiedPlan.value = null
@@ -117,18 +131,91 @@ class SupabaseGateway(
             } else {
                 refreshVerifiedPlanForUser(userId)
                 refreshHiveLimitOverrideForUser(userId)
+                restoreWorkspaceForAccount(supabase, userId)
             }
             _account.value = CloudAccountState(
                 configured = true,
-                signedIn = session != null,
-                email = session?.user?.email ?: ""
+                signedIn = userId != null,
+                email = session?.user?.email ?: "",
+                userId = userId
             )
-            if (enableRealtime && session != null) startRealtime()
+            if (enableRealtime && userId != null) startRealtime() else stopRealtime()
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (error: Throwable) {
+            // If session identity cannot be established, fail closed to private/local data.
+            stopRealtime()
+            repository.switchWorkspace(null)
             _account.value = CloudAccountState(configured = true, signedIn = false, error = error.message)
         }
+    }
+
+    private suspend fun restoreWorkspaceForAccount(supabase: SupabaseClient, userId: String) {
+        val prefs = appContext.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
+        val workspaceId = prefs.getString("active_team_workspace_id", "")
+            .orEmpty().trim()
+        if (workspaceId.isBlank()) {
+            if (repository.activeWorkspaceId.value != null) repository.switchWorkspace(null)
+            return
+        }
+
+        val savedOwnerId = prefs.getString("active_team_workspace_user_id", null)
+            ?.trim()?.takeIf { it.isNotEmpty() }
+        if (savedOwnerId != null &&
+            !ActiveWorkspaceSessionPolicy.ownerMatches(userId, savedOwnerId)
+        ) {
+            repository.switchWorkspace(null)
+            return
+        }
+
+        // A known matching owner can use the cached team while offline. A pre-account-binding
+        // selection must be checked against the server before it is restored.
+        var membershipLookupCompleted = false
+        var memberWorkspace: BeeKeepWorkspace? = null
+        if (savedOwnerId == null) {
+            try {
+                memberWorkspace = supabase.postgrest.rpc("beekeep_list_workspaces")
+                    .decodeList<BeeKeepWorkspace>()
+                    .firstOrNull { it.id == workspaceId && !it.is_personal }
+                membershipLookupCompleted = true
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Throwable) {
+                membershipLookupCompleted = false
+            }
+            if (!membershipLookupCompleted || memberWorkspace == null) {
+                repository.switchWorkspace(null)
+                return
+            }
+        } else {
+            // Refresh the role when online. A failed request is not proof of revocation;
+            // retain the account-bound read-only state for offline use.
+            try {
+                memberWorkspace = supabase.postgrest.rpc("beekeep_list_workspaces")
+                    .decodeList<BeeKeepWorkspace>()
+                    .firstOrNull { it.id == workspaceId && !it.is_personal }
+                membershipLookupCompleted = true
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Throwable) {
+                membershipLookupCompleted = false
+            }
+            if (membershipLookupCompleted && memberWorkspace == null) {
+                repository.switchWorkspace(null)
+                return
+            }
+        }
+
+        val readOnly = if (membershipLookupCompleted) {
+            memberWorkspace?.member_role == "viewer"
+        } else {
+            prefs.getBoolean("active_team_workspace_read_only", false)
+        }
+        repository.switchWorkspace(
+            workspaceId = workspaceId,
+            readOnly = readOnly,
+            ownerUserId = userId
+        )
     }
 
     /**
@@ -215,7 +302,7 @@ class SupabaseGateway(
         // Never leave another account viewing the previously selected team's local cache.
         repository.switchWorkspace(null)
         supabase.auth.signOut()
-        refreshAccount()
+        refreshAccountUnlocked()
         CloudResult.Success
     } catch (cancelled: CancellationException) {
         throw cancelled
@@ -238,17 +325,24 @@ class SupabaseGateway(
             return@withLock CloudResult.Failure(error.message ?: "Could not restore your cloud session")
         }
         val session = supabase.auth.currentSessionOrNull() ?: run {
-            refreshAccount()
+            refreshAccountUnlocked()
             return@withLock CloudResult.NotSignedIn
         }
         val userId = session.user?.id ?: return@withLock CloudResult.NotSignedIn
         _account.value = _account.value.copy(syncing = true, error = null)
         try {
-            val activeTeamWorkspaceId = appContext
-                .getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
+            val workspacePrefs = appContext.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
+            val activeTeamWorkspaceId = workspacePrefs
                 .getString("active_team_workspace_id", "")
                 .orEmpty().trim()
             if (activeTeamWorkspaceId.isNotEmpty()) {
+                val selectedOwnerId = workspacePrefs.getString("active_team_workspace_user_id", null)
+                if (!ActiveWorkspaceSessionPolicy.ownerMatches(userId, selectedOwnerId)) {
+                    repository.switchWorkspace(null)
+                    val message = "Select this team workspace again before resetting it."
+                    _account.value = _account.value.copy(syncing = false, error = message)
+                    return@withLock CloudResult.Failure(message)
+                }
                 val workspace = supabase.postgrest.rpc("beekeep_list_workspaces")
                     .decodeList<BeeKeepWorkspace>()
                     .firstOrNull { it.id == activeTeamWorkspaceId && !it.is_personal }
@@ -706,24 +800,34 @@ class SupabaseGateway(
             return CloudResult.Failure(message)
         }
         val session = client.auth.currentSessionOrNull() ?: run {
-            refreshAccount()
+            refreshAccountUnlocked()
             return CloudResult.NotSignedIn
         }
-        val userId = session.user?.id ?: run {
+        val userId = session.user?.id?.trim()?.takeIf { it.isNotEmpty() } ?: run {
+            refreshAccountUnlocked()
             _account.value = _account.value.copy(syncing = false, signedIn = false, error = "Your cloud session has no user ID. Sign in again.")
             return CloudResult.NotSignedIn
         }
         refreshVerifiedPlanForUser(userId)
         refreshHiveLimitOverrideForUser(userId)
-        val activeTeamWorkspaceId = appContext
+        var activeTeamWorkspaceId = appContext
             .getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
             .getString("active_team_workspace_id", "")
             .orEmpty().trim()
-        // WorkManager and the foreground app each own a repository instance; align this
-        // instance with the latest scope preference before touching its local outbox.
-        if (repository.activeWorkspaceId.value.orEmpty() != activeTeamWorkspaceId) {
-            repository.switchWorkspace(activeTeamWorkspaceId.ifBlank { null })
+        val savedWorkspaceOwnerId = appContext
+            .getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
+            .getString("active_team_workspace_user_id", null)
+            ?.trim()?.takeIf { it.isNotEmpty() }
+        if (activeTeamWorkspaceId.isNotBlank() && savedWorkspaceOwnerId != null &&
+            !ActiveWorkspaceSessionPolicy.ownerMatches(userId, savedWorkspaceOwnerId)
+        ) {
+            repository.switchWorkspace(null)
+            activeTeamWorkspaceId = ""
+        } else if (activeTeamWorkspaceId.isBlank() && repository.activeWorkspaceId.value != null) {
+            repository.switchWorkspace(null)
         }
+        // A non-empty team selection is switched into the active Room database only after
+        // syncSharedWorkspace confirms membership for this account.
         _account.value = _account.value.copy(syncing = true, error = null)
         if (activeTeamWorkspaceId.isNotEmpty()) {
             return syncSharedWorkspace(activeTeamWorkspaceId, userId, session.user?.email.orEmpty())
@@ -885,9 +989,12 @@ class SupabaseGateway(
         if (cleanId.isBlank()) return@withLock WorkspaceOperationResult(error = "Choose a team workspace first.")
 
         val prefs = appContext.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
-        val previousWorkspaceId = prefs.getString("active_team_workspace_id", "")
+        val previousWorkspaceCandidate = prefs.getString("active_team_workspace_id", "")
             .orEmpty().trim().ifBlank { null }
+        var previousWorkspaceId: String? = null
         val previousReadOnly = prefs.getBoolean("active_team_workspace_read_only", false)
+        var recoveryReadOnly = previousReadOnly
+        var recoveryUserId: String? = null
         var copyCompleted = false
         var copiedCount: Int? = null
 
@@ -895,6 +1002,9 @@ class SupabaseGateway(
             supabase.auth.awaitInitialization()
             val session = supabase.auth.currentSessionOrNull()
                 ?: return@withLock WorkspaceOperationResult(error = "Sign in before copying personal records.")
+            val userId = session.user?.id?.trim()?.takeIf { it.isNotEmpty() }
+                ?: return@withLock WorkspaceOperationResult(error = "Your cloud session has no user ID. Sign in again.")
+            recoveryUserId = userId
             val available = supabase.postgrest.rpc("beekeep_list_workspaces")
                 .decodeList<BeeKeepWorkspace>()
             val target = available.firstOrNull { it.id == cleanId && !it.is_personal }
@@ -903,13 +1013,19 @@ class SupabaseGateway(
                 return@withLock WorkspaceOperationResult(error = "Only a workspace owner or admin can copy personal records into a team.")
             }
 
-            val previousRole = previousWorkspaceId?.let { oldId ->
-                available.firstOrNull { it.id == oldId && !it.is_personal }?.member_role
+            // Restore the previous team only when the current account is still a member.
+            // This prevents an error-recovery path from reopening another account's cached team.
+            val previousWorkspace = previousWorkspaceCandidate?.let { oldId ->
+                available.firstOrNull { it.id == oldId && !it.is_personal }
             }
+            previousWorkspaceId = previousWorkspace?.id
+            val previousRole = previousWorkspace?.member_role
+            recoveryReadOnly = previousRole == "viewer" || (previousRole == null && previousReadOnly)
             suspend fun restorePreviousWorkspace() {
                 repository.switchWorkspace(
                     previousWorkspaceId,
-                    readOnly = previousRole == "viewer" || (previousRole == null && previousReadOnly)
+                    readOnly = previousRole == "viewer" || (previousRole == null && previousReadOnly),
+                    ownerUserId = userId
                 )
             }
 
@@ -942,7 +1058,7 @@ class SupabaseGateway(
             copyCompleted = true
 
             // Make the imported team dataset the active local dataset and pull the server's result.
-            repository.switchWorkspace(cleanId, readOnly = false)
+            repository.switchWorkspace(cleanId, readOnly = false, ownerUserId = userId)
             val teamSync = syncNowUnlocked()
             return@withLock when (teamSync) {
                 CloudResult.Success -> WorkspaceOperationResult(value = copy.copied_count)
@@ -965,8 +1081,9 @@ class SupabaseGateway(
             if (!copyCompleted) {
                 runCatching {
                     repository.switchWorkspace(
-                        previousWorkspaceId,
-                        readOnly = previousReadOnly
+                        workspaceId = previousWorkspaceId,
+                        readOnly = recoveryReadOnly,
+                        ownerUserId = recoveryUserId
                     )
                 }
             }
@@ -990,10 +1107,13 @@ class SupabaseGateway(
             }
             try {
                 supabase.auth.awaitInitialization()
-                if (supabase.auth.currentSessionOrNull() == null) {
-                    refreshAccount()
+                val session = supabase.auth.currentSessionOrNull()
+                if (session == null) {
+                    refreshAccountUnlocked()
                     return@withLock WorkspaceOperationResult(error = "Sign in before switching workspaces.")
                 }
+                val userId = session.user?.id?.trim()?.takeIf { it.isNotEmpty() }
+                    ?: return@withLock WorkspaceOperationResult(error = "Your cloud session has no user ID. Sign in again.")
                 val cleanId = workspaceId?.trim()?.takeIf { it.isNotEmpty() }
                 val workspace = if (cleanId == null) null else {
                     supabase.postgrest.rpc("beekeep_list_workspaces")
@@ -1003,7 +1123,8 @@ class SupabaseGateway(
                 }
                 repository.switchWorkspace(
                     workspaceId = cleanId,
-                    readOnly = workspace?.member_role == "viewer"
+                    readOnly = workspace?.member_role == "viewer",
+                    ownerUserId = userId
                 )
                 val syncResult = syncNowUnlocked()
                 if (syncResult is CloudResult.Failure) {
@@ -1051,11 +1172,11 @@ class SupabaseGateway(
             // Reconcile both workspace identity and access mode. Comparing only the
             // read-only flag can leave this gateway writing Team B records into Team A's
             // local Room database when both memberships have the same role.
-            if (repository.activeWorkspaceId.value != workspaceId ||
-                repository.activeWorkspaceReadOnly.value != (!isWritable)
-            ) {
-                repository.switchWorkspace(workspaceId, readOnly = !isWritable)
-            }
+            repository.switchWorkspace(
+                workspaceId = workspaceId,
+                readOnly = !isWritable,
+                ownerUserId = userId
+            )
             if (isWritable) {
                 // Remove legacy NFC-only hive snapshots before they can overwrite team profiles.
                 repository.discardLegacyNfcProfileSnapshots()
@@ -1543,7 +1664,7 @@ class SupabaseGateway(
             syncMutex.withLock {
                 repository.switchWorkspace(null)
                 block()
-                refreshAccount()
+                refreshAccountUnlocked()
             }
             val workspaceToRestore = restoreWorkspaceId?.trim()?.takeIf { it.isNotEmpty() }
             if (_account.value.signedIn && workspaceToRestore != null) {

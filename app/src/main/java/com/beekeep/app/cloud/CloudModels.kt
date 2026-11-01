@@ -77,7 +77,8 @@ data class CloudAccountState(
     val email: String = "",
     val syncing: Boolean = false,
     val lastSyncAt: Long? = null,
-    val error: String? = null
+    val error: String? = null,
+    val userId: String? = null
 )
 
 

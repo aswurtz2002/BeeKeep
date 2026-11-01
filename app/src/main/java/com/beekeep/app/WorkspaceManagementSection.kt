@@ -78,12 +78,9 @@ fun WorkspaceManagementSection(
                 .getString("selected_team_workspace_id", "").orEmpty()
         )
     }
-    var activeWorkspaceId by rememberSaveable {
-        mutableStateOf(
-            activity.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
-                .getString("active_team_workspace_id", "").orEmpty()
-        )
-    }
+    // Do not infer an active team from shared device preferences before the current
+    // account identity has been loaded and matched.
+    var activeWorkspaceId by rememberSaveable { mutableStateOf("") }
     var members by remember { mutableStateOf<List<BeeKeepWorkspaceMember>>(emptyList()) }
     var membersLoadedWorkspaceId by remember { mutableStateOf<String?>(null) }
     var memberLoadError by remember { mutableStateOf<String?>(null) }
@@ -99,6 +96,7 @@ fun WorkspaceManagementSection(
     var loading by remember { mutableStateOf(false) }
     var hasUltimateEntitlement by remember { mutableStateOf(false) }
     var entitlementCheckFailed by remember { mutableStateOf(false) }
+    var loadedWorkspaceAccountId by remember { mutableStateOf<String?>(null) }
     var showUltimateRequiredDialog by rememberSaveable { mutableStateOf(false) }
     var message by rememberSaveable { mutableStateOf("") }
     var showCreateDialog by remember { mutableStateOf(false) }
@@ -112,7 +110,14 @@ fun WorkspaceManagementSection(
     var deleteWorkspaceTarget by remember { mutableStateOf<BeeKeepWorkspace?>(null) }
     var removeMemberTarget by remember { mutableStateOf<BeeKeepWorkspaceMember?>(null) }
 
-    val sharedWorkspaces = workspaces.filterNot { it.is_personal }
+    val accountWorkspaceDataReady = account.signedIn &&
+        !account.userId.isNullOrBlank() &&
+        loadedWorkspaceAccountId == account.userId
+    val sharedWorkspaces = if (accountWorkspaceDataReady) {
+        workspaces.filterNot { it.is_personal }
+    } else {
+        emptyList()
+    }
     val selectedWorkspace = sharedWorkspaces.firstOrNull { it.id == selectedWorkspaceId }
     val canManage = selectedWorkspace?.member_role == "owner" || selectedWorkspace?.member_role == "admin"
     val canAssignAdmin = selectedWorkspace?.member_role == "owner"
@@ -206,10 +211,46 @@ fun WorkspaceManagementSection(
         return false
     }
 
-    LaunchedEffect(account.signedIn) {
-        if (!account.signedIn) {
-            activeWorkspaceId = activity.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
-                .getString("active_team_workspace_id", "").orEmpty()
+    LaunchedEffect(account.signedIn, account.userId) {
+        val accountIdentityChanged = loadedWorkspaceAccountId != account.userId
+        if (accountIdentityChanged) {
+            // Do not render the previous account's team roster, invitations, or selection
+            // while the new account's memberships are loading.
+            loadedWorkspaceAccountId = account.userId
+            workspaces = emptyList()
+            onWorkspaceMembershipChanged(false)
+            selectedWorkspaceId = ""
+            activeWorkspaceId = ""
+            members = emptyList()
+            membersLoadedWorkspaceId = null
+            memberLoadError = null
+            invitations = emptyList()
+            createdInvite = null
+            showCopyPersonalData = false
+            showDangerZone = false
+            showJoinAnotherTeam = false
+            showPendingInvitations = false
+            showInvitePanel = false
+            showUltimateRequiredDialog = false
+            showCreateDialog = false
+            newWorkspaceName = ""
+            inviteEmail = ""
+            inviteRole = "member"
+            acceptToken = ""
+            copyPersonalTarget = null
+            deleteWorkspaceTarget = null
+            removeMemberTarget = null
+            refreshingPeople = false
+            loading = false
+            hasUltimateEntitlement = false
+            entitlementCheckFailed = false
+            selectedWorkspaceSection = "overview"
+            workspaceMenuExpanded = false
+            roleMenuExpanded = false
+            message = ""
+        }
+        if (!account.signedIn || account.userId.isNullOrBlank()) {
+            activeWorkspaceId = ""
             hasUltimateEntitlement = false
             entitlementCheckFailed = false
             workspaces = emptyList()
@@ -220,8 +261,16 @@ fun WorkspaceManagementSection(
             createdInvite = null
             return@LaunchedEffect
         }
-        activeWorkspaceId = activity.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
-            .getString("active_team_workspace_id", "").orEmpty()
+        val workspacePrefs = activity.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
+        val savedWorkspaceOwnerId = workspacePrefs.getString("active_team_workspace_user_id", null)
+            ?.trim()?.takeIf { it.isNotEmpty() }
+        val savedActiveWorkspaceId = workspacePrefs.getString("active_team_workspace_id", "")
+            .orEmpty().trim()
+        activeWorkspaceId = if (savedWorkspaceOwnerId == account.userId?.trim()) {
+            savedActiveWorkspaceId
+        } else {
+            ""
+        }
         val entitlement = cloud.myActiveUltimateEntitlement()
         hasUltimateEntitlement = entitlement.value == true
         entitlementCheckFailed = !entitlement.isSuccess
@@ -231,6 +280,7 @@ fun WorkspaceManagementSection(
             workspaces = result.value.orEmpty()
             val available = workspaces.filterNot { it.is_personal }
             onWorkspaceMembershipChanged(available.isNotEmpty())
+            activeWorkspaceId = activeWorkspaceId.takeIf { id -> available.any { it.id == id } }.orEmpty()
             selectedWorkspaceId = selectedWorkspaceId.takeIf { id -> available.any { it.id == id } }
                 ?: available.firstOrNull()?.id.orEmpty()
             activity.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE).edit()
@@ -457,7 +507,7 @@ fun WorkspaceManagementSection(
             }
         }
 
-            if (account.signedIn && selectedWorkspace != null) {
+            if (accountWorkspaceDataReady && selectedWorkspace != null) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -1017,7 +1067,7 @@ fun WorkspaceManagementSection(
         }
     }
 
-    copyPersonalTarget?.let { target ->
+    if (accountWorkspaceDataReady) copyPersonalTarget?.let { target ->
         AlertDialog(
             onDismissRequest = { if (!loading) copyPersonalTarget = null },
             title = { Text("Copy personal records to ${target.name}?") },
@@ -1057,7 +1107,7 @@ fun WorkspaceManagementSection(
         )
     }
 
-    removeMemberTarget?.let { target ->
+    if (accountWorkspaceDataReady) removeMemberTarget?.let { target ->
         AlertDialog(
             onDismissRequest = { if (!loading) removeMemberTarget = null },
             title = { Text("Remove ${target.username.takeIf { it.isNotBlank() }?.let { "@$it" } ?: target.email}?") },
@@ -1098,7 +1148,7 @@ fun WorkspaceManagementSection(
         )
     }
 
-    deleteWorkspaceTarget?.let { target ->
+    if (accountWorkspaceDataReady) deleteWorkspaceTarget?.let { target ->
         AlertDialog(
             onDismissRequest = { if (!loading) deleteWorkspaceTarget = null },
             title = { Text("Delete ${target.name}?") },
@@ -1163,7 +1213,7 @@ fun WorkspaceManagementSection(
         )
     }
 
-    if (showUltimateRequiredDialog) {
+    if (accountWorkspaceDataReady && showUltimateRequiredDialog) {
         AlertDialog(
             onDismissRequest = { showUltimateRequiredDialog = false },
             title = { Text("Ultimate required") },
@@ -1189,7 +1239,7 @@ fun WorkspaceManagementSection(
         )
     }
 
-    if (showCreateDialog) {
+    if (accountWorkspaceDataReady && showCreateDialog) {
         AlertDialog(
             onDismissRequest = { showCreateDialog = false },
             title = { Text("Create team workspace") },
