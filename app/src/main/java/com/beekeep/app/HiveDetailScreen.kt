@@ -142,11 +142,60 @@ private fun HiveDetailRecordsCard(viewModel: BeeKeepViewModel) {
 }
 
 @Composable
+private fun HiveDetailRecentActivityCard(viewModel: BeeKeepViewModel, hiveId: Long) {
+    // Recent activity is independent of the hive profile and log summaries.
+    // Observe it here so a new event does not recompose the entire detail page.
+    val events by viewModel.events.collectAsStateWithLifecycle()
+    val inspections by viewModel.inspections.collectAsStateWithLifecycle()
+    var showRecentActivity by rememberSaveable(hiveId) { mutableStateOf(false) }
+
+    Card(
+        shape = RoundedCornerShape(16.dp),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+    ) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(
+                Modifier.fillMaxWidth().clickable { showRecentActivity = !showRecentActivity }.padding(vertical = 3.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text("Recent Activity", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.ExtraBold)
+                    Text(
+                        if (events.isEmpty() && inspections.isEmpty()) "No activity recorded yet" else "${events.size} events • ${inspections.size} inspections",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                TextButton(
+                    onClick = { showRecentActivity = !showRecentActivity },
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
+                ) {
+                    Text(if (showRecentActivity) "HIDE" else "SHOW", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelMedium)
+                    Icon(
+                        Icons.Rounded.ChevronRight,
+                        contentDescription = if (showRecentActivity) "Hide recent activity" else "Show recent activity",
+                        modifier = Modifier.size(18.dp).graphicsLayer { rotationZ = if (showRecentActivity) 90f else 0f }
+                    )
+                }
+            }
+            if (showRecentActivity) {
+                Divider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.65f))
+                if (events.isEmpty() && inspections.isEmpty()) {
+                    Text("No events yet.", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+                } else {
+                    events.take(15).forEach { event -> EventCard(event) }
+                    inspections.firstOrNull()?.let { InspectionSnapshot(it) }
+                }
+            }
+        }
+    }
+}
+
+@Composable
 internal fun HiveDetailScreen(
     hive: Hive,
     viewModel: BeeKeepViewModel,
-    inspections: List<Inspection>,
-    events: List<ActivityEvent>,
     nfc: NfcController,
     activity: ComponentActivity,
     onBack: () -> Unit,
@@ -177,7 +226,6 @@ internal fun HiveDetailScreen(
     var writeStatus by rememberSaveable(hive.id) { mutableStateOf("") }
     var writeStatusType by rememberSaveable(hive.id) { mutableStateOf("idle") }
     var removingTag by rememberSaveable(hive.id) { mutableStateOf(false) }
-    var showRecentActivity by rememberSaveable(hive.id) { mutableStateOf(false) }
     var confirmDead by rememberSaveable(hive.id) { mutableStateOf(false) }
     var confirmDelete by rememberSaveable(hive.id) { mutableStateOf(false) }
     var confirmRemoveTag by rememberSaveable(hive.id) { mutableStateOf(false) }
@@ -654,47 +702,7 @@ internal fun HiveDetailScreen(
             }
         }
 
-        Card(
-            shape = RoundedCornerShape(16.dp),
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
-        ) {
-            Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Row(
-                    Modifier.fillMaxWidth().clickable { showRecentActivity = !showRecentActivity }.padding(vertical = 3.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                        Text("Recent Activity", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.ExtraBold)
-                        Text(
-                            if (events.isEmpty() && inspections.isEmpty()) "No activity recorded yet" else "${events.size} events • ${inspections.size} inspections",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    TextButton(
-                        onClick = { showRecentActivity = !showRecentActivity },
-                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
-                    ) {
-                        Text(if (showRecentActivity) "HIDE" else "SHOW", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelMedium)
-                        Icon(
-                            Icons.Rounded.ChevronRight,
-                            contentDescription = if (showRecentActivity) "Hide recent activity" else "Show recent activity",
-                            modifier = Modifier.size(18.dp).graphicsLayer { rotationZ = if (showRecentActivity) 90f else 0f }
-                        )
-                    }
-                }
-                if (showRecentActivity) {
-                    Divider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.65f))
-                    if (events.isEmpty() && inspections.isEmpty()) {
-                        Text("No events yet.", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
-                    } else {
-                        events.take(15).forEach { event -> EventCard(event) }
-                        inspections.firstOrNull()?.let { InspectionSnapshot(it) }
-                    }
-                }
-            }
-        }
+        HiveDetailRecentActivityCard(viewModel, hive.id)
 
         Spacer(Modifier.height(6.dp))
     }

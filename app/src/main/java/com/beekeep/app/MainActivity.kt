@@ -635,8 +635,6 @@ fun BeeKeepApp(
         )
     }
     val selected by vm.selected.collectAsStateWithLifecycle()
-    val inspections by vm.inspections.collectAsStateWithLifecycle()
-    val events by vm.events.collectAsStateWithLifecycle()
     val ready by vm.ready.collectAsStateWithLifecycle()
 
     // Keep a Pro session's expiry live while BeeKeep stays open, not only on app resume.
@@ -1836,9 +1834,8 @@ fun BeeKeepApp(
         }
         InspectionScreen(
             activity, locationController, hiveForInspection,
+            viewModel = vm,
             workspaceId = activeWorkspaceId,
-            priorInspections = inspections,
-            beeCountHistory = events.filter { it.type == "bee_count_change" && it.hiveId == hiveForInspection.id && it.detail.startsWith("Frames of bees changed from ") },
             defaultMiteSampleSize = autoVoicePrefs.getInt("default_mite_sample_size", 300).coerceIn(1, 10000),
             defaultStartingStrength = autoVoicePrefs.getInt("default_starting_strength", 3).coerceIn(1, 5),
             rememberLastInspectionValues = autoVoicePrefs.getBoolean("remember_last_inspection_values", true),
@@ -2039,8 +2036,6 @@ fun BeeKeepApp(
                     }
                 }
             },
-            inspections = inspections,
-            events = events,
             nfc = nfc,
             activity = activity,
             onBack = {
