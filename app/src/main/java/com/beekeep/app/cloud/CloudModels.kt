@@ -32,6 +32,28 @@ data class CloudWorkspaceDocumentRow(
     val sync_version: Long = 0L
 )
 
+/**
+ * The cloud row is the tie-break authority for equal client timestamps. Server-side guards
+ * reject older writes; clients apply an equal-time cloud row so every replica converges on
+ * the version committed last by Postgres.
+ */
+internal object CloudConflictPolicy {
+    fun shouldUploadLocal(
+        localUpdatedAt: Long,
+        remoteUpdatedAt: Long?,
+        remoteDeleted: Boolean = false,
+        localDeleted: Boolean = false,
+        allowDraftRecreation: Boolean = false
+    ): Boolean {
+        if (remoteUpdatedAt == null) return true
+        if (remoteDeleted && !localDeleted && !allowDraftRecreation) return false
+        return localUpdatedAt > remoteUpdatedAt
+    }
+
+    fun shouldApplyRemote(incomingUpdatedAt: Long, localUpdatedAt: Long): Boolean =
+        incomingUpdatedAt >= localUpdatedAt
+}
+
 data class CloudAccountState(
     val configured: Boolean,
     val signedIn: Boolean,

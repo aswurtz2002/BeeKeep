@@ -15,7 +15,8 @@ BeeKeep is offline-first. Local writes are committed to Room first, then queued 
 - Shared records live in `public.beekeep_workspace_documents`, keyed by `workspace_id, entity_type, entity_id`. This separate table avoids changing the legacy private record table's shape.
 - Members can read records in their workspace. Owners, admins and members can write; viewers are read-only. Row-level security is enforced by Supabase; the app's local read-only guard is an additional user-experience safeguard, not the security boundary.
 - The app validates membership at sync time and only fetches/uploads records for the selected workspace. A revoked membership falls back to personal data.
-- Tombstones synchronize deletions. Conflicts currently use record timestamps and the same pull-before-upload pattern as personal sync; this is not a full multi-writer conflict-resolution system.
+- Tombstones synchronize deletions. Cloud documents use last-write-wins by client `updated_at`: the server rejects lower-timestamp writes. Permanent record tombstones cannot be changed back to live records; inspection note/form draft tombstones are the exception because those draft IDs are intentionally reused for later edits. Equal timestamps are resolved by the last write committed by Postgres. When a local outbox row is older than or tied with the cloud copy, the client applies the cloud winner before acknowledging the local row.
+- This is conflict protection, not field-level merging. Devices with materially incorrect system clocks can still misclassify a legitimate offline edit as stale, so real two-device staging tests remain necessary.
 
 ## Database setup and verification
 

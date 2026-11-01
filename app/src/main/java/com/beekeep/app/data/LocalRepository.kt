@@ -7,6 +7,7 @@ import com.beekeep.app.BeeKeepEntitlements
 
 import android.content.Context
 import androidx.room.withTransaction
+import com.beekeep.app.cloud.CloudConflictPolicy
 import com.beekeep.app.cloud.CloudDocumentRow
 import com.beekeep.app.cloud.LegacyNfcProfileSnapshotGuard
 import com.beekeep.app.cloud.NfcMutationSyncTimestamp
@@ -1146,39 +1147,34 @@ class LocalHiveRepository(context: Context) {
             when (doc.entity_type) {
                 "inspection_note_draft" -> clearLocalInspectionNoteDraft(doc.entity_id, doc.updated_at)
                 "inspection_form_draft" -> clearLocalInspectionFormDraft(doc.entity_id, doc.updated_at)
+                // Permanent cloud tombstones are authoritative even when a device's local
+                // clock is ahead. The server prevents these identities from being revived.
                 "apiary" -> db.apiaries().get(doc.entity_id)?.let {
-                    // A newer cloud tombstone removes the row locally as well, freeing
-                    // the apiary name and ensuring the map pin disappears on this device.
-                    if (doc.updated_at >= it.updatedAt) db.withTransaction { db.apiaries().hardDelete(doc.entity_id) }
+                    db.withTransaction { db.apiaries().hardDelete(doc.entity_id) }
                 }
                 "hive" -> db.hives().get(doc.entity_id)?.let {
-                    // A remote permanent delete only wins over genuinely newer local edits.
-                    if (doc.updated_at >= it.updatedAt) db.withTransaction { permanentlyDeleteHiveLocal(doc.entity_id) }
+                    db.withTransaction { permanentlyDeleteHiveLocal(doc.entity_id) }
                 }
                 "inspection" -> db.inspections().get(doc.entity_id)?.let { existing ->
-                    if (doc.updated_at >= existing.updatedAt) {
-                        db.withTransaction { db.inspections().hardDelete(doc.entity_id) }
-                        refreshHiveInspectionSummary(existing.hiveId)
-                    }
+                    db.withTransaction { db.inspections().hardDelete(doc.entity_id) }
+                    refreshHiveInspectionSummary(existing.hiveId)
                 }
                 "feeding" -> db.feedings().get(doc.entity_id)?.let {
-                    if (doc.updated_at >= it.createdAt) db.withTransaction { db.feedings().hardDelete(doc.entity_id) }
+                    db.withTransaction { db.feedings().hardDelete(doc.entity_id) }
                 }
                 "treatment" -> db.treatments().get(doc.entity_id)?.let {
-                    if (doc.updated_at >= it.createdAt) db.withTransaction { db.treatments().hardDelete(doc.entity_id) }
+                    db.withTransaction { db.treatments().hardDelete(doc.entity_id) }
                 }
                 "harvest" -> db.harvests().get(doc.entity_id)?.let {
-                    if (doc.updated_at >= it.createdAt) db.withTransaction { db.harvests().hardDelete(doc.entity_id) }
+                    db.withTransaction { db.harvests().hardDelete(doc.entity_id) }
                 }
                 "event" -> db.events().get(doc.entity_id)?.let {
-                    if (doc.updated_at >= it.createdAt) db.withTransaction { db.events().hardDelete(doc.entity_id) }
+                    db.withTransaction { db.events().hardDelete(doc.entity_id) }
                 }
                 "nfc_assignment" -> db.nfcTagAssignments().get(doc.entity_id)?.let { assignment ->
-                    if (doc.updated_at >= maxOf(assignment.assignedAt, assignment.unassignedAt ?: 0L)) {
-                        db.withTransaction {
-                            db.nfcTagAssignments().hardDelete(doc.entity_id)
-                            db.hives().refreshTagCache(assignment.hiveId)
-                        }
+                    db.withTransaction {
+                        db.nfcTagAssignments().hardDelete(doc.entity_id)
+                        db.hives().refreshTagCache(assignment.hiveId)
                     }
                 }
             }
@@ -1223,7 +1219,9 @@ class LocalHiveRepository(context: Context) {
 
                 val incomingUpdatedAt = json.optLong("updated_at", doc.updated_at)
                 val existingRaw = InspectionFormDraftStore.readRaw(inspectionFormDraftPrefs, workspaceId, hiveId)
-                if (incomingUpdatedAt <= InspectionFormDraftStore.updatedAt(existingRaw)) return
+                if (!CloudConflictPolicy.shouldApplyRemote(
+                    incomingUpdatedAt, InspectionFormDraftStore.updatedAt(existingRaw)
+                )) return
 
                 // A completed inspection wins over an older unfinished form. A genuinely
                 // newer draft may still be restored on another device.
@@ -1241,7 +1239,7 @@ class LocalHiveRepository(context: Context) {
             "apiary" -> {
                 val existing = db.apiaries().get(doc.entity_id)
                 val incomingUpdatedAt = json.optLong("updated_at", doc.updated_at)
-                if (existing != null && existing.updatedAt >= incomingUpdatedAt) return
+                if (existing != null && !CloudConflictPolicy.shouldApplyRemote(incomingUpdatedAt, existing.updatedAt)) return
                 db.apiaries().upsert(ApiaryEntity(
                     id = doc.entity_id,
                     name = json.optString("name"),
@@ -1257,7 +1255,7 @@ class LocalHiveRepository(context: Context) {
             "hive" -> {
                 val existing = db.hives().get(doc.entity_id)
                 val incomingUpdatedAt = json.optLong("updated_at", doc.updated_at)
-                if (existing != null && existing.updatedAt >= incomingUpdatedAt) return
+                if (existing != null && !CloudConflictPolicy.shouldApplyRemote(incomingUpdatedAt, existing.updatedAt)) return
                 val incomingStatusChangedAt = json.optLong("status_changed_at", 0L)
                 // Lifecycle (ACTIVE/DEAD) resolves by status_changed_at so a stale
                 // offline save can merge field edits without resurrecting the colony.
@@ -1350,17 +1348,75 @@ class LocalHiveRepository(context: Context) {
                         ?.let { (it * 2.0).roundToInt().coerceIn(1, 20) / 2.0 }
                 )
                 val existing = db.inspections().get(incoming.id)
-                if (existing == null || incoming.updatedAt >= existing.updatedAt) {
+                if (existing == null || CloudConflictPolicy.shouldApplyRemote(incoming.updatedAt, existing.updatedAt)) {
                     db.inspections().upsert(incoming)
                 }
                 // Even if this copy was stale and ignored, restore the hive summary
                 // from whichever inspection is actually latest in local history.
                 refreshHiveInspectionSummary(hiveId)
             }
-            "feeding" -> if (db.hives().exists(json.optLong("hive_id"))) db.feedings().upsert(FeedingEntity(doc.entity_id,json.optLong("hive_id"),json.optLong("created_at",doc.updated_at),json.optString("feed_type"),json.optString("ratio"),json.optDouble("amount").coerceAtLeast(0.0),json.optString("unit"),json.optString("notes"))) else Unit
-            "treatment" -> if (db.hives().exists(json.optLong("hive_id"))) db.treatments().upsert(TreatmentEntity(doc.entity_id,json.optLong("hive_id"),json.optLong("created_at",doc.updated_at),json.optString("treatment_type"),json.optString("product"),json.longOrNull("inserted_at"),json.longOrNull("removal_at"),json.longOrNull("withdrawal_until"),json.optString("notes"))) else Unit
-            "harvest" -> if (db.hives().exists(json.optLong("hive_id"))) db.harvests().upsert(HarvestEntity(doc.entity_id,json.optLong("hive_id"),json.optLong("created_at",doc.updated_at),json.optInt("supers_pulled").coerceAtLeast(0),json.optDouble("wet_honey_weight").coerceAtLeast(0.0),json.optDouble("dry_honey_weight").coerceAtLeast(0.0),json.optString("weight_unit","lb"),json.optDouble("wax_weight").coerceAtLeast(0.0),json.optDouble("propolis_weight").coerceAtLeast(0.0),json.optString("notes"))) else Unit
-            "event" -> if (db.hives().exists(json.optLong("hive_id"))) db.events().upsert(ActivityEventEntity(doc.entity_id,json.optLong("hive_id"),json.optLong("created_at",doc.updated_at),json.optString("type"),json.optString("title"),json.optString("detail"))) else Unit
+            "feeding" -> {
+                val hiveId = json.optLong("hive_id")
+                if (db.hives().exists(hiveId)) {
+                    val incoming = FeedingEntity(
+                        doc.entity_id, hiveId, json.optLong("created_at", doc.updated_at),
+                        json.optString("feed_type"), json.optString("ratio"),
+                        json.optDouble("amount").coerceAtLeast(0.0), json.optString("unit"),
+                        json.optString("notes")
+                    )
+                    val existing = db.feedings().get(doc.entity_id)
+                    if (existing == null || CloudConflictPolicy.shouldApplyRemote(incoming.createdAt, existing.createdAt)) {
+                        db.feedings().upsert(incoming)
+                    }
+                }
+            }
+            "treatment" -> {
+                val hiveId = json.optLong("hive_id")
+                if (db.hives().exists(hiveId)) {
+                    val incoming = TreatmentEntity(
+                        doc.entity_id, hiveId, json.optLong("created_at", doc.updated_at),
+                        json.optString("treatment_type"), json.optString("product"),
+                        json.longOrNull("inserted_at"), json.longOrNull("removal_at"),
+                        json.longOrNull("withdrawal_until"), json.optString("notes")
+                    )
+                    val existing = db.treatments().get(doc.entity_id)
+                    if (existing == null || CloudConflictPolicy.shouldApplyRemote(incoming.createdAt, existing.createdAt)) {
+                        db.treatments().upsert(incoming)
+                    }
+                }
+            }
+            "harvest" -> {
+                val hiveId = json.optLong("hive_id")
+                if (db.hives().exists(hiveId)) {
+                    val incoming = HarvestEntity(
+                        doc.entity_id, hiveId, json.optLong("created_at", doc.updated_at),
+                        json.optInt("supers_pulled").coerceAtLeast(0),
+                        json.optDouble("wet_honey_weight").coerceAtLeast(0.0),
+                        json.optDouble("dry_honey_weight").coerceAtLeast(0.0),
+                        json.optString("weight_unit", "lb"),
+                        json.optDouble("wax_weight").coerceAtLeast(0.0),
+                        json.optDouble("propolis_weight").coerceAtLeast(0.0),
+                        json.optString("notes")
+                    )
+                    val existing = db.harvests().get(doc.entity_id)
+                    if (existing == null || CloudConflictPolicy.shouldApplyRemote(incoming.createdAt, existing.createdAt)) {
+                        db.harvests().upsert(incoming)
+                    }
+                }
+            }
+            "event" -> {
+                val hiveId = json.optLong("hive_id")
+                if (db.hives().exists(hiveId)) {
+                    val incoming = ActivityEventEntity(
+                        doc.entity_id, hiveId, json.optLong("created_at", doc.updated_at),
+                        json.optString("type"), json.optString("title"), json.optString("detail")
+                    )
+                    val existing = db.events().get(doc.entity_id)
+                    if (existing == null || CloudConflictPolicy.shouldApplyRemote(incoming.createdAt, existing.createdAt)) {
+                        db.events().upsert(incoming)
+                    }
+                }
+            }
         }
     }
 
