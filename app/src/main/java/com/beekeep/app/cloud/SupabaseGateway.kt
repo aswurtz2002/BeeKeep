@@ -330,11 +330,18 @@ class SupabaseGateway(
         val userId = session.user?.id ?: return@withLock CloudResult.NotSignedIn
         _account.value = _account.value.copy(syncing = true, error = null)
         try {
-            val activeTeamWorkspaceId = appContext
-                .getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
+            val workspacePrefs = appContext.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
+            val activeTeamWorkspaceId = workspacePrefs
                 .getString("active_team_workspace_id", "")
                 .orEmpty().trim()
             if (activeTeamWorkspaceId.isNotEmpty()) {
+                val selectedOwnerId = workspacePrefs.getString("active_team_workspace_user_id", null)
+                if (!ActiveWorkspaceSessionPolicy.ownerMatches(userId, selectedOwnerId)) {
+                    repository.switchWorkspace(null)
+                    val message = "Select this team workspace again before resetting it."
+                    _account.value = _account.value.copy(syncing = false, error = message)
+                    return@withLock CloudResult.Failure(message)
+                }
                 val workspace = supabase.postgrest.rpc("beekeep_list_workspaces")
                     .decodeList<BeeKeepWorkspace>()
                     .firstOrNull { it.id == activeTeamWorkspaceId && !it.is_personal }
@@ -981,7 +988,7 @@ class SupabaseGateway(
         if (cleanId.isBlank()) return@withLock WorkspaceOperationResult(error = "Choose a team workspace first.")
 
         val prefs = appContext.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
-        val previousWorkspaceId = prefs.getString("active_team_workspace_id", "")
+        val previousWorkspaceCandidate = prefs.getString("active_team_workspace_id", "")
             .orEmpty().trim().ifBlank { null }
         val previousReadOnly = prefs.getBoolean("active_team_workspace_read_only", false)
         var copyCompleted = false
@@ -1001,9 +1008,13 @@ class SupabaseGateway(
                 return@withLock WorkspaceOperationResult(error = "Only a workspace owner or admin can copy personal records into a team.")
             }
 
-            val previousRole = previousWorkspaceId?.let { oldId ->
-                available.firstOrNull { it.id == oldId && !it.is_personal }?.member_role
+            // Restore the previous team only when the current account is still a member.
+            // This prevents an error-recovery path from reopening another account's cached team.
+            val previousWorkspace = previousWorkspaceCandidate?.let { oldId ->
+                available.firstOrNull { it.id == oldId && !it.is_personal }
             }
+            val previousWorkspaceId = previousWorkspace?.id
+            val previousRole = previousWorkspace?.member_role
             suspend fun restorePreviousWorkspace() {
                 repository.switchWorkspace(
                     previousWorkspaceId,
