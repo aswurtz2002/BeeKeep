@@ -35,7 +35,7 @@ do $personal_stale_assertion$
 declare
     row_payload text;
     row_timestamp bigint;
-    current_version bigint;
+    observed_version bigint;
     version_after_insert bigint;
 begin
     select payload, updated_at into row_payload, row_timestamp
@@ -43,14 +43,14 @@ begin
     where user_id = auth.uid()
       and entity_type = 'conflict_guard_test'
       and entity_id = 99611;
-    select current_version into current_version
-    from public.beekeep_personal_sync_state where user_id = auth.uid();
+    select s.current_version into observed_version
+    from public.beekeep_personal_sync_state as s where s.user_id = auth.uid();
     select value::bigint into version_after_insert
     from document_conflict_guard_context where key = 'personal_version_after_insert';
     if row_payload <> '{"id":99611,"value":"current"}' or row_timestamp <> 2000 then
         raise exception 'A stale personal write replaced a newer cloud row';
     end if;
-    if current_version <> version_after_insert then
+    if observed_version <> version_after_insert then
         raise exception 'A rejected stale personal write advanced the sync version';
     end if;
 end;

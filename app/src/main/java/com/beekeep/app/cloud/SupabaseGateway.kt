@@ -760,7 +760,14 @@ class SupabaseGateway(
                     }.getOrDefault(item.createdAt)
                     val entityKey = "${item.entityType}:${item.entityId}"
                     val remote = remoteByKey[entityKey]
-                    if (!CloudConflictPolicy.shouldUploadLocal(payloadTimestamp, remote?.updated_at)) {
+                    if (!CloudConflictPolicy.shouldUploadLocal(
+                        localUpdatedAt = payloadTimestamp,
+                        remoteUpdatedAt = remote?.updated_at,
+                        remoteDeleted = remote?.deleted == true,
+                        localDeleted = item.operation == "delete",
+                        allowDraftRecreation = item.entityType == "inspection_note_draft" ||
+                            item.entityType == "inspection_form_draft"
+                    )) {
                         supersededIds += item.id
                         supersededKeys += entityKey
                         continue
@@ -1064,7 +1071,14 @@ class SupabaseGateway(
                         }.getOrDefault(item.createdAt)
                         val entityKey = "${item.entityType}:${item.entityId}"
                         val remote = remoteByKey[entityKey]
-                        if (!CloudConflictPolicy.shouldUploadLocal(payloadTimestamp, remote?.updated_at)) {
+                        if (!CloudConflictPolicy.shouldUploadLocal(
+                        localUpdatedAt = payloadTimestamp,
+                        remoteUpdatedAt = remote?.updated_at,
+                        remoteDeleted = remote?.deleted == true,
+                        localDeleted = item.operation == "delete",
+                        allowDraftRecreation = item.entityType == "inspection_note_draft" ||
+                            item.entityType == "inspection_form_draft"
+                    )) {
                             supersededIds += item.id
                             supersededKeys += entityKey
                             continue

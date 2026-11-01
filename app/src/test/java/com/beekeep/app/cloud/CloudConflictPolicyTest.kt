@@ -19,4 +19,31 @@ class CloudConflictPolicyTest {
         assertTrue(CloudConflictPolicy.shouldApplyRemote(100L, 100L))
         assertFalse(CloudConflictPolicy.shouldApplyRemote(99L, 100L))
     }
+
+    @Test
+    fun permanentCloudTombstoneBlocksNewerActiveOutboxRows() {
+        assertFalse(
+            CloudConflictPolicy.shouldUploadLocal(
+                localUpdatedAt = 500L,
+                remoteUpdatedAt = 100L,
+                remoteDeleted = true
+            )
+        )
+        assertTrue(
+            CloudConflictPolicy.shouldUploadLocal(
+                localUpdatedAt = 500L,
+                remoteUpdatedAt = 100L,
+                remoteDeleted = true,
+                allowDraftRecreation = true
+            )
+        )
+        assertTrue(
+            CloudConflictPolicy.shouldUploadLocal(
+                localUpdatedAt = 500L,
+                remoteUpdatedAt = 100L,
+                remoteDeleted = true,
+                localDeleted = true
+            )
+        )
+    }
 }
