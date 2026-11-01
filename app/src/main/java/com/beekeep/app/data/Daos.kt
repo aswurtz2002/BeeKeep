@@ -245,6 +245,8 @@ interface OutboxDao {
     suspend fun deletePendingForEntity(entityType: String, entityId: Long)
     @Query("UPDATE sync_outbox SET state = :state, last_error = :error WHERE id = :id")
     suspend fun setState(id: Long, state: String, error: String? = null)
+    @Query("UPDATE sync_outbox SET state = 'done', last_error = NULL WHERE id IN (:ids)")
+    suspend fun markDone(ids: List<Long>)
     @Query("DELETE FROM sync_outbox WHERE state = 'done' AND created_at < :cutoff")
     suspend fun pruneDone(cutoff: Long)
 }
