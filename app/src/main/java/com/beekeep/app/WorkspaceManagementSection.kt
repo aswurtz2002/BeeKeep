@@ -18,6 +18,16 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.clickable
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.MoreVert
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.runtime.key
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -83,8 +93,8 @@ fun WorkspaceManagementSection(
     var showDangerZone by rememberSaveable { mutableStateOf(false) }
     var showJoinAnotherTeam by rememberSaveable { mutableStateOf(false) }
     var showPendingInvitations by rememberSaveable { mutableStateOf(false) }
-    var showPeople by rememberSaveable { mutableStateOf(true) }
     var showInvitePanel by rememberSaveable { mutableStateOf(false) }
+    var selectedWorkspaceSection by rememberSaveable { mutableStateOf("overview") }
     var workspaceMenuExpanded by remember { mutableStateOf(false) }
     var invitations by remember { mutableStateOf<List<BeeKeepWorkspaceInvitation>>(emptyList()) }
     var loading by remember { mutableStateOf(false) }
@@ -99,7 +109,6 @@ fun WorkspaceManagementSection(
     var roleMenuExpanded by remember { mutableStateOf(false) }
     var acceptToken by rememberSaveable { mutableStateOf("") }
     var createdInvite by remember { mutableStateOf<BeeKeepWorkspaceInvitationCreated?>(null) }
-    var memberMenuId by remember { mutableStateOf<String?>(null) }
     var copyPersonalTarget by remember { mutableStateOf<BeeKeepWorkspace?>(null) }
     var deleteWorkspaceTarget by remember { mutableStateOf<BeeKeepWorkspace?>(null) }
     var removeMemberTarget by remember { mutableStateOf<BeeKeepWorkspaceMember?>(null) }
@@ -235,8 +244,8 @@ fun WorkspaceManagementSection(
     }
 
     LaunchedEffect(selectedWorkspaceId, account.signedIn, selectedWorkspace?.member_role, usernameRefreshKey) {
+        selectedWorkspaceSection = "overview"
         // Close anchored popups when their old workspace/member rows are replaced.
-        memberMenuId = null
         roleMenuExpanded = false
         workspaceMenuExpanded = false
         if (!account.signedIn || selectedWorkspaceId.isBlank() || selectedWorkspace == null) {
@@ -451,6 +460,30 @@ fun WorkspaceManagementSection(
             }
         }
 
+            if (account.signedIn && selectedWorkspace != null) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    WorkspaceSectionTab(
+                        label = "Overview",
+                        selected = selectedWorkspaceSection == "overview",
+                        modifier = Modifier.weight(1f)
+                    ) { selectedWorkspaceSection = "overview" }
+                    WorkspaceSectionTab(
+                        label = "People",
+                        selected = selectedWorkspaceSection == "people",
+                        modifier = Modifier.weight(1f)
+                    ) { selectedWorkspaceSection = "people" }
+                    WorkspaceSectionTab(
+                        label = "Settings",
+                        selected = selectedWorkspaceSection == "settings",
+                        modifier = Modifier.weight(1f)
+                    ) { selectedWorkspaceSection = "settings" }
+                }
+            }
+
+            if (selectedWorkspace == null || selectedWorkspaceSection == "overview") {
             WorkspacePanel(
                 title = if (sharedWorkspaces.isEmpty()) "Join a team" else "Join another team",
                 description = if (sharedWorkspaces.isEmpty()) {
@@ -505,11 +538,13 @@ fun WorkspaceManagementSection(
                     modifier = Modifier.fillMaxWidth()
                 ) { Text("JOIN WORKSPACE") }
             }
+            }
 
         if (account.signedIn) {
             selectedWorkspace?.let { workspace ->
-                val isActiveWorkspace = activeWorkspaceId == workspace.id
-                WorkspacePanel(
+                if (selectedWorkspaceSection == "overview") {
+                    val isActiveWorkspace = activeWorkspaceId == workspace.id
+                    WorkspacePanel(
                     title = "Team status",
                     description = "${workspace.name} · ${workspace.member_role.replaceFirstChar { it.uppercase() }}"
                 ) {
@@ -608,7 +643,9 @@ fun WorkspaceManagementSection(
                     }
                 }
 
-                if (workspace.member_role in setOf("owner", "admin")) {
+                }
+                
+                if (selectedWorkspaceSection == "settings" && workspace.member_role in setOf("owner", "admin")) {
                     WorkspacePanel(
                         title = "Copy personal data",
                         description = "Optional · Import your private apiaries and hives",
@@ -634,146 +671,96 @@ fun WorkspaceManagementSection(
                     }
                 }
 
-                WorkspacePanel(
-                    title = "Team members",
-                    description = when {
-                        membersLoadedWorkspaceId != workspace.id && memberLoadError != null -> "Couldn't load people"
-                        membersLoadedWorkspaceId != workspace.id -> "Loading people…"
-                        else -> "${members.size} ${if (members.size == 1) "person" else "people"} in this workspace"
-                    },
-                    collapsible = true,
-                    expanded = showPeople,
-                    onToggle = { showPeople = !showPeople }
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.End
+                if (selectedWorkspaceSection == "people") {
+                    WorkspacePanel(
+                        title = "Team members",
+                        description = when {
+                            membersLoadedWorkspaceId != workspace.id && memberLoadError != null -> "Couldn't load people"
+                            membersLoadedWorkspaceId != workspace.id -> "Loading people…"
+                            else -> "${members.size} ${if (members.size == 1) "person" else "people"} in this workspace"
+                        }
                     ) {
-                        TextButton(
-                            enabled = !refreshingPeople && !loading,
-                            onClick = {
-                                scope.launch {
-                                    refreshingPeople = true
-                                    try {
-                                        refreshWorkspacePeople(workspace.id)
-                                        refreshWorkspaceInvitations(workspace)
-                                    } finally {
-                                        refreshingPeople = false
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.End
+                        ) {
+                            TextButton(
+                                enabled = !refreshingPeople && !loading,
+                                onClick = {
+                                    scope.launch {
+                                        refreshingPeople = true
+                                        try {
+                                            refreshWorkspacePeople(workspace.id)
+                                            refreshWorkspaceInvitations(workspace)
+                                        } finally {
+                                            refreshingPeople = false
+                                        }
                                     }
                                 }
-                            }
-                        ) {
-                            Text(if (refreshingPeople) "REFRESHING…" else "REFRESH")
-                        }
-                    }
-                    if (memberLoadError != null) {
-                        Text(
-                            if (membersLoadedWorkspaceId == workspace.id) {
-                                "Couldn't refresh the roster. Showing the last loaded list."
-                            } else {
-                                "The member list couldn't be loaded."
-                            },
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.error
-                        )
-                    }
-                    if (membersLoadedWorkspaceId != workspace.id && memberLoadError == null) {
-                        Text(
-                            "Loading members…",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    } else if (membersLoadedWorkspaceId != workspace.id && memberLoadError != null) {
-                        Text(
-                            "Use REFRESH to try loading the member list again.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.error
-                        )
-                    } else if (members.isEmpty()) {
-                        Text(
-                            if (memberLoadError != null) "The member list is empty, but the latest refresh failed."
-                            else "No member details are available yet.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    members.forEachIndexed { index, member ->
-                        Row(
-                            modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
-                            horizontalArrangement = Arrangement.spacedBy(10.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column(
-                                modifier = Modifier.weight(1f),
-                                verticalArrangement = Arrangement.spacedBy(3.dp)
                             ) {
-                                Text(
-                                    (member.username.takeIf { it.isNotBlank() }?.let { "@$it" }
-                                        ?: member.email.ifBlank { member.user_id.take(8) + "…" }) +
-                                        if (member.is_current_user) " (You)" else "",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold
-                                )
-                                if (member.username.isNotBlank() && member.email.isNotBlank()) {
-                                    Text(
-                                        member.email,
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                                Text(
-                                    "Role: ${member.role.replaceFirstChar { it.uppercase() }}",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
+                                Text(if (refreshingPeople) "REFRESHING…" else "REFRESH")
                             }
-                            if (canManage && !member.is_current_user && member.role != "owner") {
-                                Box {
-                                    TextButton(onClick = { memberMenuId = member.user_id }) { Text("MANAGE") }
-                                    DropdownMenu(
-                                        expanded = memberMenuId == member.user_id,
-                                        onDismissRequest = { memberMenuId = null }
-                                    ) {
-                                        val roles = if (canAssignAdmin) {
-                                            listOf("admin", "member", "viewer")
-                                        } else {
-                                            listOf("member", "viewer")
-                                        }
-                                        roles.filter { it != member.role }.forEach { newRole ->
-                                            DropdownMenuItem(
-                                                text = { Text("Make ${newRole.replaceFirstChar { it.uppercase() }}") },
-                                                onClick = {
-                                                    memberMenuId = null
-                                                    scope.launch {
-                                                        val result = cloud.updateWorkspaceMemberRole(workspace.id, member.user_id, newRole)
-                                                        if (result.isSuccess) {
-                                                            message = "Member role updated."
-                                                            refreshWorkspacePeople(workspace.id)
-                                                        } else {
-                                                            message = result.error ?: "Couldn't change the role."
-                                                        }
+                        }
+                        if (memberLoadError != null) {
+                            Text(
+                                if (membersLoadedWorkspaceId == workspace.id) {
+                                    "Couldn't refresh the roster. Showing the last loaded list."
+                                } else {
+                                    "The member list couldn't be loaded."
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error
+                            )
+                        }
+                        if (membersLoadedWorkspaceId != workspace.id && memberLoadError == null) {
+                            Text(
+                                "Loading members…",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        } else if (membersLoadedWorkspaceId != workspace.id && memberLoadError != null) {
+                            Text(
+                                "Use REFRESH to try loading the member list again.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error
+                            )
+                        } else if (members.isEmpty()) {
+                            Text(
+                                if (memberLoadError != null) "The member list is empty, but the latest refresh failed."
+                                else "No member details are available yet.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        } else {
+                            Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
+                                members.forEach { member ->
+                                    key(member.user_id) {
+                                        WorkspaceMemberCard(
+                                            member = member,
+                                            canManage = canManage,
+                                            canAssignAdmin = canAssignAdmin,
+                                            enabled = !loading,
+                                            onChangeRole = { newRole ->
+                                                scope.launch {
+                                                    val result = cloud.updateWorkspaceMemberRole(workspace.id, member.user_id, newRole)
+                                                    if (result.isSuccess) {
+                                                        message = "Member role updated."
+                                                        refreshWorkspacePeople(workspace.id)
+                                                    } else {
+                                                        message = result.error ?: "Couldn't change the role."
                                                     }
                                                 }
-                                            )
-                                        }
-                                        DropdownMenuItem(
-                                            text = { Text("Remove member", color = MaterialTheme.colorScheme.error) },
-                                            onClick = {
-                                                memberMenuId = null
-                                                removeMemberTarget = member
-                                            }
+                                            },
+                                            onRemove = { removeMemberTarget = member }
                                         )
                                     }
                                 }
                             }
                         }
-                        if (index < members.lastIndex) {
-                            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                        }
                     }
                 }
 
-                if (workspace.member_role == "owner") {
+                if (selectedWorkspaceSection == "settings" && workspace.member_role == "owner") {
                     WorkspacePanel(
                         title = "Delete team workspace",
                         description = "Permanent action · Owner only",
@@ -797,7 +784,7 @@ fun WorkspaceManagementSection(
                     }
                 }
 
-                if (canManage) {
+                if (selectedWorkspaceSection == "people" && canManage) {
                     WorkspacePanel(
                         title = "Invite team members",
                         description = if (invitations.isEmpty()) {
@@ -1254,6 +1241,148 @@ fun WorkspaceManagementSection(
     }
 }
 
+
+@Composable
+private fun WorkspaceSectionTab(
+    label: String,
+    selected: Boolean,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
+    Surface(
+        modifier = modifier.clickable(onClick = onClick),
+        shape = RoundedCornerShape(14.dp),
+        color = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
+        contentColor = if (selected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
+    ) {
+        Box(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 12.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                label,
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = if (selected) androidx.compose.ui.text.font.FontWeight.ExtraBold else androidx.compose.ui.text.font.FontWeight.SemiBold,
+                maxLines = 1
+            )
+        }
+    }
+}
+
+@Composable
+private fun WorkspaceMemberCard(
+    member: BeeKeepWorkspaceMember,
+    canManage: Boolean,
+    canAssignAdmin: Boolean,
+    enabled: Boolean,
+    onChangeRole: (String) -> Unit,
+    onRemove: () -> Unit
+) {
+    var menuExpanded by rememberSaveable(member.user_id) { mutableStateOf(false) }
+    val displayName = member.username.takeIf { it.isNotBlank() }
+        ?.let { "@$it" }
+        ?: member.email.ifBlank { member.user_id.take(8) + "…" }
+    val initialsSource = member.username.takeIf { it.isNotBlank() }
+        ?: member.email.substringBefore("@").ifBlank { "Bee" }
+    val initials = remember(initialsSource) {
+        initialsSource
+            .replace('.', ' ')
+            .replace('_', ' ')
+            .replace('-', ' ')
+            .split(Regex("\\s+"))
+            .filter { it.isNotBlank() }
+            .take(2)
+            .joinToString("") { it.first().uppercase() }
+            .ifBlank { "B" }
+    }
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f))
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(11.dp)
+        ) {
+            Surface(
+                shape = CircleShape,
+                color = MaterialTheme.colorScheme.primaryContainer,
+                contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+            ) {
+                Box(Modifier.size(46.dp), contentAlignment = Alignment.Center) {
+                    Text(initials, style = MaterialTheme.typography.titleSmall, fontWeight = androidx.compose.ui.text.font.FontWeight.ExtraBold)
+                }
+            }
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Text(
+                        displayName,
+                        modifier = Modifier.weight(1f, fill = false),
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    if (member.is_current_user) WorkspaceTag("YOU")
+                }
+                if (member.username.isNotBlank() && member.email.isNotBlank()) {
+                    Text(
+                        member.email,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                WorkspaceTag(member.role, active = member.role == "owner")
+            }
+            if (canManage && !member.is_current_user && member.role != "owner") {
+                Box {
+                    IconButton(
+                        enabled = enabled,
+                        onClick = { menuExpanded = true }
+                    ) {
+                        Icon(Icons.Rounded.MoreVert, contentDescription = "Manage $displayName")
+                    }
+                    DropdownMenu(
+                        expanded = menuExpanded,
+                        onDismissRequest = { menuExpanded = false }
+                    ) {
+                        val roles = if (canAssignAdmin) {
+                            listOf("admin", "member", "viewer")
+                        } else {
+                            listOf("member", "viewer")
+                        }
+                        roles.filter { it != member.role }.forEach { newRole ->
+                            DropdownMenuItem(
+                                text = { Text("Make ${newRole.replaceFirstChar { it.uppercase() }}") },
+                                onClick = {
+                                    menuExpanded = false
+                                    onChangeRole(newRole)
+                                }
+                            )
+                        }
+                        DropdownMenuItem(
+                            text = { Text("Remove member", color = MaterialTheme.colorScheme.error) },
+                            onClick = {
+                                menuExpanded = false
+                                onRemove()
+                            }
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
 
 @Composable
 private fun WorkspacePanel(
