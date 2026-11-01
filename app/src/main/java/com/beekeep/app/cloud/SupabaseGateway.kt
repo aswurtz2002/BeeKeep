@@ -992,6 +992,7 @@ class SupabaseGateway(
             .orEmpty().trim().ifBlank { null }
         var previousWorkspaceId: String? = null
         val previousReadOnly = prefs.getBoolean("active_team_workspace_read_only", false)
+        var recoveryReadOnly = previousReadOnly
         var recoveryUserId: String? = null
         var copyCompleted = false
         var copiedCount: Int? = null
@@ -1018,6 +1019,7 @@ class SupabaseGateway(
             }
             previousWorkspaceId = previousWorkspace?.id
             val previousRole = previousWorkspace?.member_role
+            recoveryReadOnly = previousRole == "viewer" || (previousRole == null && previousReadOnly)
             suspend fun restorePreviousWorkspace() {
                 repository.switchWorkspace(
                     previousWorkspaceId,
@@ -1079,7 +1081,7 @@ class SupabaseGateway(
                 runCatching {
                     repository.switchWorkspace(
                         workspaceId = previousWorkspaceId,
-                        readOnly = previousReadOnly,
+                        readOnly = recoveryReadOnly,
                         ownerUserId = recoveryUserId
                     )
                 }
