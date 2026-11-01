@@ -2719,16 +2719,17 @@ private fun AllHivesScreen(
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     items(filteredHiveIds, key = { it }) { hiveId ->
-                        hivesById[hiveId]?.let { hive ->
-                        HiveRow(
-                            number = hive.number,
-                            apiary = hive.apiary,
-                            queenStatus = hive.queenStatus,
-                            strength = hive.strength,
-                            beeCountFrames = hive.beeCountFrames,
-                            compact = compactHiveRows,
-                            locked = hive.id in lockedHiveIds
-                        ) { onOpenHive(hive.id) }
+                        val hive = hivesById[hiveId]
+                        if (hive != null) {
+                            HiveRow(
+                                number = hive.number,
+                                apiary = hive.apiary,
+                                queenStatus = hive.queenStatus,
+                                strength = hive.strength,
+                                beeCountFrames = hive.beeCountFrames,
+                                compact = compactHiveRows,
+                                locked = hive.id in lockedHiveIds
+                            ) { onOpenHive(hive.id) }
                         }
                     }
                 }
@@ -2802,8 +2803,9 @@ private fun ApiaryHivesScreen(
         } else {
             LazyColumn(state = listState, contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 items(filteredHiveIds, key = { it }) { hiveId ->
-                    hivesById[hiveId]?.let { hive ->
-                    HiveRow(
+                    val hive = hivesById[hiveId]
+                    if (hive != null) {
+                        HiveRow(
                             number = hive.number,
                             apiary = hive.apiary,
                             queenStatus = hive.queenStatus,
