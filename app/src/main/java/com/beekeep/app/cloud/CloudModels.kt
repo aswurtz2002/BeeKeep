@@ -61,3 +61,8 @@ data class WorkspaceSyncChangesParams(
     val through_version: Long,
     val requested_page_size: Int
 )
+
+@Serializable
+data class WorkspaceSyncHeadParams(
+    val target_workspace_id: String
+)
