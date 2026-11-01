@@ -47,21 +47,21 @@ internal object CloudConflictPolicy {
     ): Boolean {
         if (remoteUpdatedAt == null) return true
         if (remoteDeleted) {
-            // An existing tombstone already represents this delete. Do not rewrite it;
-            // an active draft can still recreate its intentionally reusable hive-scoped ID.
+            // Only a newer active draft may reuse the intentionally hive-scoped draft ID.
             return !localDeleted && allowDraftRecreation && localUpdatedAt > remoteUpdatedAt
         }
-        // A delete is an explicit user action. Its server timestamp is advanced over
-        // the current row below so device clock skew cannot silently discard it.
-        if (localDeleted) return true
+        // Permanent entity deletes are explicit actions. Reusable draft clears retain
+        // timestamp conflict checks so an old clear cannot erase a newer draft.
+        if (localDeleted && !allowDraftRecreation) return true
         return localUpdatedAt > remoteUpdatedAt
     }
 
     fun effectiveUploadTimestamp(
         localUpdatedAt: Long,
         remoteUpdatedAt: Long?,
-        localDeleted: Boolean
-    ): Long = if (localDeleted && remoteUpdatedAt != null) {
+        localDeleted: Boolean,
+        allowDraftRecreation: Boolean = false
+    ): Long = if (localDeleted && !allowDraftRecreation && remoteUpdatedAt != null) {
         maxOf(localUpdatedAt, remoteUpdatedAt + 1L)
     } else {
         localUpdatedAt
