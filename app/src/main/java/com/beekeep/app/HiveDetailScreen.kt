@@ -142,12 +142,12 @@ private fun HiveDetailRecordsCard(viewModel: BeeKeepViewModel) {
 }
 
 @Composable
-private fun HiveDetailRecentActivityCard(viewModel: BeeKeepViewModel) {
+private fun HiveDetailRecentActivityCard(viewModel: BeeKeepViewModel, hiveId: Long) {
     // Recent activity is independent of the hive profile and log summaries.
     // Observe it here so a new event does not recompose the entire detail page.
     val events by viewModel.events.collectAsStateWithLifecycle()
     val inspections by viewModel.inspections.collectAsStateWithLifecycle()
-    var showRecentActivity by rememberSaveable { mutableStateOf(false) }
+    var showRecentActivity by rememberSaveable(hiveId) { mutableStateOf(false) }
 
     Card(
         shape = RoundedCornerShape(16.dp),
@@ -702,7 +702,7 @@ internal fun HiveDetailScreen(
             }
         }
 
-        HiveDetailRecentActivityCard(viewModel)
+        HiveDetailRecentActivityCard(viewModel, hive.id)
 
         Spacer(Modifier.height(6.dp))
     }
