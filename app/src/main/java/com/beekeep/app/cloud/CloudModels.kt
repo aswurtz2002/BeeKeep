@@ -46,14 +46,11 @@ internal object CloudConflictPolicy {
         allowDraftRecreation: Boolean = false
     ): Boolean {
         if (remoteUpdatedAt == null) return true
-        if (remoteDeleted) {
-            // Already-deleted permanent records stay authoritative. Draft IDs are
-            // intentionally reusable, but a deletion operation itself is already done.
-            return !localDeleted && allowDraftRecreation && localUpdatedAt > remoteUpdatedAt
-        }
+        if (remoteDeleted && !localDeleted && !allowDraftRecreation) return false
         // A delete is an explicit user action. Its server timestamp is advanced over
         // the current row below so device clock skew cannot silently discard it.
         if (localDeleted) return true
+        if (remoteDeleted && allowDraftRecreation) return localUpdatedAt > remoteUpdatedAt
         return localUpdatedAt > remoteUpdatedAt
     }
 
