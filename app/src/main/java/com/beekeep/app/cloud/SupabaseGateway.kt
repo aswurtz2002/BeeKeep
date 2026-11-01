@@ -544,13 +544,14 @@ class SupabaseGateway(
 
                 val uploadable = mutableListOf<CloudDocumentRow>()
                 val uploadableIds = mutableSetOf<Long>()
+                val supersededIds = mutableListOf<Long>()
                 for (item in pending) {
                     val payloadTimestamp = runCatching {
                         JSONObject(item.payload).optLong("updated_at", item.createdAt)
                     }.getOrDefault(item.createdAt)
                     val remote = remoteByKey["${item.entityType}:${item.entityId}"]
                     if (remote != null && remote.updated_at > payloadTimestamp) {
-                        repository.markSyncDone(item.id)
+                        supersededIds += item.id
                         continue
                     }
                     uploadable += CloudDocumentRow(
@@ -565,11 +566,14 @@ class SupabaseGateway(
                     uploadableIds += item.id
                 }
 
+                // Acknowledge rows already superseded by newer cloud versions together.
+                repository.markSyncDone(supersededIds)
                 if (uploadable.isNotEmpty()) {
                     client.from("beekeep_documents").upsert(uploadable) {
                         onConflict = "user_id,entity_type,entity_id"
                     }
-                    pending.filter { it.id in uploadableIds }.forEach { repository.markSyncDone(it.id) }
+                    // Only acknowledge uploads after the remote upsert succeeds.
+                    repository.markSyncDone(uploadableIds)
                 }
             }
 
@@ -798,13 +802,14 @@ class SupabaseGateway(
 
                     val uploadable = mutableListOf<CloudWorkspaceDocumentRow>()
                     val uploadableIds = mutableSetOf<Long>()
+                    val supersededIds = mutableListOf<Long>()
                     for (item in pending) {
                         val payloadTimestamp = runCatching {
                             JSONObject(item.payload).optLong("updated_at", item.createdAt)
                         }.getOrDefault(item.createdAt)
                         val remote = remoteByKey["${item.entityType}:${item.entityId}"]
                         if (remote != null && remote.updated_at > payloadTimestamp) {
-                            repository.markSyncDone(item.id)
+                            supersededIds += item.id
                             continue
                         }
                         uploadable += CloudWorkspaceDocumentRow(
@@ -820,11 +825,14 @@ class SupabaseGateway(
                         uploadableIds += item.id
                     }
 
+                    // Acknowledge rows already superseded by newer cloud versions together.
+                    repository.markSyncDone(supersededIds)
                     if (uploadable.isNotEmpty()) {
                         supabase.from("beekeep_workspace_documents").upsert(uploadable) {
                             onConflict = "workspace_id,entity_type,entity_id"
                         }
-                        pending.filter { it.id in uploadableIds }.forEach { repository.markSyncDone(it.id) }
+                        // Only acknowledge uploads after the remote upsert succeeds.
+                        repository.markSyncDone(uploadableIds)
                         uploadable.forEach { row ->
                             remoteByKey["${row.entity_type}:${row.entity_id}"] = row
                         }
