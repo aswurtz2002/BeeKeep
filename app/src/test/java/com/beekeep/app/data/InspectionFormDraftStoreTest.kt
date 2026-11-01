@@ -8,9 +8,9 @@ class InspectionFormDraftStoreTest {
     fun permanentHiveDeleteClearsOnlyTheActiveWorkspaceDraftKeys() {
         assertEquals(
             setOf(
-                "workspace-a_hive_42",
-                "workspace-a_hive_42_pending",
-                "bee_count_history_start_workspace-a_42"
+                "workspace_workspace-a_hive_42",
+                "workspace_workspace-a_hive_42_pending",
+                "bee_count_history_start_workspace_workspace-a_42"
             ),
             InspectionFormDraftStore.keysForDeletedHive("workspace-a", 42L)
         )
