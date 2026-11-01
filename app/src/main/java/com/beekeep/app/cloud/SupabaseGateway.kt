@@ -753,13 +753,16 @@ class SupabaseGateway(
                 val uploadable = mutableListOf<CloudDocumentRow>()
                 val uploadableIds = mutableSetOf<Long>()
                 val supersededIds = mutableListOf<Long>()
+                val supersededKeys = mutableSetOf<String>()
                 for (item in pending) {
                     val payloadTimestamp = runCatching {
                         JSONObject(item.payload).optLong("updated_at", item.createdAt)
                     }.getOrDefault(item.createdAt)
-                    val remote = remoteByKey["${item.entityType}:${item.entityId}"]
-                    if (remote != null && remote.updated_at > payloadTimestamp) {
+                    val entityKey = "${item.entityType}:${item.entityId}"
+                    val remote = remoteByKey[entityKey]
+                    if (!CloudConflictPolicy.shouldUploadLocal(payloadTimestamp, remote?.updated_at)) {
                         supersededIds += item.id
+                        supersededKeys += entityKey
                         continue
                     }
                     uploadable += CloudDocumentRow(
@@ -774,7 +777,17 @@ class SupabaseGateway(
                     uploadableIds += item.id
                 }
 
-                // Acknowledge rows already superseded by newer cloud versions together.
+                // Apply the cloud winner before acknowledging a stale/equal local outbox row.
+                // This also reconciles a local copy when the cloud version was already covered
+                // by the previous incremental cursor.
+                if (supersededKeys.isNotEmpty()) {
+                    val winningCloudRows = remoteRows.filter {
+                        "${it.entity_type}:${it.entity_id}" in supersededKeys
+                    }
+                    if (winningCloudRows.isNotEmpty()) {
+                        repository.applyCloudDocuments(CloudDocumentOrder.personal(winningCloudRows))
+                    }
+                }
                 repository.markSyncDone(supersededIds)
                 if (uploadable.isNotEmpty()) {
                     client.from("beekeep_documents").upsert(uploadable) {
@@ -1044,13 +1057,16 @@ class SupabaseGateway(
                     val uploadable = mutableListOf<CloudWorkspaceDocumentRow>()
                     val uploadableIds = mutableSetOf<Long>()
                     val supersededIds = mutableListOf<Long>()
+                    val supersededKeys = mutableSetOf<String>()
                     for (item in pending) {
                         val payloadTimestamp = runCatching {
                             JSONObject(item.payload).optLong("updated_at", item.createdAt)
                         }.getOrDefault(item.createdAt)
-                        val remote = remoteByKey["${item.entityType}:${item.entityId}"]
-                        if (remote != null && remote.updated_at > payloadTimestamp) {
+                        val entityKey = "${item.entityType}:${item.entityId}"
+                        val remote = remoteByKey[entityKey]
+                        if (!CloudConflictPolicy.shouldUploadLocal(payloadTimestamp, remote?.updated_at)) {
                             supersededIds += item.id
+                            supersededKeys += entityKey
                             continue
                         }
                         uploadable += CloudWorkspaceDocumentRow(
@@ -1066,7 +1082,28 @@ class SupabaseGateway(
                         uploadableIds += item.id
                     }
 
-                    // Acknowledge rows already superseded by newer cloud versions together.
+                    // Reconcile Room with each cloud winner before acknowledging stale/equal
+                    // local outbox rows. This also handles rows already covered by the cursor.
+                    if (supersededKeys.isNotEmpty()) {
+                        val winningCloudRows = CloudDocumentOrder.workspace(
+                            remoteRows.filter {
+                                "${it.entity_type}:${it.entity_id}" in supersededKeys
+                            }
+                        ).map { document ->
+                            CloudDocumentRow(
+                                user_id = userId,
+                                entity_type = document.entity_type,
+                                entity_id = document.entity_id,
+                                payload = document.payload,
+                                updated_at = document.updated_at,
+                                deleted = document.deleted,
+                                device_id = document.device_id
+                            )
+                        }
+                        if (winningCloudRows.isNotEmpty()) {
+                            repository.applyCloudDocuments(winningCloudRows)
+                        }
+                    }
                     repository.markSyncDone(supersededIds)
                     if (uploadable.isNotEmpty()) {
                         supabase.from("beekeep_workspace_documents").upsert(uploadable) {

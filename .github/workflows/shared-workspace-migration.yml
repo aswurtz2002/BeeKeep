@@ -123,3 +123,7 @@ jobs:
         run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261101143217_beekeep_incremental_sync_versions.sql
       - name: Verify incremental cloud sync versions, paging and RLS isolation
         run: psql -v ON_ERROR_STOP=1 -f supabase/tests/incremental_cloud_sync.sql
+      - name: Apply cloud document conflict guards
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261101200000_beekeep_document_conflict_guards.sql
+      - name: Verify stale cloud writes and permanent tombstones are blocked
+        run: psql -v ON_ERROR_STOP=1 -f supabase/tests/document_conflict_guards.sql
