@@ -1200,8 +1200,10 @@ class LocalHiveRepository(context: Context) {
                 val localUpdatedAt = inspectionNoteDraftPrefs.getLong(inspectionNoteDraftUpdatedAtKey(key), 0L)
                 // A local edit may already be persisted but not yet in the Room outbox.
                 // Preserve it until the pre-sync recovery path queues it.
-                if (inspectionNoteDraftPrefs.getBoolean(inspectionNoteDraftPendingKey(key), false)) return
-                if (!shouldApplyInspectionNoteDraft(incomingUpdatedAt, localUpdatedAt)) return
+                val localPending = inspectionNoteDraftPrefs.getBoolean(
+                    inspectionNoteDraftPendingKey(key), false
+                )
+                if (!shouldApplyInspectionNoteDraft(incomingUpdatedAt, localUpdatedAt, localPending)) return
 
                 val notes = json.optString("notes", "")
                 val recordedAt = json.longOrNull("recorded_at")?.takeIf { it > 0L && notes.isNotBlank() }
