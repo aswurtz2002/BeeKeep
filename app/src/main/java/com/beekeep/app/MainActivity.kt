@@ -2620,6 +2620,12 @@ private fun androidx.compose.foundation.layout.RowScope.NavItem(label: String, i
     )
 }
 
+private data class HiveListSearchKey(
+    val id: Long,
+    val number: String,
+    val apiary: String
+)
+
 @Composable
 private fun AllHivesScreen(
     hives: List<Hive>,
@@ -2633,16 +2639,29 @@ private fun AllHivesScreen(
     BackHandler { onBack() }
     val listState = rememberLazyListState()
     var query by rememberSaveable { mutableStateOf("") }
-    val filtered = remember(hives, query) {
-        hives
-            .filter { hive ->
-                query.isBlank() ||
-                    hive.number.contains(query, ignoreCase = true) ||
-                    hiveDisplayName(hive.number).contains(query, ignoreCase = true) ||
-                    hive.apiary.contains(query, ignoreCase = true)
-            }
-            .sortedWith(compareBy<Hive>({ it.apiary.lowercase(Locale.ROOT) }, { it.number.toIntOrNull() ?: Int.MAX_VALUE }, { it.number }))
+    // Only these fields affect search or ordering. A change to queen status,
+    // strength, or bee count can refresh its row without rerunning list filtering/sort.
+    val searchKeys = remember(hives) {
+        hives.map { HiveListSearchKey(it.id, it.number, it.apiary) }
     }
+    val orderedSearchKeys = remember(searchKeys) {
+        searchKeys.sortedWith(
+            compareBy<HiveListSearchKey>(
+                { it.apiary.lowercase(Locale.ROOT) },
+                { it.number.toIntOrNull() ?: Int.MAX_VALUE },
+                { it.number }
+            )
+        )
+    }
+    val filteredHiveIds = remember(orderedSearchKeys, query) {
+        orderedSearchKeys.filter { entry ->
+            query.isBlank() ||
+                entry.number.contains(query, ignoreCase = true) ||
+                hiveDisplayName(entry.number).contains(query, ignoreCase = true) ||
+                entry.apiary.contains(query, ignoreCase = true)
+        }.map { it.id }
+    }
+    val hivesById = remember(hives) { hives.associateBy { it.id } }
 
     Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
         InspectionHoneycombBackground(Modifier.matchParentSize())
@@ -2684,7 +2703,7 @@ private fun AllHivesScreen(
                 )
             )
             Spacer(Modifier.height(10.dp))
-            if (filtered.isEmpty()) {
+            if (filteredHiveIds.isEmpty()) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     EmptyState(
                         if (hives.isEmpty()) "No hives yet" else "No matching hives",
@@ -2699,16 +2718,19 @@ private fun AllHivesScreen(
                     contentPadding = PaddingValues(bottom = 20.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    items(filtered, key = { it.id }) { hive ->
-                        HiveRow(
-                            number = hive.number,
-                            apiary = hive.apiary,
-                            queenStatus = hive.queenStatus,
-                            strength = hive.strength,
-                            beeCountFrames = hive.beeCountFrames,
-                            compact = compactHiveRows,
-                            locked = hive.id in lockedHiveIds
-                        ) { onOpenHive(hive.id) }
+                    items(filteredHiveIds, key = { it }) { hiveId ->
+                        val hive = hivesById[hiveId]
+                        if (hive != null) {
+                            HiveRow(
+                                number = hive.number,
+                                apiary = hive.apiary,
+                                queenStatus = hive.queenStatus,
+                                strength = hive.strength,
+                                beeCountFrames = hive.beeCountFrames,
+                                compact = compactHiveRows,
+                                locked = hive.id in lockedHiveIds
+                            ) { onOpenHive(hive.id) }
+                        }
                     }
                 }
             }
@@ -2730,9 +2752,14 @@ private fun ApiaryHivesScreen(
     BackHandler { onBack() }
     val listState = rememberLazyListState()
     var query by rememberSaveable(apiaryName) { mutableStateOf("") }
-    val filtered = remember(hives, query) {
-        hives.filter { it.number.contains(query, ignoreCase = true) }
+    // Keep filtering keyed to the fields that determine membership in this list.
+    val searchKeys = remember(hives) {
+        hives.map { HiveListSearchKey(it.id, it.number, it.apiary) }
     }
+    val filteredHiveIds = remember(searchKeys, query) {
+        searchKeys.filter { it.number.contains(query, ignoreCase = true) }.map { it.id }
+    }
+    val hivesById = remember(hives) { hives.associateBy { it.id } }
 
     Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
         InspectionHoneycombBackground(Modifier.matchParentSize())
@@ -2764,7 +2791,7 @@ private fun ApiaryHivesScreen(
             )
         )
         Spacer(Modifier.height(10.dp))
-        if (filtered.isEmpty()) {
+        if (filteredHiveIds.isEmpty()) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 EmptyState(
                     if (hives.isEmpty()) "No hives in this apiary" else "No matching hives",
@@ -2775,8 +2802,10 @@ private fun ApiaryHivesScreen(
             }
         } else {
             LazyColumn(state = listState, contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                items(filtered, key = { it.id }) { hive ->
-                    HiveRow(
+                items(filteredHiveIds, key = { it }) { hiveId ->
+                    val hive = hivesById[hiveId]
+                    if (hive != null) {
+                        HiveRow(
                             number = hive.number,
                             apiary = hive.apiary,
                             queenStatus = hive.queenStatus,
@@ -2785,6 +2814,7 @@ private fun ApiaryHivesScreen(
                             compact = compactHiveRows,
                             locked = hive.id in lockedHiveIds
                         ) { onOpenHive(hive.id) }
+                    }
                 }
             }
         }
