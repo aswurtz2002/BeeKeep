@@ -229,7 +229,7 @@ fun WorkspaceScreen(
         } else {
             Card(
                 modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(28.dp),
+                shape = RoundedCornerShape(22.dp),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
                 elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
             ) {
@@ -244,8 +244,8 @@ fun WorkspaceScreen(
                                 )
                             )
                         )
-                        .padding(20.dp),
-                    verticalArrangement = Arrangement.spacedBy(14.dp)
+                        .padding(15.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -265,7 +265,7 @@ fun WorkspaceScreen(
                             )
                             Text(
                                 if (hasActiveTeam) "Your team, in sync" else "Bring your crew together",
-                                style = MaterialTheme.typography.headlineSmall,
+                                style = MaterialTheme.typography.titleLarge,
                                 fontWeight = FontWeight.ExtraBold,
                                 color = MaterialTheme.colorScheme.onPrimaryContainer
                             )
@@ -275,8 +275,9 @@ fun WorkspaceScreen(
                                 } else {
                                     "Create a shared workspace, invite your crew, and keep every member working from the same records."
                                 },
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.82f)
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.82f),
+                                maxLines = 2
                             )
                         }
                         Surface(
@@ -287,7 +288,7 @@ fun WorkspaceScreen(
                             Icon(
                                 imageVector = Icons.Rounded.Groups,
                                 contentDescription = null,
-                                modifier = Modifier.padding(12.dp).size(40.dp)
+                                modifier = Modifier.padding(9.dp).size(32.dp)
                             )
                         }
                     }
