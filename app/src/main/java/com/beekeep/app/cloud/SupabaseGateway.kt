@@ -692,12 +692,17 @@ class SupabaseGateway(
             // Pull first so an older offline edit cannot overwrite a newer cloud record.
             // Drain the entire outbox in bounded batches: the old single-batch sync could
             // publish an apiary while leaving its hive rows queued for a later run.
-            val remoteBefore = loadAllPersonalDocuments()
-            val remoteByKey = remoteBefore.associateBy { "${it.entity_type}:${it.entity_id}" }
+            val cursorKey = personalSyncCursorKey(userId)
+            val previousCursor = readSyncCursor(cursorKey)
             while (true) {
                 val pending = repository.pendingSync(SYNC_UPLOAD_BATCH_SIZE)
                 if (pending.isEmpty()) break
 
+                val remoteRows = loadPersonalDocumentsForEntityIds(
+                    userId,
+                    pending.map { it.entityId }
+                )
+                val remoteByKey = remoteRows.associateBy { "${it.entity_type}:${it.entity_id}" }
                 val uploadable = mutableListOf<CloudDocumentRow>()
                 val uploadableIds = mutableSetOf<Long>()
                 val supersededIds = mutableListOf<Long>()
@@ -733,14 +738,22 @@ class SupabaseGateway(
                 }
             }
 
-            // Find legacy NFC-only hive snapshots from the complete cloud batch before applying
-            // hive rows; the matching assignment can arrive in this same sync.
-            val documents = loadAllPersonalDocuments()
-            val legacyNfcHiveIds = legacyNfcOnlyPersonalHiveSnapshotIds(documents)
+            // A fixed high-water mark makes the pull resumable. Any write that commits after
+            // this read receives a higher server version and is picked up on the next sync.
+            val headVersion = loadPersonalSyncHead()
+            val afterVersion = previousCursor?.takeIf { it <= headVersion } ?: 0L
+            val documents = loadPersonalChanges(afterVersion, headVersion)
+            val knownNfcMutations = repository.nfcMutationSyncTimestamps()
+            val legacyNfcHiveIds = legacyNfcOnlyPersonalHiveSnapshotIds(
+                documents,
+                knownMutations = knownNfcMutations
+            )
             repository.applyCloudDocuments(
                 documents = CloudDocumentOrder.personal(documents),
                 ignoreLegacyNfcProfileSnapshotHiveIds = legacyNfcHiveIds
             )
+            // Advance only after every downloaded page has been applied successfully.
+            saveSyncCursor(cursorKey, headVersion)
 
             repository.pruneSync()
             val now = System.currentTimeMillis()
