@@ -1066,6 +1066,12 @@ class LocalHiveRepository(context: Context) {
 
     suspend fun pendingSync(limit: Int = 50): List<SyncOutboxEntity> = db.outbox().pending(limit)
     suspend fun markSyncDone(id: Long) = db.outbox().setState(id, "done")
+    suspend fun markSyncDone(ids: Collection<Long>) {
+        if (ids.isEmpty()) return
+        ids.distinct().chunked(500).forEach { batch ->
+            db.outbox().markDone(batch)
+        }
+    }
     suspend fun markSyncError(id: Long, message: String) = db.outbox().setState(id, "pending", message.take(500))
     suspend fun pruneSync() = db.outbox().pruneDone(System.currentTimeMillis() - 7 * 24 * 60 * 60 * 1000)
 
