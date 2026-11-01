@@ -21,7 +21,6 @@ import io.github.jan.supabase.realtime.PostgresAction
 import io.github.jan.supabase.storage.storage
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.CoroutineScope
@@ -363,11 +362,12 @@ class SupabaseGateway(
             if (realtimeJob?.isActive == true && realtimeScopeKey == scopeKey) return
             val previousJob = realtimeJob
             realtimeScopeKey = scopeKey
+            // Stop the previous scope immediately; the replacement waits for its finally block.
+            previousJob?.cancel()
             realtimeJob = scope.launch {
-                // Wait for the previous subscription's finally block to finish before removing
-                // channels and creating the replacement. This prevents an old listener from
-                // accidentally removing the new listener during a workspace switch.
-                previousJob?.cancelAndJoin()
+                // Wait until the previous listener has unsubscribed before opening this channel.
+                // That prevents an old listener from removing the new one during a workspace switch.
+                previousJob?.join()
                 if (previousJob != null) {
                     runCatching { supabase.realtime.removeAllChannels() }
                 }
@@ -416,23 +416,11 @@ class SupabaseGateway(
     }
 
     fun stopRealtime() {
-        val supabase = client
         synchronized(realtimeLock) {
-            val previousJob = realtimeJob
+            // The listener's finally block owns channel removal. Keep its Job reference so a
+            // quick sign-in/reconnect can wait for that cleanup before opening a new channel.
             realtimeScopeKey = null
-            // Cancel synchronously so a new sign-in cannot cancel this cleanup task before
-            // it has actually stopped the old subscription.
-            previousJob?.cancel()
-            realtimeJob = if (previousJob == null) {
-                null
-            } else {
-                scope.launch {
-                    previousJob.join()
-                    if (configured && supabase != null) {
-                        runCatching { supabase.realtime.removeAllChannels() }
-                    }
-                }
-            }
+            realtimeJob?.cancel()
         }
     }
 
