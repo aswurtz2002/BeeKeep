@@ -2633,14 +2633,16 @@ private fun AllHivesScreen(
     BackHandler { onBack() }
     val listState = rememberLazyListState()
     var query by rememberSaveable { mutableStateOf("") }
-    val filtered = hives
-        .filter { hive ->
-            query.isBlank() ||
-                hive.number.contains(query, ignoreCase = true) ||
-                hiveDisplayName(hive.number).contains(query, ignoreCase = true) ||
-                hive.apiary.contains(query, ignoreCase = true)
-        }
-        .sortedWith(compareBy<Hive>({ it.apiary.lowercase(Locale.ROOT) }, { it.number.toIntOrNull() ?: Int.MAX_VALUE }, { it.number }))
+    val filtered = remember(hives, query) {
+        hives
+            .filter { hive ->
+                query.isBlank() ||
+                    hive.number.contains(query, ignoreCase = true) ||
+                    hiveDisplayName(hive.number).contains(query, ignoreCase = true) ||
+                    hive.apiary.contains(query, ignoreCase = true)
+            }
+            .sortedWith(compareBy<Hive>({ it.apiary.lowercase(Locale.ROOT) }, { it.number.toIntOrNull() ?: Int.MAX_VALUE }, { it.number }))
+    }
 
     Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
         InspectionHoneycombBackground(Modifier.matchParentSize())
@@ -2698,7 +2700,15 @@ private fun AllHivesScreen(
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     items(filtered, key = { it.id }) { hive ->
-                        HiveRow(hive, compact = compactHiveRows, locked = hive.id in lockedHiveIds) { onOpenHive(hive.id) }
+                        HiveRow(
+                            number = hive.number,
+                            apiary = hive.apiary,
+                            queenStatus = hive.queenStatus,
+                            strength = hive.strength,
+                            beeCountFrames = hive.beeCountFrames,
+                            compact = compactHiveRows,
+                            locked = hive.id in lockedHiveIds
+                        ) { onOpenHive(hive.id) }
                     }
                 }
             }
@@ -2720,7 +2730,9 @@ private fun ApiaryHivesScreen(
     BackHandler { onBack() }
     val listState = rememberLazyListState()
     var query by rememberSaveable(apiaryName) { mutableStateOf("") }
-    val filtered = hives.filter { it.number.contains(query, ignoreCase = true) }
+    val filtered = remember(hives, query) {
+        hives.filter { it.number.contains(query, ignoreCase = true) }
+    }
 
     Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
         InspectionHoneycombBackground(Modifier.matchParentSize())
@@ -2764,7 +2776,15 @@ private fun ApiaryHivesScreen(
         } else {
             LazyColumn(state = listState, contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 items(filtered, key = { it.id }) { hive ->
-                    HiveRow(hive, compact = compactHiveRows, locked = hive.id in lockedHiveIds) { onOpenHive(hive.id) }
+                    HiveRow(
+                            number = hive.number,
+                            apiary = hive.apiary,
+                            queenStatus = hive.queenStatus,
+                            strength = hive.strength,
+                            beeCountFrames = hive.beeCountFrames,
+                            compact = compactHiveRows,
+                            locked = hive.id in lockedHiveIds
+                        ) { onOpenHive(hive.id) }
                 }
             }
         }

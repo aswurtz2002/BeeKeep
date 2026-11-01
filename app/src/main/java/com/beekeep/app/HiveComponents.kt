@@ -77,14 +77,20 @@ import androidx.compose.runtime.setValue
 
 @Composable
 internal fun HiveRow(
-    hive: Hive,
+    number: String,
+    apiary: String,
+    queenStatus: String,
+    strength: Int,
+    beeCountFrames: Double?,
     supporting: String? = null,
     compact: Boolean = false,
     locked: Boolean = false,
     onClick: () -> Unit
 ) {
-    // The Apiaries hive list now highlights the colony's strength rather than mite percentage.
-    val strengthGrade = ColonyStrength.gradeFromStored(hive.strength)
+    // Keep the row dependent only on the values it actually displays. When Room
+    // emits a refreshed hive list, unchanged rows can then be skipped by Compose.
+    // The Apiaries hive list highlights colony strength rather than mite percentage.
+    val strengthGrade = ColonyStrength.gradeFromStored(strength)
     val strengthColor = when (strengthGrade) {
         1 -> Color(0xFFB91C1C) // Very Weak: red
         2 -> Color(0xFFEA580C) // Weak: orange
@@ -92,7 +98,7 @@ internal fun HiveRow(
         4 -> Color(0xFF65A30D) // Strong: light green
         else -> Color(0xFF166534) // Very strong: dark green
     }
-    val attention = hive.queenStatus == "Queenless" || strengthGrade <= 2
+    val attention = queenStatus == "Queenless" || strengthGrade <= 2
     Card(
         onClick = onClick,
         modifier = Modifier.fillMaxWidth(),
@@ -112,12 +118,12 @@ internal fun HiveRow(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(if (compact) 2.dp else 3.dp)) {
-                    Text(hiveDisplayName(hive.number), fontWeight = FontWeight.ExtraBold, style = MaterialTheme.typography.titleMedium)
-                    Text(hive.apiary, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(hiveDisplayName(number), fontWeight = FontWeight.ExtraBold, style = MaterialTheme.typography.titleMedium)
+                    Text(apiary, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Text(
-                        hive.beeCountFrames?.let { frames ->
-                            "Queen ${hive.queenStatus} ~ ${formatBeeCountFrames(frames)} Frames of Bees"
-                        } ?: "Queen ${hive.queenStatus}",
+                        beeCountFrames?.let { frames ->
+                            "Queen $queenStatus ~ ${formatBeeCountFrames(frames)} Frames of Bees"
+                        } ?: "Queen $queenStatus",
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         style = MaterialTheme.typography.bodySmall
                     )
