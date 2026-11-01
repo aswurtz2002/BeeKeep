@@ -83,6 +83,12 @@ internal fun inspectionNoteDraftPayload(
     .put("updated_at", updatedAt)
     .toString()
 
-/** Accept equal timestamps idempotently, but never let an older cloud draft replace newer local text. */
-internal fun shouldApplyInspectionNoteDraft(incomingUpdatedAt: Long, localUpdatedAt: Long): Boolean =
-    incomingUpdatedAt >= localUpdatedAt
+/**
+ * Apply remote notes only when no unsent local edit is pending and the cloud copy is at least
+ * as new as the last locally applied draft. Equal timestamps are idempotent.
+ */
+internal fun shouldApplyInspectionNoteDraft(
+    incomingUpdatedAt: Long,
+    localUpdatedAt: Long,
+    localPending: Boolean = false
+): Boolean = !localPending && incomingUpdatedAt >= localUpdatedAt

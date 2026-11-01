@@ -103,6 +103,15 @@ values (
     1000, false, 'incremental-sync-test'
 );
 
+insert into public.beekeep_documents (
+    user_id, entity_type, entity_id, payload, updated_at, deleted, device_id
+)
+values (
+    auth.uid(), 'inspection_note_draft', 99004,
+    '{"id":99004,"hive_id":99004,"notes":"Personal draft from device A","recorded_at":1000,"updated_at":1000}',
+    1000, false, 'incremental-sync-test'
+);
+
 insert into incremental_sync_test_context(key, value)
 select 'personal_head_insert', head_version::text
 from public.beekeep_personal_sync_head();
@@ -177,6 +186,13 @@ begin
     if visible_count <> 0 then
         raise exception 'Another user''s personal sync changes were exposed';
     end if;
+
+    select count(*) into visible_count
+    from public.beekeep_personal_sync_changes(0, 1000000, 500)
+    where entity_type = 'inspection_note_draft' and entity_id = 99004;
+    if visible_count <> 0 then
+        raise exception 'Another user''s personal inspection note draft was exposed';
+    end if;
 end;
 $personal_isolation_assertions$;
 
@@ -213,6 +229,16 @@ values (
     1000, false, 'incremental-sync-test', auth.uid()
 );
 
+insert into public.beekeep_workspace_documents (
+    workspace_id, entity_type, entity_id, payload, updated_at, deleted, device_id, updated_by
+)
+values (
+    (select value::uuid from incremental_sync_test_context where key = 'workspace_id'),
+    'inspection_note_draft', 99003,
+    '{"id":99003,"hive_id":99003,"notes":"Draft created on device A","recorded_at":1000,"updated_at":1000}',
+    1000, false, 'incremental-sync-test', auth.uid()
+);
+
 insert into incremental_sync_test_context(key, value)
 select 'workspace_head_insert', head_version::text
 from public.beekeep_workspace_sync_head(
@@ -227,6 +253,15 @@ set payload = '{"id":99002,"title":"Updated incremental workspace event"}',
 where workspace_id = (select value::uuid from incremental_sync_test_context where key = 'workspace_id')
   and entity_type = 'event'
   and entity_id = 99002;
+
+update public.beekeep_workspace_documents
+set payload = '{"id":99003,"hive_id":99003,"notes":"Updated from device B","recorded_at":1000,"updated_at":1002}',
+    updated_at = 1002,
+    deleted = false,
+    updated_by = auth.uid()
+where workspace_id = (select value::uuid from incremental_sync_test_context where key = 'workspace_id')
+  and entity_type = 'inspection_note_draft'
+  and entity_id = 99003;
 
 insert into incremental_sync_test_context(key, value)
 select 'workspace_head_update', head_version::text
@@ -243,6 +278,10 @@ declare
     delta_count integer;
     is_deleted boolean;
     returned_version bigint;
+    note_count integer;
+    note_is_deleted boolean;
+    note_version bigint;
+    note_text text;
 begin
     select value::uuid into workspace_id_value from incremental_sync_test_context where key = 'workspace_id';
     select value::bigint into initial_head from incremental_sync_test_context where key = 'workspace_head_initial';
@@ -260,8 +299,22 @@ begin
     )
     where entity_type = 'event' and entity_id = 99002;
 
-    if delta_count <> 1 or is_deleted is distinct from true or returned_version <> updated_head then
+    if delta_count <> 1 or is_deleted is distinct from true or returned_version >= updated_head then
         raise exception 'Incremental workspace pull did not return the latest tombstone/version';
+    end if;
+
+    select count(*), bool_or(deleted), max(sync_version), max(payload::jsonb ->> 'notes')
+      into note_count, note_is_deleted, note_version, note_text
+    from public.beekeep_workspace_sync_changes(
+        workspace_id_value, initial_head, updated_head, 500
+    )
+    where entity_type = 'inspection_note_draft' and entity_id = 99003;
+
+    if note_count <> 1
+       or note_is_deleted is distinct from false
+       or note_version <> updated_head
+       or note_text <> 'Updated from device B' then
+        raise exception 'Incremental workspace pull did not return the latest inspection note draft';
     end if;
 end;
 $workspace_delta_assertions$;

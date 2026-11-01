@@ -23,9 +23,20 @@ class InspectionNoteDraftTest {
     }
 
     @Test
-    fun onlyNewerOrEqualCloudDraftsApply() {
+    fun onlyNewerOrEqualCloudDraftsApplyWhenNoLocalEditIsPending() {
         assertTrue(shouldApplyInspectionNoteDraft(incomingUpdatedAt = 120L, localUpdatedAt = 100L))
         assertTrue(shouldApplyInspectionNoteDraft(incomingUpdatedAt = 100L, localUpdatedAt = 100L))
         assertFalse(shouldApplyInspectionNoteDraft(incomingUpdatedAt = 99L, localUpdatedAt = 100L))
+    }
+
+    @Test
+    fun pendingLocalEditWinsEvenWhenCloudTimestampIsNewer() {
+        assertFalse(
+            shouldApplyInspectionNoteDraft(
+                incomingUpdatedAt = 500L,
+                localUpdatedAt = 100L,
+                localPending = true
+            )
+        )
     }
 }
