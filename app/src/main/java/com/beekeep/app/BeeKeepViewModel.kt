@@ -102,6 +102,15 @@ class BeeKeepViewModel(
 
             if (openedHive != null) {
                 detailJob = launch {
+                    // Keep the open profile backed by Room instead of a one-time Hive snapshot.
+                    // This immediately reflects local edits and cloud changes applied by sync.
+                    launch {
+                        repo.observeHive(id).collect { updatedHive ->
+                            if (updatedHive != null && _selected.value?.id == id) {
+                                _selected.value = updatedHive
+                            }
+                        }
+                    }
                     launch { repo.observeInspections(id).collect { _inspections.value = it } }
                     launch { repo.observeFeedings(id).collect { _feedings.value = it } }
                     launch { repo.observeTreatments(id).collect { _treatments.value = it } }

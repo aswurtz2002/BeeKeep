@@ -218,6 +218,9 @@ class LocalHiveRepository(context: Context) {
 
     fun observeHives(): Flow<List<Hive>> = _database.flatMapLatest { it.hives().observeAll() }.map { it.map(::toHive) }
     fun observeDeadHives(): Flow<List<Hive>> = _database.flatMapLatest { it.hives().observeDead() }.map { it.map(::toHive) }
+    /** Observe the selected hive row so local edits and incoming cloud updates refresh its detail UI. */
+    fun observeHive(hiveId: Long): Flow<Hive?> =
+        _database.flatMapLatest { it.hives().observeById(hiveId) }.map { it?.let(::toHive) }
     fun observeApiaries(): Flow<List<Apiary>> = _database.flatMapLatest { it.apiaries().observeAll() }.map { it.map(::toApiary) }
     fun observeInspections(hiveId: Long): Flow<List<Inspection>> = _database.flatMapLatest { it.inspections().observeForHive(hiveId) }.map { it.map(::toInspection) }
     fun observeAllInspections(): Flow<List<Inspection>> = _database.flatMapLatest { it.inspections().observeAll() }.map { it.map(::toInspection) }
