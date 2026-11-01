@@ -787,9 +787,21 @@ class SupabaseGateway(
 
             // A fixed high-water mark makes the pull resumable. Any write that commits after
             // this read receives a higher server version and is picked up on the next sync.
-            val headVersion = loadPersonalSyncHead()
-            val afterVersion = previousCursor?.takeIf { it <= headVersion } ?: 0L
-            val documents = loadPersonalChanges(afterVersion, headVersion)
+            var syncHeadToCommit: Long? = null
+            val documents = try {
+                val headVersion = loadPersonalSyncHead()
+                val afterVersion = previousCursor?.takeIf { it <= headVersion } ?: 0L
+                loadPersonalChanges(afterVersion, headVersion).also {
+                    syncHeadToCommit = headVersion
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Throwable) {
+                if (!IncrementalSyncCompatibility.isMissingIncrementalSyncRpc(error)) throw error
+                // Keep cloud sync working while an environment is still on the pre-incremental
+                // schema. This is the same deterministic, paginated pull used before the RPCs.
+                loadAllPersonalDocuments().filter { it.user_id == userId }
+            }
             val knownNfcMutations = repository.nfcMutationSyncTimestamps()
             val legacyNfcHiveIds = legacyNfcOnlyPersonalHiveSnapshotIds(
                 documents,
@@ -799,8 +811,9 @@ class SupabaseGateway(
                 documents = CloudDocumentOrder.personal(documents),
                 ignoreLegacyNfcProfileSnapshotHiveIds = legacyNfcHiveIds
             )
-            // Advance only after every downloaded page has been applied successfully.
-            saveSyncCursor(cursorKey, headVersion)
+            // Only commit the incremental cursor after all downloaded changes were applied.
+            // The legacy full-pull fallback intentionally leaves it untouched.
+            syncHeadToCommit?.let { saveSyncCursor(cursorKey, it) }
 
             repository.pruneSync()
             val now = System.currentTimeMillis()
@@ -1065,15 +1078,22 @@ class SupabaseGateway(
                 }
             }
 
-            // A fixed head bounds each pull. Writes committed during pagination receive
-            // a higher version and will be fetched on the next sync.
-            val headVersion = loadWorkspaceSyncHead(workspaceId)
-            val afterVersion = previousCursor?.takeIf { it <= headVersion } ?: 0L
-            val workspaceDocuments = loadWorkspaceChanges(
-                workspaceId,
-                afterVersion,
-                headVersion
-            )
+            // Prefer server-versioned incremental pages. Older or partially migrated
+            // environments retain the previous safe full, paginated pull until all RPCs exist.
+            var syncHeadToCommit: Long? = null
+            val workspaceDocuments = try {
+                val headVersion = loadWorkspaceSyncHead(workspaceId)
+                val afterVersion = previousCursor?.takeIf { it <= headVersion } ?: 0L
+                loadWorkspaceChanges(workspaceId, afterVersion, headVersion).also {
+                    syncHeadToCommit = headVersion
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Throwable) {
+                if (!IncrementalSyncCompatibility.isMissingIncrementalSyncRpc(error)) throw error
+                loadAllWorkspaceDocuments(workspaceId)
+                    .filter { it.workspace_id == workspaceId }
+            }
             val knownNfcMutations = repository.nfcMutationSyncTimestamps()
             val legacyNfcHiveIds = legacyNfcOnlyWorkspaceHiveSnapshotIds(
                 workspaceDocuments,
@@ -1094,8 +1114,8 @@ class SupabaseGateway(
                 documents = localDocuments,
                 ignoreLegacyNfcProfileSnapshotHiveIds = legacyNfcHiveIds
             )
-            // Only advance after all downloaded changes have been applied to Room.
-            saveSyncCursor(cursorKey, headVersion)
+            // The legacy fallback has no server cursor; do not advance an incremental cursor.
+            syncHeadToCommit?.let { saveSyncCursor(cursorKey, it) }
 
             repository.pruneSync()
             val now = System.currentTimeMillis()
