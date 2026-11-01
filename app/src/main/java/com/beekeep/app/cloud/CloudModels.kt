@@ -12,7 +12,9 @@ data class CloudDocumentRow(
     val updated_at: Long,
     @EncodeDefault(EncodeDefault.Mode.ALWAYS)
     val deleted: Boolean = false,
-    val device_id: String = "android"
+    val device_id: String = "android",
+    // Supplied only by the incremental-sync RPC. The default keeps it out of ordinary upserts.
+    val sync_version: Long = 0L
 )
 
 @Serializable
@@ -25,7 +27,9 @@ data class CloudWorkspaceDocumentRow(
     @EncodeDefault(EncodeDefault.Mode.ALWAYS)
     val deleted: Boolean = false,
     val device_id: String = "android",
-    val updated_by: String?
+    val updated_by: String?,
+    // Supplied only by the incremental-sync RPC. The default keeps it out of ordinary upserts.
+    val sync_version: Long = 0L
 )
 
 data class CloudAccountState(
@@ -35,4 +39,25 @@ data class CloudAccountState(
     val syncing: Boolean = false,
     val lastSyncAt: Long? = null,
     val error: String? = null
+)
+
+
+@Serializable
+data class CloudSyncHead(
+    val head_version: Long
+)
+
+@Serializable
+data class PersonalSyncChangesParams(
+    val after_version: Long,
+    val through_version: Long,
+    val requested_page_size: Int
+)
+
+@Serializable
+data class WorkspaceSyncChangesParams(
+    val target_workspace_id: String,
+    val after_version: Long,
+    val through_version: Long,
+    val requested_page_size: Int
 )
