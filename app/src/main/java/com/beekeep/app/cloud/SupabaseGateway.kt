@@ -772,13 +772,16 @@ class SupabaseGateway(
                         supersededKeys += entityKey
                         continue
                     }
+                    val isDelete = item.operation == "delete"
                     uploadable += CloudDocumentRow(
                         user_id = userId,
                         entity_type = item.entityType,
                         entity_id = item.entityId,
                         payload = item.payload,
-                        updated_at = payloadTimestamp,
-                        deleted = item.operation == "delete",
+                        updated_at = CloudConflictPolicy.effectiveUploadTimestamp(
+                            payloadTimestamp, remote?.updated_at, isDelete
+                        ),
+                        deleted = isDelete,
                         device_id = deviceId
                     )
                     uploadableIds += item.id
@@ -1091,13 +1094,16 @@ class SupabaseGateway(
                             supersededKeys += entityKey
                             continue
                         }
+                        val isDelete = item.operation == "delete"
                         uploadable += CloudWorkspaceDocumentRow(
                             workspace_id = workspaceId,
                             entity_type = item.entityType,
                             entity_id = item.entityId,
                             payload = item.payload,
-                            updated_at = payloadTimestamp,
-                            deleted = item.operation == "delete",
+                            updated_at = CloudConflictPolicy.effectiveUploadTimestamp(
+                                payloadTimestamp, remote?.updated_at, isDelete
+                            ),
+                            deleted = isDelete,
                             device_id = deviceId,
                             updated_by = userId
                         )

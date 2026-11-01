@@ -46,8 +46,25 @@ internal object CloudConflictPolicy {
         allowDraftRecreation: Boolean = false
     ): Boolean {
         if (remoteUpdatedAt == null) return true
-        if (remoteDeleted && !localDeleted && !allowDraftRecreation) return false
+        if (remoteDeleted) {
+            // Already-deleted permanent records stay authoritative. Draft IDs are
+            // intentionally reusable, but a deletion operation itself is already done.
+            return !localDeleted && allowDraftRecreation && localUpdatedAt > remoteUpdatedAt
+        }
+        // A delete is an explicit user action. Its server timestamp is advanced over
+        // the current row below so device clock skew cannot silently discard it.
+        if (localDeleted) return true
         return localUpdatedAt > remoteUpdatedAt
+    }
+
+    fun effectiveUploadTimestamp(
+        localUpdatedAt: Long,
+        remoteUpdatedAt: Long?,
+        localDeleted: Boolean
+    ): Long = if (localDeleted && remoteUpdatedAt != null) {
+        maxOf(localUpdatedAt, remoteUpdatedAt + 1L)
+    } else {
+        localUpdatedAt
     }
 
     fun shouldApplyRemote(incomingUpdatedAt: Long, localUpdatedAt: Long): Boolean =
