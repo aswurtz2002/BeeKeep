@@ -1023,7 +1023,7 @@ class LocalHiveRepository(context: Context) {
      * bumped the hive profile timestamp. Publishing those rows can replace newer queen,
      * strength, and location details with an outdated whole-profile snapshot.
      */
-    suspend fun nfcMutationSyncTimestamps(): List<NfcMutationSyncTimestamp> =
+    internal suspend fun nfcMutationSyncTimestamps(): List<NfcMutationSyncTimestamp> =
         withContext(Dispatchers.IO) {
             val database = db
             buildList {
