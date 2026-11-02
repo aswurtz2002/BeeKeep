@@ -47,8 +47,7 @@ internal fun PurchaseScreen(
     val debugBuild = BuildConfig.DEBUG
 
     Column(
-        Modifier
-            .fillMaxSize()
+        Modifier.fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
             .padding(padding)
             .verticalScroll(rememberScrollState())
@@ -60,110 +59,48 @@ internal fun PurchaseScreen(
                 Icon(Icons.Rounded.ArrowBack, contentDescription = "Back")
             }
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text("Upgrade BeeKeep", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.ExtraBold)
-                Text("Clear limits. More room to grow.", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+                Text("BeeKeep plans", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.ExtraBold)
+                Text("Start free. Upgrade when your operation grows.", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
             }
         }
 
         PlanCard(
-            title = "BeeKeep Pro Monthly",
-            price = BeeKeepPricing.formatCad(BeeKeepPricing.PRO_MONTHLY_CAD),
-            billing = "CAD / month",
-            description = "More capacity for a growing beekeeping operation.",
-            features = listOf("1,000 hive limit", "100 apiary limit"),
-            current = currentPlan == BeeKeepPlan.PRO,
+            title = "Hobbyist",
+            price = "FREE",
+            billing = "always",
+            description = "The default plan for every BeeKeep account.",
+            features = listOf("15 hive limit", "3 apiary limit", "Cloud sync"),
+            current = currentPlan == BeeKeepPlan.HOBBYIST,
             highlighted = false,
-            actionLabel = when {
-                debugBuild && currentPlan == BeeKeepPlan.PRO -> "SYNC PRO MONTHLY TO CLOUD"
-                currentPlan == BeeKeepPlan.PRO -> "PRO MONTHLY ACTIVE"
-                debugBuild -> "SIMULATE PRO MONTHLY"
-                else -> "PURCHASES COMING SOON"
-            },
-            actionEnabled = debugBuild,
-            onAction = { onChoosePlan(BeeKeepPlan.PRO) }
+            actionLabel = if (currentPlan == BeeKeepPlan.HOBBYIST) "CURRENT PLAN" else "SWITCH TO HOBBYIST",
+            actionEnabled = debugBuild && currentPlan != BeeKeepPlan.HOBBYIST,
+            onAction = { onChoosePlan(BeeKeepPlan.HOBBYIST) }
         )
 
         PlanCard(
-            title = "BeeKeep Pro Yearly",
-            price = BeeKeepPricing.formatCad(BeeKeepPricing.PRO_YEARLY_CAD),
-            billing = "CAD / year",
-            description = "Billed yearly. Save ${BeeKeepPricing.proYearlyDiscountPercent}% compared with 12 monthly payments.",
-            features = listOf("1,000 hive limit", "100 apiary limit"),
-            current = currentPlan == BeeKeepPlan.PRO_YEARLY,
-            highlighted = false,
-            badgeText = "${BeeKeepPricing.proYearlyDiscountPercent}% OFF",
-            actionLabel = when {
-                debugBuild && currentPlan == BeeKeepPlan.PRO_YEARLY -> "SYNC PRO YEARLY TO CLOUD"
-                currentPlan == BeeKeepPlan.PRO_YEARLY -> "PRO YEARLY ACTIVE"
-                debugBuild -> "SIMULATE PRO YEARLY"
-                else -> "PURCHASES COMING SOON"
-            },
-            actionEnabled = debugBuild,
-            onAction = { onChoosePlan(BeeKeepPlan.PRO_YEARLY) }
-        )
-
-        PlanCard(
-            title = "BeeKeep Ultimate Monthly",
-            price = BeeKeepPricing.formatCad(BeeKeepPricing.ULTIMATE_MONTHLY_CAD),
+            title = "Commercial",
+            price = BeeKeepPricing.formatCad(BeeKeepPricing.COMMERCIAL_MONTHLY_CAD),
             billing = "CAD / month",
-            description = "Built for large operations that need shared workplace access and cloud sync.",
+            description = "For larger operations. Annual billing is $59.99 CAD / year (save 28%).",
             features = listOf(
                 "10,000 hive limit",
                 "1,000 apiary limit",
-                "Cloud sync",
-                "Shared workplace — only the owner needs Ultimate; invited workers do not need their own subscription"
+                "NFC scanning and tag assignment",
+                "Team Workspace",
+                "Cloud sync"
             ),
-            current = currentPlan == BeeKeepPlan.ULTIMATE,
-            highlighted = false,
-            actionLabel = when {
-                debugBuild && currentPlan == BeeKeepPlan.ULTIMATE -> "SYNC ULTIMATE MONTHLY TO CLOUD"
-                currentPlan == BeeKeepPlan.ULTIMATE -> "ULTIMATE MONTHLY ACTIVE"
-                debugBuild -> "SIMULATE ULTIMATE MONTHLY"
-                else -> "PURCHASES COMING SOON"
-            },
-            actionEnabled = debugBuild,
-            onAction = { onChoosePlan(BeeKeepPlan.ULTIMATE) }
-        )
-
-        PlanCard(
-            title = "BeeKeep Ultimate Yearly",
-            price = BeeKeepPricing.formatCad(BeeKeepPricing.ULTIMATE_YEARLY_CAD),
-            billing = "CAD / year",
-            description = "Billed yearly. Save ${BeeKeepPricing.ultimateYearlyDiscountPercent}% compared with 12 monthly payments.",
-            features = listOf(
-                "10,000 hive limit",
-                "1,000 apiary limit",
-                "Cloud sync",
-                "Shared workplace — only the owner needs Ultimate; invited workers do not need their own subscription"
-            ),
-            current = currentPlan == BeeKeepPlan.ULTIMATE_YEARLY,
+            current = currentPlan == BeeKeepPlan.COMMERCIAL,
             highlighted = true,
-            badgeText = "${BeeKeepPricing.ultimateYearlyDiscountPercent}% OFF",
+            badgeText = "COMMERCIAL",
             actionLabel = when {
-                debugBuild && currentPlan == BeeKeepPlan.ULTIMATE_YEARLY -> "SYNC ULTIMATE YEARLY TO CLOUD"
-                currentPlan == BeeKeepPlan.ULTIMATE_YEARLY -> "ULTIMATE YEARLY ACTIVE"
-                debugBuild -> "SIMULATE ULTIMATE YEARLY"
+                debugBuild && currentPlan == BeeKeepPlan.COMMERCIAL -> "SYNC COMMERCIAL TO CLOUD"
+                debugBuild -> "SIMULATE COMMERCIAL"
+                currentPlan == BeeKeepPlan.COMMERCIAL -> "COMMERCIAL ACTIVE"
                 else -> "PURCHASES COMING SOON"
             },
-            actionEnabled = debugBuild,
-            onAction = { onChoosePlan(BeeKeepPlan.ULTIMATE_YEARLY) }
+            actionEnabled = debugBuild && currentPlan != BeeKeepPlan.COMMERCIAL,
+            onAction = { onChoosePlan(BeeKeepPlan.COMMERCIAL) }
         )
-
-        if (currentPlan != BeeKeepPlan.FREE) {
-            Card(
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                shape = RoundedCornerShape(18.dp)
-            ) {
-                Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Rounded.CheckCircle, contentDescription = null, tint = Color(0xFF15803D), modifier = Modifier.size(25.dp))
-                    Spacer(Modifier.size(10.dp))
-                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                        Text("Current plan: BeeKeep ${currentPlan.displayName}", fontWeight = FontWeight.Bold)
-                        Text("Your plan's hive and apiary limits are applied on this device.", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
-                    }
-                }
-            }
-        }
 
         Card(
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)),
@@ -176,9 +113,9 @@ internal fun PurchaseScreen(
                     Text(if (debugBuild) "Debug purchase testing" else "Purchases not active yet", fontWeight = FontWeight.Bold)
                     Text(
                         if (debugBuild) {
-                            "These buttons simulate plan access on this device only. No payment is charged and this is not a real Google Play purchase. Real billing will be connected separately."
+                            "These buttons simulate plan access on this device and BeeKeep-Staging only. No payment is charged. Real billing will be connected separately."
                         } else {
-                            "Real purchases are not enabled yet. This screen will not charge you or unlock a plan in a release build until Google Play Billing is integrated."
+                            "Real purchases are not enabled yet. This screen will not charge you or unlock Commercial in a release build until Google Play Billing is integrated."
                         },
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         style = MaterialTheme.typography.bodySmall
@@ -187,20 +124,12 @@ internal fun PurchaseScreen(
             }
         }
 
-        if (debugBuild && currentPlan != BeeKeepPlan.FREE) {
+        if (debugBuild && currentPlan == BeeKeepPlan.COMMERCIAL) {
             OutlinedButton(
-                onClick = { onChoosePlan(BeeKeepPlan.FREE) },
+                onClick = { onChoosePlan(BeeKeepPlan.HOBBYIST) },
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(16.dp)
-            ) {
-                Text(when (currentPlan) {
-                    BeeKeepPlan.PRO -> "SIMULATE PRO MONTHLY RUNOUT"
-                    BeeKeepPlan.PRO_YEARLY -> "SIMULATE PRO YEARLY RUNOUT"
-                    BeeKeepPlan.ULTIMATE -> "SIMULATE ULTIMATE MONTHLY RUNOUT"
-                    BeeKeepPlan.ULTIMATE_YEARLY -> "SIMULATE ULTIMATE YEARLY RUNOUT"
-                    BeeKeepPlan.FREE -> "RESET TEST PLAN TO FREE"
-                })
-            }
+            ) { Text("SIMULATE COMMERCIAL RUNOUT") }
         }
         Spacer(Modifier.height(8.dp))
     }
@@ -229,13 +158,7 @@ private fun PlanCard(
     ) {
         Column(Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(
-                    title,
-                    modifier = Modifier.weight(1f),
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.ExtraBold,
-                    maxLines = 2
-                )
+                Text(title, modifier = Modifier.weight(1f), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.ExtraBold, maxLines = 2)
                 if (badgeText != null) {
                     Surface(color = Color(0xFFDCFCE7), contentColor = Color(0xFF166534), shape = RoundedCornerShape(50)) {
                         Text(badgeText, modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp), style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.ExtraBold)
@@ -248,28 +171,16 @@ private fun PlanCard(
             }
             Text(description, color = MaterialTheme.colorScheme.onSurfaceVariant)
             features.forEach { feature ->
-                Row(
-                    Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.Top,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Icon(Icons.Rounded.CheckCircle, contentDescription = null, tint = Color(0xFF15803D), modifier = Modifier.padding(top = 1.dp).size(19.dp))
-                    Text(
-                        feature,
-                        modifier = Modifier.weight(1f),
-                        fontWeight = FontWeight.SemiBold,
-                        style = MaterialTheme.typography.bodyMedium
-                    )
+                    Text(feature, modifier = Modifier.weight(1f), fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
                 }
             }
-            Button(
-                onClick = onAction,
-                modifier = Modifier.fillMaxWidth().height(52.dp),
-                enabled = actionEnabled,
-                shape = RoundedCornerShape(15.dp)
-            ) { Text(actionLabel, fontWeight = FontWeight.ExtraBold) }
+            Button(onClick = onAction, modifier = Modifier.fillMaxWidth().height(52.dp), enabled = actionEnabled, shape = RoundedCornerShape(15.dp)) {
+                Text(actionLabel, fontWeight = FontWeight.ExtraBold)
+            }
             if (current) {
-                Text("This is your active test plan.", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
+                Text("This is your active plan.", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
             }
         }
     }
