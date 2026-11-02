@@ -65,6 +65,7 @@ fun WorkspaceManagementSection(
     cloud: SupabaseGateway,
     activity: ComponentActivity,
     currentPlan: BeeKeepPlan,
+    readOnly: Boolean = false,
     usernameRefreshKey: Int = 0,
     onUpgrade: () -> Unit,
     onWorkspaceMembershipChanged: (Boolean) -> Unit = {}
@@ -113,14 +114,27 @@ fun WorkspaceManagementSection(
     val accountWorkspaceDataReady = account.signedIn &&
         !account.userId.isNullOrBlank() &&
         loadedWorkspaceAccountId == account.userId
+
+    LaunchedEffect(readOnly) {
+        if (readOnly) {
+            showCreateDialog = false
+            showCopyPersonalData = false
+            showDangerZone = false
+            showInvitePanel = false
+            copyPersonalTarget = null
+            deleteWorkspaceTarget = null
+            removeMemberTarget = null
+            createdInvite = null
+        }
+    }
     val sharedWorkspaces = if (accountWorkspaceDataReady) {
         workspaces.filterNot { it.is_personal }
     } else {
         emptyList()
     }
     val selectedWorkspace = sharedWorkspaces.firstOrNull { it.id == selectedWorkspaceId }
-    val canManage = selectedWorkspace?.member_role == "owner" || selectedWorkspace?.member_role == "admin"
-    val canAssignAdmin = selectedWorkspace?.member_role == "owner"
+    val canManage = !readOnly && (selectedWorkspace?.member_role == "owner" || selectedWorkspace?.member_role == "admin")
+    val canAssignAdmin = !readOnly && selectedWorkspace?.member_role == "owner"
 
     suspend fun refreshWorkspacePeople(workspaceId: String) {
         val result = cloud.listWorkspaceMembers(workspaceId)
@@ -377,7 +391,7 @@ fun WorkspaceManagementSection(
                             Text("JOIN TEAM", maxLines = 1, softWrap = false, style = MaterialTheme.typography.labelMedium)
                         }
                         Button(
-                            enabled = !loading,
+                            enabled = !loading && !readOnly,
                             onClick = {
                                 // Recheck server entitlement. Debug Commercial plans are synced only
                                 // to BeeKeep-Staging; verification failures are not upgrade denials.
@@ -694,7 +708,7 @@ fun WorkspaceManagementSection(
 
                 }
                 
-                if (selectedWorkspaceSection == "settings" && workspace.member_role in setOf("owner", "admin")) {
+                if (!readOnly && selectedWorkspaceSection == "settings" && workspace.member_role in setOf("owner", "admin")) {
                     WorkspacePanel(
                         title = "Copy personal data",
                         description = "Optional · Import your private apiaries and hives",
@@ -788,7 +802,7 @@ fun WorkspaceManagementSection(
                                             member = member,
                                             canManage = canManage,
                                             canAssignAdmin = canAssignAdmin,
-                                            enabled = !loading,
+                                            enabled = !loading && !readOnly,
                                             onChangeRole = { newRole ->
                                                 scope.launch {
                                                     val result = cloud.updateWorkspaceMemberRole(workspace.id, member.user_id, newRole)
@@ -809,7 +823,7 @@ fun WorkspaceManagementSection(
                     }
                 }
 
-                if (selectedWorkspaceSection == "settings" && workspace.member_role == "owner") {
+                if (!readOnly && selectedWorkspaceSection == "settings" && workspace.member_role == "owner") {
                     WorkspacePanel(
                         title = "Delete team workspace",
                         description = "Permanent action · Owner only",
@@ -1067,7 +1081,7 @@ fun WorkspaceManagementSection(
         }
     }
 
-    if (accountWorkspaceDataReady) copyPersonalTarget?.let { target ->
+    if (accountWorkspaceDataReady && !readOnly) copyPersonalTarget?.let { target ->
         AlertDialog(
             onDismissRequest = { if (!loading) copyPersonalTarget = null },
             title = { Text("Copy personal records to ${target.name}?") },
@@ -1107,7 +1121,7 @@ fun WorkspaceManagementSection(
         )
     }
 
-    if (accountWorkspaceDataReady) removeMemberTarget?.let { target ->
+    if (accountWorkspaceDataReady && !readOnly) removeMemberTarget?.let { target ->
         AlertDialog(
             onDismissRequest = { if (!loading) removeMemberTarget = null },
             title = { Text("Remove ${target.username.takeIf { it.isNotBlank() }?.let { "@$it" } ?: target.email}?") },
@@ -1148,7 +1162,7 @@ fun WorkspaceManagementSection(
         )
     }
 
-    if (accountWorkspaceDataReady) deleteWorkspaceTarget?.let { target ->
+    if (accountWorkspaceDataReady && !readOnly) deleteWorkspaceTarget?.let { target ->
         AlertDialog(
             onDismissRequest = { if (!loading) deleteWorkspaceTarget = null },
             title = { Text("Delete ${target.name}?") },
@@ -1229,7 +1243,7 @@ fun WorkspaceManagementSection(
                         showCommercialRequiredDialog = false
                         onUpgrade()
                     }
-                ) { Text("UPGRADE TO ULTIMATE") }
+                ) { Text("UPGRADE TO COMMERCIAL") }
             },
             dismissButton = {
                 TextButton(onClick = { showCommercialRequiredDialog = false }) {
@@ -1239,7 +1253,7 @@ fun WorkspaceManagementSection(
         )
     }
 
-    if (accountWorkspaceDataReady && showCreateDialog) {
+    if (accountWorkspaceDataReady && !readOnly && showCreateDialog) {
         AlertDialog(
             onDismissRequest = { showCreateDialog = false },
             title = { Text("Create team workspace") },
@@ -1254,7 +1268,7 @@ fun WorkspaceManagementSection(
             },
             confirmButton = {
                 TextButton(
-                    enabled = newWorkspaceName.isNotBlank(),
+                    enabled = newWorkspaceName.isNotBlank() && !readOnly,
                     onClick = {
                         scope.launch {
                             loading = true
