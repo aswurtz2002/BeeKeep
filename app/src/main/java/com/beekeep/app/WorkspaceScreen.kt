@@ -34,6 +34,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -156,6 +157,8 @@ fun WorkspaceScreen(
             }
         }
     }
+    val readOnlyOwnedWorkspaceIds: Set<String> = if (ownerCommercialEntitlementActive == false) ownedWorkspaceIds.toSet() else emptySet()
+
     val workspaceAccessPaused = account.signedIn &&
         ownerAccessAccountId == account.userId &&
         ownerAccessCheckComplete &&
@@ -257,7 +260,7 @@ fun WorkspaceScreen(
                 cloud = cloud,
                 activity = activity,
                 currentPlan = currentPlan,
-                readOnlyWorkspaceIds = ownedWorkspaceIds.takeIf { ownerCommercialEntitlementActive == false }.orEmpty(),
+                readOnlyWorkspaceIds = readOnlyOwnedWorkspaceIds,
                 onUpgrade = onUpgrade,
                 onWorkspaceMembershipChanged = onWorkspaceMembershipChanged
             )
@@ -399,7 +402,7 @@ fun WorkspaceScreen(
                 cloud = cloud,
                 activity = activity,
                 currentPlan = currentPlan,
-                readOnlyWorkspaceIds = ownedWorkspaceIds.takeIf { ownerCommercialEntitlementActive == false }.orEmpty(),
+                readOnlyWorkspaceIds = readOnlyOwnedWorkspaceIds,
                 onUpgrade = onUpgrade,
                 onWorkspaceMembershipChanged = onWorkspaceMembershipChanged
             )
