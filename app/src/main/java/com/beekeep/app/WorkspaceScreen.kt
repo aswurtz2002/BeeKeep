@@ -94,11 +94,15 @@ fun WorkspaceScreen(
         if (!workspaceResult.isSuccess) {
             ownerAccessCheckMessage = workspaceResult.error
                 ?: "Couldn't verify workspace access. Check your connection and retry."
-            // A known owner may use this account's last server-verified plan while offline.
-            if (activeWorkspaceIsOwnedByUser || activeWorkspaceOwnerCommercialEntitlementActive == null) {
-                activeWorkspaceOwnerCommercialEntitlementActive =
+            // Reuse the account-scoped ownership list only for an already known team owner.
+            // Never reuse a previous workspace owner's entitlement for an invited member.
+            activeWorkspaceIsOwnedByUser = activeWorkspaceId?.let { it in ownedWorkspaceIds } == true
+            activeWorkspaceOwnerCommercialEntitlementActive =
+                if (hasActiveTeam && activeWorkspaceIsOwnedByUser) {
                     ownerCommercialEntitlementActive ?: (currentPlan == BeeKeepPlan.COMMERCIAL)
-            }
+                } else {
+                    null
+                }
             ownerAccessCheckComplete = true
             return
         }
