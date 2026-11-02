@@ -78,6 +78,52 @@ class BeeKeepEntitlementsTest {
     }
 
     @Test
+    fun quotaWritesWaitUntilTheSelectedDatasetQuotaHasBeenApplied() {
+        assertFalse(
+            BeeKeepQuotaAccessPolicy.canWrite(
+                isPersonalDataset = false,
+                quotaContextApplied = false,
+                ownerCommercialActive = true,
+                memberRole = "admin",
+                workspaceReadOnly = false
+            )
+        )
+    }
+
+    @Test
+    fun personalWritesWaitForThePersonalQuotaSnapshot() {
+        assertFalse(
+            BeeKeepQuotaAccessPolicy.canWrite(
+                isPersonalDataset = true,
+                quotaContextApplied = false,
+                ownerCommercialActive = null,
+                memberRole = null,
+                workspaceReadOnly = false
+            )
+        )
+        assertTrue(
+            BeeKeepQuotaAccessPolicy.canWrite(
+                isPersonalDataset = true,
+                quotaContextApplied = true,
+                ownerCommercialActive = null,
+                memberRole = null,
+                workspaceReadOnly = false
+            )
+        )
+    }
+
+    @Test
+    fun onlyActiveCommercialEditableTeamMembersCanWrite() {
+        assertTrue(BeeKeepQuotaAccessPolicy.canWrite(false, true, true, "owner", false))
+        assertTrue(BeeKeepQuotaAccessPolicy.canWrite(false, true, true, "admin", false))
+        assertTrue(BeeKeepQuotaAccessPolicy.canWrite(false, true, true, "member", false))
+        assertFalse(BeeKeepQuotaAccessPolicy.canWrite(false, true, false, "member", true))
+        assertFalse(BeeKeepQuotaAccessPolicy.canWrite(false, true, true, "viewer", true))
+        assertFalse(BeeKeepQuotaAccessPolicy.canWrite(false, true, true, "member", true))
+        assertFalse(BeeKeepQuotaAccessPolicy.canWrite(false, true, null, "admin", false))
+    }
+
+    @Test
     fun nfcFeaturesAreCommercialOnly() {
         assertFalse(BeeKeepEntitlements.canUseNfc(BeeKeepPlan.HOBBYIST))
         assertTrue(BeeKeepEntitlements.canUseNfc(BeeKeepPlan.COMMERCIAL))

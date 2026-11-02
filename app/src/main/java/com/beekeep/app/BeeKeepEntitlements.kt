@@ -72,6 +72,27 @@ internal data class BeeKeepQuotaLimits(
     }
 }
 
+/**
+ * Determines whether the local dataset has a verified, writable subscription context.
+ * The server remains the final quota authority; this prevents stale local caps or role
+ * state from making the UI appear writable during a dataset switch.
+ */
+internal object BeeKeepQuotaAccessPolicy {
+    fun canWrite(
+        isPersonalDataset: Boolean,
+        quotaContextApplied: Boolean,
+        ownerCommercialActive: Boolean?,
+        memberRole: String?,
+        workspaceReadOnly: Boolean
+    ): Boolean {
+        if (!quotaContextApplied) return false
+        if (isPersonalDataset) return true
+        return ownerCommercialActive == true &&
+            memberRole in setOf("owner", "admin", "member") &&
+            !workspaceReadOnly
+    }
+}
+
 /** Pricing labels are CAD; real charges remain disabled until Google Play Billing is integrated. */
 internal object BeeKeepPricing {
     const val COMMERCIAL_MONTHLY_CAD = 4.99

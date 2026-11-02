@@ -571,8 +571,22 @@ fun BeeKeepApp(
         BeeKeepQuotaLimits.forPlan(purchasePlan, cloudHiveLimitOverride)
     }
     val selectedTeamQuota = teamQuotaSnapshot?.takeIf { it.first == activeWorkspaceId }?.second
-    val quotaEnforcementReady = activeWorkspaceId.isNullOrBlank() || selectedTeamQuota != null
-    val activeQuotaLimits = if (activeWorkspaceId.isNullOrBlank()) {
+    val isPersonalDataset = activeWorkspaceId.isNullOrBlank()
+    val quotaContextKey = if (isPersonalDataset) {
+        "personal:${purchasePlan.name}:${personalQuotaLimits.hiveLimit}:${personalQuotaLimits.apiaryLimit}"
+    } else {
+        "team:${activeWorkspaceId}:${selectedTeamQuota?.active}:${selectedTeamQuota?.effectiveHiveLimit}:" +
+            "${selectedTeamQuota?.effectiveApiaryLimit}:${selectedTeamQuota?.memberRole}:$activeWorkspaceReadOnly"
+    }
+    var appliedQuotaContextKey by remember { mutableStateOf<String?>(null) }
+    val quotaEnforcementReady = BeeKeepQuotaAccessPolicy.canWrite(
+        isPersonalDataset = isPersonalDataset,
+        quotaContextApplied = appliedQuotaContextKey == quotaContextKey,
+        ownerCommercialActive = selectedTeamQuota?.active,
+        memberRole = selectedTeamQuota?.memberRole,
+        workspaceReadOnly = activeWorkspaceReadOnly
+    )
+    val activeQuotaLimits = if (isPersonalDataset) {
         personalQuotaLimits
     } else {
         selectedTeamQuota?.let {
@@ -632,20 +646,11 @@ fun BeeKeepApp(
         }
     }
 
-    androidx.compose.runtime.LaunchedEffect(
-        activeWorkspaceId,
-        purchasePlan,
-        cloudHiveLimitOverride,
-        selectedTeamQuota
-    ) {
-        val quota = if (activeWorkspaceId.isNullOrBlank()) {
-            personalQuotaLimits
-        } else {
-            selectedTeamQuota?.let {
-                BeeKeepQuotaLimits.forWorkspaceOwner(it.active, it.effectiveHiveLimit, it.effectiveApiaryLimit)
-            } ?: BeeKeepQuotaLimits.forPlan(BeeKeepPlan.HOBBYIST)
-        }
-        vm.updateQuotaLimits(quota)
+    androidx.compose.runtime.LaunchedEffect(quotaContextKey) {
+        // Install the quota before marking this data context writable. This also covers
+        // personal<->team switching, where the same Room repository changes databases.
+        vm.updateQuotaLimits(activeQuotaLimits)
+        appliedQuotaContextKey = quotaContextKey
     }
 
     fun showQuotaVerificationMessage() {
