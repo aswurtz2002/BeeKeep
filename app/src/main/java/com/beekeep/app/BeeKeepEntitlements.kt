@@ -2,6 +2,7 @@ package com.beekeep.app
 
 import android.content.Context
 import java.util.Locale
+import kotlin.math.roundToInt
 
 enum class BeeKeepPlan(
     val displayName: String,
@@ -42,14 +43,14 @@ enum class BeeKeepPlan(
 
 /** Pricing labels are CAD; real charges remain disabled until Google Play Billing is integrated. */
 internal object BeeKeepPricing {
-    const val COMMERCIAL_MONTHLY_CAD = 6.99
-    const val COMMERCIAL_YEARLY_CAD = 59.99
+    const val COMMERCIAL_MONTHLY_CAD = 4.99
+    const val COMMERCIAL_YEARLY_CAD = 29.99
 
     val commercialYearlySavingsCad: Double
         get() = COMMERCIAL_MONTHLY_CAD * 12 - COMMERCIAL_YEARLY_CAD
 
     val commercialYearlyDiscountPercent: Int
-        get() = (commercialYearlySavingsCad / (COMMERCIAL_MONTHLY_CAD * 12) * 100).toInt()
+        get() = (commercialYearlySavingsCad / (COMMERCIAL_MONTHLY_CAD * 12) * 100).roundToInt()
 
     @Deprecated("Use COMMERCIAL_MONTHLY_CAD") const val ULTIMATE_MONTHLY_CAD = COMMERCIAL_MONTHLY_CAD
     @Deprecated("Use COMMERCIAL_YEARLY_CAD") const val ULTIMATE_YEARLY_CAD = COMMERCIAL_YEARLY_CAD
