@@ -82,6 +82,9 @@ class SupabaseGateway(
         CloudAccountState(configured = configured, signedIn = false)
     )
     val account: StateFlow<CloudAccountState> = _account.asStateFlow()
+    private val _accountInitialized = MutableStateFlow(false)
+    /** True after Supabase has restored the stored session and the account identity is known. */
+    val accountInitialized: StateFlow<Boolean> = _accountInitialized.asStateFlow()
 
     private val _hiveLimitOverride = MutableStateFlow<Int?>(null)
     /** A verified override for the signed-in account, or null when none is granted. */
@@ -105,6 +108,7 @@ class SupabaseGateway(
      * on private/local data until the identity can be verified.
      */
     private suspend fun refreshAccountUnlocked() {
+        _accountInitialized.value = false
         val supabase = client
         if (!configured || supabase == null) {
             stopRealtime()
@@ -114,6 +118,7 @@ class SupabaseGateway(
             _verifiedPlan.value = null
             verifiedPlanUserId = null
             _account.value = CloudAccountState(configured = false, signedIn = false)
+            _accountInitialized.value = true
             return
         }
         try {
@@ -142,6 +147,7 @@ class SupabaseGateway(
                 email = session?.user?.email ?: "",
                 userId = userId
             )
+            _accountInitialized.value = true
             if (enableRealtime && userId != null) startRealtime() else stopRealtime()
         } catch (cancelled: CancellationException) {
             throw cancelled
@@ -154,6 +160,7 @@ class SupabaseGateway(
             _verifiedPlan.value = null
             verifiedPlanUserId = null
             _account.value = CloudAccountState(configured = true, signedIn = false, error = error.message)
+            _accountInitialized.value = true
         }
     }
 
