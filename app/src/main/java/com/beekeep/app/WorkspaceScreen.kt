@@ -99,7 +99,7 @@ fun WorkspaceScreen(
         ownedWorkspaceIds = workspaces.filter { !it.is_personal && it.member_role == "owner" }
             .map { it.id }.toSet()
         hasOwnedTeamWorkspace = ownedWorkspaceIds.isNotEmpty()
-        activeWorkspaceIsOwnedByUser = activeWorkspaceId in ownedWorkspaceIds
+        activeWorkspaceIsOwnedByUser = activeWorkspaceId?.let { it in ownedWorkspaceIds } == true
         if (!activeWorkspaceIsOwnedByUser) {
             ownerCommercialEntitlementActive = null
             ownerAccessCheckMessage = ""
