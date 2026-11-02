@@ -150,6 +150,7 @@ internal fun SettingsScreen(
     var confirmResetApiaries by remember { mutableStateOf(false) }
     var resettingApiaries by remember { mutableStateOf(false) }
     var permissionRevision by remember { mutableIntStateOf(0) }
+    val resetCopy = resetConfirmationCopy(isTeamWorkspace = !activeWorkspaceId.isNullOrBlank())
 
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
@@ -583,7 +584,7 @@ if (backupMessage.isNotBlank()) Text(backupMessage, color = if (backupMessage.st
                 Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                         Text(
-                            "Reset Apiaries",
+                            if (activeWorkspaceId.isNullOrBlank()) "Reset Apiaries" else "Reset Team Workspace",
                             fontWeight = FontWeight.ExtraBold,
                             style = MaterialTheme.typography.titleMedium,
                             color = MaterialTheme.colorScheme.error
@@ -605,12 +606,12 @@ if (backupMessage.isNotBlank()) Text(backupMessage, color = if (backupMessage.st
     if (confirmResetApiaries) {
         AlertDialog(
             onDismissRequest = { if (!resettingApiaries) confirmResetApiaries = false },
-            title = { Text("Reset all apiaries?", fontWeight = FontWeight.ExtraBold) },
+            title = { Text(resetCopy.title, fontWeight = FontWeight.ExtraBold) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("This permanently deletes every apiary and hive, along with inspections, notes, feedings, treatments, harvests, activity history, tasks and all NFC tag assignments.")
+                    Text(resetCopy.recordScope)
                     Text(
-                        "This cannot be undone. BeeKeep Cloud data for the signed-in account will also be cleared when cloud access is available.",
+                        resetCopy.cloudImpact,
                         color = MaterialTheme.colorScheme.error,
                         fontWeight = FontWeight.SemiBold
                     )
@@ -650,8 +651,8 @@ if (backupMessage.isNotBlank()) Text(backupMessage, color = if (backupMessage.st
                                 confirmResetApiaries = false
                                 val cloudWarning = when (cloudResult) {
                                     CloudResult.Success, CloudResult.NotConfigured -> null
-                                    CloudResult.NotSignedIn -> "Local data was reset, but BeeKeep Cloud could not be cleared because you're signed out. Sign in to the same account before syncing."
-                                    is CloudResult.Failure -> "Local data was reset, but the cloud reset failed: ${cloudResult.message}. Reconnect and retry cloud sync."
+                                    CloudResult.NotSignedIn -> "Local ${resetCopy.localDataLabel} was reset, but ${resetCopy.cloudDataLabel} could not be cleared because you're signed out. Sign in to the same account before syncing."
+                                    is CloudResult.Failure -> "Local ${resetCopy.localDataLabel} was reset, but the cloud reset failed: ${cloudResult.message}. Reconnect and retry cloud sync."
                                 }
                                 if (account.signedIn) cloud.startRealtime()
                                 onResetApiaries(cloudWarning)
