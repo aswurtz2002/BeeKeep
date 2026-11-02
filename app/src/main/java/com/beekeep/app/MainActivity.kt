@@ -200,6 +200,7 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
         // priority over Android's normal tag dispatch, so a tag can open its hive
         // without switching to a browser or another NFC app.
         nfc.setPassiveReadListener(this) { result ->
+            if (!BeeKeepEntitlements.canUseNfc(applicationContext)) return@setPassiveReadListener
             val deliveryToken = nfc.passiveDeliveryToken()
             lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) {
                 val shouldForward = runCatching {
@@ -343,6 +344,7 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
     }
 
     private fun handleNfcIntent(intent: Intent?) {
+        if (!BeeKeepEntitlements.canUseNfc(this)) return
         // While fast tagging is enabled, never interpret an Android NFC launch intent
         // as a request to navigate to Inspection. ReaderMode owns the physical tag;
         // this preference guard also survives a newly-created NfcController instance.
@@ -650,6 +652,49 @@ fun BeeKeepApp(
             // noticed and normalized an expiry at the exact time this effect started.
             purchasePlanName = BeeKeepEntitlements.currentPlan(context).name
             lockedHiveIds = BeeKeepEntitlements.lockedHiveIds(context)
+        }
+    }
+
+    androidx.compose.runtime.LaunchedEffect(screen, isCommercialPlan) {
+        if (!isCommercialPlan && (screen == Screen.TAG_MANAGER || screen == Screen.SCAN)) {
+            purchaseBackScreen = Screen.MORE
+            purchaseSuccessScreen = Screen.MORE
+            screen = Screen.PURCHASES
+        }
+    }
+
+    androidx.compose.runtime.LaunchedEffect(isCommercialPlan) {
+        if (!isCommercialPlan) {
+            nfc.stop(activity)
+            nfc.finishFastAssignmentFlow(activity, preserveLastUid = false)
+            fastTagAssignmentMode = false
+            fastAssignmentSessionActive = false
+            fastAssignmentScreenActive = false
+            fastAssignmentCurrentHiveId = null
+            fastAssignmentApiaryName = null
+            fastAssignmentIgnoredUid = null
+            fastAssignmentAssignedHiveIds = emptySet()
+            pendingAutoTagWriteHiveId = null
+            pendingAutoTagWriteIgnoredUid = null
+            pendingInspectionHiveId = null
+            pendingAutoStartVoiceHiveId = null
+            unassignedTagUid = null
+            pendingTagUid = null
+            (activity as? MainActivity)?.pendingNfcResult?.value = null
+            autoVoicePrefs.edit {
+                putBoolean("fast_tag_assignment_mode", false)
+                remove("fast_tag_session_active")
+                remove("fast_tag_session_screen_active")
+                remove("fast_tag_session_current_hive_id")
+                remove("fast_tag_session_apiary")
+                remove("fast_tag_session_ignored_uid")
+                remove("fast_tag_session_assigned_ids")
+            }
+            if (screen == Screen.TAG_MANAGER || screen == Screen.SCAN) {
+                purchaseBackScreen = Screen.MORE
+                purchaseSuccessScreen = Screen.MORE
+                screen = Screen.PURCHASES
+            }
         }
     }
 
@@ -1250,6 +1295,12 @@ fun BeeKeepApp(
     }
 
     fun startManualNfcScan() {
+        if (!isCommercialPlan) {
+            purchaseBackScreen = screen
+            purchaseSuccessScreen = screen
+            screen = Screen.PURCHASES
+            return
+        }
         // A deliberate tap on Scan is an explicit retry, even if this UID was just dismissed.
         nfc.clearUnassignedPromptSuppressionForExplicitScan()
         nfc.startReadAndPrepareForBeeKeep(activity) { result ->
@@ -1266,9 +1317,14 @@ fun BeeKeepApp(
         fastTagAssignmentMode,
         fastAssignmentSessionActive,
         fastAssignmentScreenActive,
-        fastAssignmentStateHydrated
+        fastAssignmentStateHydrated,
+        isCommercialPlan
     ) {
         val result = incomingNfc ?: return@LaunchedEffect
+        if (!isCommercialPlan) {
+            (activity as? MainActivity)?.pendingNfcResult?.value = null
+            return@LaunchedEffect
+        }
         if (!ready || !fastAssignmentStateHydrated) return@LaunchedEffect
         // The toggle itself—not only the current write transaction—owns NFC routing.
         // Ignore normal scan navigation until Fast Tag Assignment is switched off.
@@ -1993,6 +2049,12 @@ fun BeeKeepApp(
             hive = hiveForDetail,
             viewModel = vm,
             fastTagAssignmentMode = fastTagAssignmentActive,
+            nfcEntitled = isCommercialPlan,
+            onUpgradeNfc = {
+                purchaseBackScreen = Screen.HOME
+                purchaseSuccessScreen = Screen.HOME
+                screen = Screen.PURCHASES
+            },
             autoStartTagWriting = pendingAutoTagWriteHiveId == hiveForDetail.id,
             autoStartTagWritingIgnoreUid = if (pendingAutoTagWriteHiveId == hiveForDetail.id) pendingAutoTagWriteIgnoredUid else null,
             onAutoTagWritingStarted = {
@@ -2099,20 +2161,30 @@ fun BeeKeepApp(
             onTreat = { if (requestHiveAccess(hiveForDetail)) logType = HiveLogType.TREAT },
             onHarvest = { if (requestHiveAccess(hiveForDetail)) logType = HiveLogType.HARVEST },
             onTag = { uid, onResult ->
-                if (requestHiveAccess(hiveForDetail)) vm.assignTag(uid, onResult)
-                else onResult(false, "This hive is locked because its paid subscription has ended. Renew a paid plan to manage it.")
+                when {
+                    !isCommercialPlan -> onResult(false, "NFC tag assignment requires BeeKeep Commercial.")
+                    requestHiveAccess(hiveForDetail) -> vm.assignTag(uid, onResult)
+                    else -> onResult(false, "This hive is locked because its paid subscription has ended. Renew a paid plan to manage it.")
+                }
             },
             isTagAssignedElsewhere = { targetHiveId, uid ->
                 nfc.isTagAssignedElsewhere(targetHiveId, uid)
             },
             onClearTag = { hiveId, onResult ->
-                if (requestHiveAccessById(hiveId)) vm.clearTagForHive(hiveId, onResult)
-                else onResult(false, "This hive is locked because its paid subscription has ended. Renew a paid plan to manage its NFC tag.")
+                when {
+                    !isCommercialPlan -> onResult(false, "NFC tag management requires BeeKeep Commercial.")
+                    requestHiveAccessById(hiveId) -> vm.clearTagForHive(hiveId, onResult)
+                    else -> onResult(false, "This hive is locked because its paid subscription has ended. Renew a paid plan to manage its NFC tag.")
+                }
             },
             confirmBeforeTagRemoval = autoVoicePrefs.getBoolean("confirm_tag_removal", true),
             tagAssignmentSuccessUid = if (lastHiveTagSuccessHiveId == hiveForDetail.id) lastHiveTagSuccessUid else null,
             onVerifyTag = {
-                nfc.startRead(activity) { result ->
+                if (!isCommercialPlan) {
+                    purchaseBackScreen = Screen.HOME
+                    purchaseSuccessScreen = Screen.HOME
+                    screen = Screen.PURCHASES
+                } else nfc.startRead(activity) { result ->
                     when (result) {
                         is NfcResult.Read -> {
                             val matchesUid = NfcUid.matches(result.uid, hiveForDetail.tagUid)
@@ -2361,7 +2433,16 @@ fun BeeKeepApp(
                     screen = Screen.WORKSPACE
                     scope.launch { snackbarHostState.showSnackbar(joinedMessage) }
                 },
-                onTagManager = { tagManagerReturnScreen = Screen.MORE; screen = Screen.TAG_MANAGER },
+                onTagManager = {
+                    if (isCommercialPlan) {
+                        tagManagerReturnScreen = Screen.MORE
+                        screen = Screen.TAG_MANAGER
+                    } else {
+                        purchaseBackScreen = Screen.MORE
+                        purchaseSuccessScreen = Screen.MORE
+                        screen = Screen.PURCHASES
+                    }
+                },
                 onColonyHistory = { screen = Screen.COLONY_HISTORY },
                 onUpgrade = {
                     purchaseBackScreen = Screen.MORE
@@ -2393,7 +2474,13 @@ fun BeeKeepApp(
                     autoVoicePrefs.edit { putBoolean("auto_voice_on_nfc", enabled) }
                 },
                 fastTagAssignmentMode = fastTagAssignmentMode,
+                nfcEntitled = isCommercialPlan,
                 onFastTagAssignmentModeChange = { enabled ->
+                    if (enabled && !isCommercialPlan) {
+                        purchaseBackScreen = Screen.SETTINGS
+                        purchaseSuccessScreen = Screen.SETTINGS
+                        screen = Screen.PURCHASES
+                    } else {
                     fastTagAssignmentMode = enabled
                     autoVoicePrefs.edit { putBoolean("fast_tag_assignment_mode", enabled) }
                     if (enabled) (activity as? MainActivity)?.stopHiveAnnouncements()
@@ -2411,6 +2498,7 @@ fun BeeKeepApp(
                         (activity as? MainActivity)?.pendingNfcResult?.value = null
                         nfc.finishFastAssignmentFlow(activity, preserveLastUid = false)
                     }
+                    }
                 },
                 largeFieldText = largeFieldText,
                 onLargeFieldTextChange = onLargeFieldTextChange,
@@ -2419,6 +2507,11 @@ fun BeeKeepApp(
                 cloud = cloud,
                 onBack = { screen = Screen.HOME },
                 onOpenMore = { screen = Screen.MORE },
+                onOpenPlans = {
+                    purchaseBackScreen = Screen.SETTINGS
+                    purchaseSuccessScreen = Screen.SETTINGS
+                    screen = Screen.PURCHASES
+                },
                 onResetApiaries = { warning ->
                     vm.clearHive()
                     nfc.stop(activity)
