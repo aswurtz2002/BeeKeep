@@ -98,7 +98,7 @@ internal fun PurchaseScreen(
                 currentPlan == BeeKeepPlan.COMMERCIAL -> "COMMERCIAL ACTIVE"
                 else -> "PURCHASES COMING SOON"
             },
-            actionEnabled = debugBuild && currentPlan != BeeKeepPlan.COMMERCIAL,
+            actionEnabled = debugBuild,
             onAction = { onChoosePlan(BeeKeepPlan.COMMERCIAL) }
         )
 
