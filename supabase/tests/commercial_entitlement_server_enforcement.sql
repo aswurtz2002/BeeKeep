@@ -94,6 +94,42 @@ insert into public.beekeep_workspace_documents (
     'commercial-entitlement-test', auth.uid()
 );
 
+-- The owner is Commercial, so the shared workspace may hold up to 1,000 apiaries.
+select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-000000000081', false);
+insert into public.beekeep_workspace_documents (
+    workspace_id, entity_type, entity_id, payload, updated_at, deleted, device_id, updated_by
+)
+select
+    (select value::uuid from commercial_entitlement_test_context where key = 'workspace_id'),
+    'apiary',
+    n,
+    '{"id":' || n::text || ',"name":"Commercial apiary"}',
+    n,
+    false,
+    'commercial-entitlement-test',
+    auth.uid()
+from generate_series(1, 1000) as n;
+
+do $commercial_workspace_apiary_quota_assertion$
+declare denied boolean := false;
+begin
+    begin
+        insert into public.beekeep_workspace_documents (
+            workspace_id, entity_type, entity_id, payload, updated_at, deleted, device_id, updated_by
+        ) values (
+            (select value::uuid from commercial_entitlement_test_context where key = 'workspace_id'),
+            'apiary', 1001, '{"id":1001,"name":"Over quota"}', 1001, false,
+            'commercial-entitlement-test', auth.uid()
+        );
+    exception when check_violation then
+        denied := true;
+    end;
+    if not denied then
+        raise exception 'The 1,001st Commercial team apiary was not rejected by the server';
+    end if;
+end;
+$commercial_workspace_apiary_quota_assertion$;
+
 -- Simulate the owner losing Commercial through trusted app metadata.
 reset role;
 update auth.users
@@ -134,7 +170,8 @@ declare visible_count integer; affected integer; denied boolean := false;
 begin
     select count(*) into visible_count
       from public.beekeep_workspace_documents
-     where workspace_id = (select value::uuid from commercial_entitlement_test_context where key = 'workspace_id');
+     where workspace_id = (select value::uuid from commercial_entitlement_test_context where key = 'workspace_id')
+       and entity_type in ('hive', 'event');
     if visible_count <> 2 then
         raise exception 'Existing shared records must remain readable after owner downgrade';
     end if;
