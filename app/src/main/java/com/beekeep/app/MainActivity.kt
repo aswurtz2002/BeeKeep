@@ -1609,6 +1609,13 @@ fun BeeKeepApp(
                     scope.launch {
                         val previousPlan = BeeKeepEntitlements.currentPlan(context)
                         val serverSync = cloud.syncDebugPlanToStaging(plan)
+                        if (!serverSync.isSuccess) {
+                            snackbarHostState.showSnackbar(
+                                "Staging entitlement was NOT updated: ${serverSync.error ?: "unknown error"}. " +
+                                    "The device plan was left unchanged so it stays in sync with Workspace access."
+                            )
+                            return@launch
+                        }
 
                         BeeKeepEntitlements.setDebugPlan(context, plan)
                         purchasePlanName = plan.name
@@ -1620,23 +1627,14 @@ fun BeeKeepApp(
 
                         val localMessage = when {
                             plan == BeeKeepPlan.HOBBYIST && previousPlan.isPaidSubscription ->
-                                "Debug plan reset to Hobbyist. All existing hives and apiaries remain visible and editable."
+                                "Debug plan reset to Hobbyist. All existing records are preserved."
                             plan == BeeKeepPlan.HOBBYIST ->
                                 "Debug test plan set to Hobbyist."
                             previousPlan == BeeKeepPlan.HOBBYIST ->
                                 "BeeKeep Commercial activated. Existing records were preserved."
                             else -> "Debug test plan activated: BeeKeep ${plan.displayName}."
                         }
-                        val fullMessage = if (serverSync.isSuccess) {
-                            if (plan == BeeKeepPlan.COMMERCIAL) {
-                                "$localMessage Staging Commercial entitlement synced."
-                            } else {
-                                "$localMessage Staging cloud entitlement updated."
-                            }
-                        } else {
-                            "$localMessage Staging entitlement was NOT updated: ${serverSync.error}. This device-only simulation does not change the server plan."
-                        }
-                        snackbarHostState.showSnackbar(fullMessage)
+                        snackbarHostState.showSnackbar("${localMessage} Staging cloud entitlement updated.")
                     }
                 }
             }
