@@ -194,7 +194,7 @@ fun WorkspaceScreen(
                         onClick = onUpgrade,
                         modifier = Modifier.fillMaxWidth(),
                         enabled = !ownerAccessActionBusy
-                    ) { Text("RENEW ULTIMATE") }
+                    ) { Text("RENEW COMMERCIAL") }
                     OutlinedButton(
                         onClick = {
                             scope.launch {
@@ -312,7 +312,7 @@ fun WorkspaceScreen(
                             Text(
                                 when {
                                     hasActiveTeam -> "TEAM WORKSPACE ACTIVE"
-                                    hasCommercialAccess -> "ULTIMATE ACCESS"
+                                    hasCommercialAccess -> "COMMERCIAL ACCESS"
                                     else -> currentPlan.displayName.uppercase()
                                 },
                                 style = MaterialTheme.typography.labelMedium,
