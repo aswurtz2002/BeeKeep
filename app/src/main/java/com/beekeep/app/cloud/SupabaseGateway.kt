@@ -246,7 +246,7 @@ class SupabaseGateway(
             true
         }
         val readOnly = if (membershipLookupCompleted) {
-            memberRole == "viewer" || (memberRole == "owner" && !ownerCommercialActive)
+            WorkspaceAccessPolicy.isReadOnly(memberRole, ownerCommercialActive)
         } else {
             // During an outage preserve the role-based read-only state already recorded
             // for this account; the owner entitlement is rechecked as soon as online.
@@ -1172,8 +1172,10 @@ class SupabaseGateway(
                 }
                 repository.switchWorkspace(
                     workspaceId = cleanId,
-                    readOnly = workspace?.member_role == "viewer" ||
-                        (workspace?.member_role == "owner" && !ownerCommercialActive),
+                    readOnly = WorkspaceAccessPolicy.isReadOnly(
+                        memberRole = workspace?.member_role,
+                        ownerCommercialEntitlementActive = ownerCommercialActive
+                    ),
                     ownerUserId = userId
                 )
                 val syncResult = syncNowUnlocked()
