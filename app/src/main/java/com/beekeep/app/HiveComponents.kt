@@ -158,7 +158,13 @@ internal fun HiveRow(
 
 
 @Composable
-internal fun LockedHiveScreen(hiveName: String, onBack: () -> Unit, onUpgrade: () -> Unit) {
+internal fun LockedHiveScreen(
+    hiveName: String,
+    message: String,
+    canUpgrade: Boolean = true,
+    onBack: () -> Unit,
+    onUpgrade: () -> Unit
+) {
     BackHandler { onBack() }
     Box(
         Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(24.dp),
@@ -180,13 +186,21 @@ internal fun LockedHiveScreen(hiveName: String, onBack: () -> Unit, onUpgrade: (
                     tint = Color(0xFFB45309),
                     modifier = Modifier.size(42.dp)
                 )
-                Text("Hive Locked", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.ExtraBold)
+                Text("Upgrade BeeKeep", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.ExtraBold)
                 Text(
-                    "$hiveName was added while a BeeKeep subscription was active. Renew a paid plan to unlock this hive and its records.",
+                    message,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                Button(onClick = onUpgrade, modifier = Modifier.fillMaxWidth()) {
-                    Text("RENEW / VIEW PLANS")
+                if (canUpgrade) {
+                    Button(onClick = onUpgrade, modifier = Modifier.fillMaxWidth()) {
+                        Text("UPGRADE TO COMMERCIAL")
+                    }
+                } else {
+                    Text(
+                        "ASK THE WORKSPACE OWNER TO RENEW COMMERCIAL",
+                        color = MaterialTheme.colorScheme.primary,
+                        fontWeight = FontWeight.Bold
+                    )
                 }
                 TextButton(onClick = onBack) { Text("BACK TO HIVES") }
             }

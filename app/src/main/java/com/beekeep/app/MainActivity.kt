@@ -503,7 +503,6 @@ fun BeeKeepApp(
     // Release quotas follow the authenticated server entitlement rather than defaulting every
     // paid customer to Free. Debug builds retain the local purchase simulator.
     val purchasePlan = if (BuildConfig.DEBUG) localPurchasePlan else serverVerifiedPlan ?: BeeKeepPlan.HOBBYIST
-    var lockedHiveIds by remember { mutableStateOf(BeeKeepEntitlements.lockedHiveIds(context)) }
     var lockedHivePromptVisible by rememberSaveable { mutableStateOf(false) }
     var lockedHivePromptName by rememberSaveable { mutableStateOf<String?>(null) }
     var purchaseBackScreen by rememberSaveable { mutableStateOf(Screen.MORE) }
@@ -594,6 +593,29 @@ fun BeeKeepApp(
         } ?: BeeKeepQuotaLimits.forPlan(BeeKeepPlan.HOBBYIST)
     }
     val effectiveHiveLimit = activeQuotaLimits.hiveLimit
+    val quotaSnapshotVerified = appliedQuotaContextKey == quotaContextKey &&
+        (if (isPersonalDataset) commercialEntitlementResolved else selectedTeamQuota != null)
+    val quotaOrderedHives = remember(hives, deadHives) {
+        (hives + deadHives)
+            .distinctBy { it.id }
+            .sortedWith(
+                compareBy<Hive> { it.isDead }
+                    .thenBy { it.number.toIntOrNull() ?: Int.MAX_VALUE }
+                    .thenBy { it.number.lowercase(Locale.ROOT) }
+                    .thenBy { it.apiary.lowercase(Locale.ROOT) }
+                    .thenBy { it.id }
+            )
+    }
+    val lockedHiveIds = remember(quotaOrderedHives, effectiveHiveLimit, quotaSnapshotVerified) {
+        if (!quotaSnapshotVerified) {
+            emptySet()
+        } else {
+            BeeKeepEntitlements.hiveIdsBeyondLimit(
+                quotaOrderedHives.map { it.id },
+                effectiveHiveLimit
+            )
+        }
+    }
 
     // A selected team uses the owner's server-resolved limits, never the invitee's personal plan.
     // Until that lookup succeeds, use a restrictive fallback and block quota-dependent writes.
@@ -758,7 +780,6 @@ fun BeeKeepApp(
             // Re-check even when the expiry getter returns null, since it may have
             // noticed and normalized an expiry at the exact time this effect started.
             purchasePlanName = BeeKeepEntitlements.currentPlan(context).name
-            lockedHiveIds = BeeKeepEntitlements.lockedHiveIds(context)
         }
     }
 
@@ -816,9 +837,22 @@ fun BeeKeepApp(
 
     fun requestHiveAccess(hive: Hive): Boolean {
         val latestPlan = BeeKeepEntitlements.currentPlan(context)
-        if (purchasePlanName != latestPlan.name) purchasePlanName = latestPlan.name
-        val latestLockedHiveIds = BeeKeepEntitlements.lockedHiveIds(context)
-        lockedHiveIds = latestLockedHiveIds
+        if (isPersonalDataset && purchasePlanName != latestPlan.name) {
+            purchasePlanName = latestPlan.name
+        }
+        val latestHiveLimit = if (isPersonalDataset) {
+            BeeKeepEntitlements.hiveLimit(latestPlan, cloudHiveLimitOverride)
+        } else {
+            effectiveHiveLimit
+        }
+        val latestLockedHiveIds = if (quotaSnapshotVerified) {
+            BeeKeepEntitlements.hiveIdsBeyondLimit(
+                quotaOrderedHives.map { it.id },
+                latestHiveLimit
+            )
+        } else {
+            emptySet()
+        }
         if (hive.id !in latestLockedHiveIds) return true
         lockedHivePromptName = hiveDisplayName(hive.number)
         lockedHivePromptVisible = true
@@ -836,6 +870,18 @@ fun BeeKeepApp(
         purchaseBackScreen = screen
         purchaseSuccessScreen = screen
         screen = Screen.PURCHASES
+    }
+
+    fun canUpgradeLockedHive(): Boolean =
+        isPersonalDataset || selectedTeamQuota?.memberRole == "owner"
+
+    fun lockedHiveAccessMessage(hiveName: String): String {
+        val limit = activeQuotaLimits.hiveLimit
+        return if (canUpgradeLockedHive()) {
+            "$hiveName is above the current ${activeQuotaLimits.plan.displayName} plan's ${limit}-hive limit. Your hive and its records are safe. Upgrade to Commercial to unlock and edit it."
+        } else {
+            "$hiveName is above the workspace owner's current ${activeQuotaLimits.plan.displayName} plan's ${limit}-hive limit. Your hive and its records are safe. Ask the workspace owner to renew Commercial to unlock and edit it."
+        }
     }
 
     fun stopFastAssignmentForLockedHive() {
@@ -1041,8 +1087,19 @@ fun BeeKeepApp(
                 .filter { !it.first.isNullOrBlank() }
                 .map { it.second }
                 .toSet()
-            val currentLockedHiveIds = BeeKeepEntitlements.lockedHiveIds(context)
-            lockedHiveIds = currentLockedHiveIds
+            val currentLockedHiveIds = BeeKeepEntitlements.hiveIdsBeyondLimit(
+                (latestHives + deadHives)
+                    .distinctBy { it.id }
+                    .sortedWith(
+                        compareBy<Hive> { it.isDead }
+                            .thenBy { it.number.toIntOrNull() ?: Int.MAX_VALUE }
+                            .thenBy { it.number.lowercase(Locale.ROOT) }
+                            .thenBy { it.apiary.lowercase(Locale.ROOT) }
+                            .thenBy { it.id }
+                    )
+                    .map { it.id },
+                effectiveHiveLimit
+            )
             val nextUntaggedHive = FastTagTargetSelection.nextUntaggedHive(
                 hives = latestHives,
                 apiaryId = currentHive.apiaryId,
@@ -1187,7 +1244,6 @@ fun BeeKeepApp(
             if (event == Lifecycle.Event.ON_RESUME) {
                 nfcEnabledForIndicator = nfc.isAvailable() && nfc.isEnabled()
                 purchasePlanName = BeeKeepEntitlements.currentPlan(context).name
-                lockedHiveIds = BeeKeepEntitlements.lockedHiveIds(context)
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -1681,16 +1737,27 @@ fun BeeKeepApp(
             containerColor = Color(0xFFFFFBEB),
             titleContentColor = Color(0xFF78350F),
             textContentColor = Color(0xFF654321),
-            title = { Text("Hive Locked", fontWeight = FontWeight.ExtraBold) },
+            title = { Text("Upgrade BeeKeep", fontWeight = FontWeight.ExtraBold) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("${lockedHivePromptName ?: "This hive"} was added while a BeeKeep subscription was active.")
-                    Text("The subscription is no longer active. Renew a paid plan to unlock this hive and its records.")
+                    Text("${lockedHivePromptName ?: "This hive"} is above the current ${activeQuotaLimits.plan.displayName} plan's ${activeQuotaLimits.hiveLimit}-hive limit.")
+                    if (isPersonalDataset || selectedTeamQuota?.memberRole == "owner") {
+                        Text("Your hive and its existing records are safe. Upgrade to Commercial to unlock and edit it.")
+                    } else {
+                        Text("Your hive and its existing records are safe. Ask the workspace owner to renew Commercial to unlock and edit it.")
+                    }
                 }
             },
             confirmButton = {
-                Button(onClick = { openLockedHiveUpgrade() }, shape = RoundedCornerShape(14.dp)) {
-                    Text("RENEW / VIEW PLANS", fontWeight = FontWeight.ExtraBold)
+                if (isPersonalDataset || selectedTeamQuota?.memberRole == "owner") {
+                    Button(onClick = { openLockedHiveUpgrade() }, shape = RoundedCornerShape(14.dp)) {
+                        Text("UPGRADE TO COMMERCIAL", fontWeight = FontWeight.ExtraBold)
+                    }
+                } else {
+                    TextButton(onClick = {
+                        lockedHivePromptVisible = false
+                        lockedHivePromptName = null
+                    }) { Text("OK") }
                 }
             },
             dismissButton = {
@@ -1724,7 +1791,6 @@ fun BeeKeepApp(
 
                         BeeKeepEntitlements.setDebugPlan(context, plan)
                         purchasePlanName = plan.name
-                        lockedHiveIds = emptySet()
 
                         if (plan != BeeKeepPlan.HOBBYIST) {
                             screen = purchaseSuccessScreen
@@ -1878,6 +1944,8 @@ fun BeeKeepApp(
         if (targetHive != null && targetHive.id in lockedHiveIds) {
             LockedHiveScreen(
                 hiveName = hiveDisplayName(targetHive.number),
+                message = lockedHiveAccessMessage(hiveDisplayName(targetHive.number)),
+                canUpgrade = canUpgradeLockedHive(),
                 onBack = {
                     stopFastAssignmentForLockedHive()
                     screen = Screen.HOME
@@ -2000,6 +2068,8 @@ fun BeeKeepApp(
         if (hiveForInspection.id in lockedHiveIds) {
             LockedHiveScreen(
                 hiveName = hiveDisplayName(hiveForInspection.number),
+                message = lockedHiveAccessMessage(hiveDisplayName(hiveForInspection.number)),
+                canUpgrade = canUpgradeLockedHive(),
                 onBack = {
                     inspecting = false
                     selectedHiveOpen = false
@@ -2022,7 +2092,9 @@ fun BeeKeepApp(
             autoStartVoice = pendingAutoStartVoiceHiveId == hiveForInspection.id,
             autoVoiceEnabled = autoVoiceEnabled,
             isReadOnlyWorkspace = activeWorkspaceReadOnly,
-            onViewOnlyAttempt = { showViewOnlyDialog = true },
+            onViewOnlyAttempt = {
+                if (requestHiveAccess(hiveForInspection)) showViewOnlyDialog = true
+            },
             onVoiceAutoStartConsumed = {
                 if (pendingAutoStartVoiceHiveId == hiveForInspection.id) pendingAutoStartVoiceHiveId = null
             },
@@ -2080,6 +2152,8 @@ fun BeeKeepApp(
         if (currentSelected.id in lockedHiveIds) {
             LockedHiveScreen(
                 hiveName = hiveDisplayName(currentSelected.number),
+                message = lockedHiveAccessMessage(hiveDisplayName(currentSelected.number)),
+                canUpgrade = canUpgradeLockedHive(),
                 onBack = {
                     logType = null
                     selectedHiveOpen = false
@@ -2149,6 +2223,8 @@ fun BeeKeepApp(
         if (hiveForDetail.id in lockedHiveIds) {
             LockedHiveScreen(
                 hiveName = hiveDisplayName(hiveForDetail.number),
+                message = lockedHiveAccessMessage(hiveDisplayName(hiveForDetail.number)),
+                canUpgrade = canUpgradeLockedHive(),
                 onBack = {
                     selectedHiveOpen = false
                     pendingAutoStartVoiceHiveId = null

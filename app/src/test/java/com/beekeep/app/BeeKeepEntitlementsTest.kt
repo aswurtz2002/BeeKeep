@@ -146,11 +146,38 @@ class BeeKeepEntitlementsTest {
     }
 
     @Test
-    fun downgradeNeverLocksExistingHivesOrExcludesThemFromTheQuotaCount() {
-        val ids = listOf(1L, 2L, 3L, 4L, 5L)
-        val legacyPaidIds = setOf(4L, 5L)
-        assertEquals(ids.size, BeeKeepEntitlements.countHivesSubjectToFreeLimit(ids, legacyPaidIds))
-        assertFalse(BeeKeepEntitlements.isHiveLockedForPlan(BeeKeepPlan.HOBBYIST, createdUnderPro = true))
+    fun hobbyistDowngradeLocksOnlyHivesBeyondTheFifteenHiveAllowance() {
+        val ids = (1L..18L).toList()
+
+        assertEquals(
+            (16L..18L).toSet(),
+            BeeKeepEntitlements.hiveIdsBeyondLimit(ids, BeeKeepEntitlements.HOBBYIST_HIVE_LIMIT)
+        )
+        // Locked records remain part of the total quota count and are never deleted.
+        assertEquals(ids.size, BeeKeepEntitlements.countHivesSubjectToFreeLimit(ids, emptySet()))
+    }
+
+    @Test
+    fun quotaLockingPreservesOrderAndIgnoresDuplicateHiveIds() {
+        val orderedIds = listOf(30L, 10L, 20L, 20L, 40L)
+
+        assertEquals(
+            setOf(40L),
+            BeeKeepEntitlements.hiveIdsBeyondLimit(orderedIds, 3)
+        )
+    }
+
+    @Test
+    fun commercialAllowanceDoesNotLockHivesWithinItsLimit() {
+        val ids = (1L..20L).toList()
+
+        assertTrue(
+            BeeKeepEntitlements.hiveIdsBeyondLimit(
+                ids,
+                BeeKeepEntitlements.COMMERCIAL_HIVE_LIMIT
+            ).isEmpty()
+        )
+        assertTrue(BeeKeepEntitlements.hiveIdsBeyondLimit(ids, Int.MAX_VALUE).isEmpty())
     }
 
     @Test
