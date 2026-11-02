@@ -115,7 +115,13 @@ fun WorkspaceManagementSection(
         !account.userId.isNullOrBlank() &&
         loadedWorkspaceAccountId == account.userId
 
-    val selectedWorkspaceReadOnly = selectedWorkspace?.id in readOnlyWorkspaceIds
+    val sharedWorkspaces = if (accountWorkspaceDataReady) {
+        workspaces.filterNot { it.is_personal }
+    } else {
+        emptyList()
+    }
+    val selectedWorkspace = sharedWorkspaces.firstOrNull { it.id == selectedWorkspaceId }
+    val selectedWorkspaceReadOnly = selectedWorkspace?.id?.let { it in readOnlyWorkspaceIds } == true
 
     LaunchedEffect(readOnlyWorkspaceIds, selectedWorkspace?.id) {
         if (selectedWorkspaceReadOnly) {
@@ -129,12 +135,6 @@ fun WorkspaceManagementSection(
             createdInvite = null
         }
     }
-    val sharedWorkspaces = if (accountWorkspaceDataReady) {
-        workspaces.filterNot { it.is_personal }
-    } else {
-        emptyList()
-    }
-    val selectedWorkspace = sharedWorkspaces.firstOrNull { it.id == selectedWorkspaceId }
     val canManage = !selectedWorkspaceReadOnly && (selectedWorkspace?.member_role == "owner" || selectedWorkspace?.member_role == "admin")
     val canAssignAdmin = !selectedWorkspaceReadOnly && selectedWorkspace?.member_role == "owner"
 
