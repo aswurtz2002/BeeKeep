@@ -70,18 +70,22 @@ fun WorkspaceScreen(
     var activeWorkspaceIsOwnedByUser by rememberSaveable { mutableStateOf(false) }
     var ownerAccessAccountId by rememberSaveable { mutableStateOf<String?>(null) }
     var ownerCommercialEntitlementActive by rememberSaveable { mutableStateOf<Boolean?>(null) }
+    var activeWorkspaceOwnerCommercialEntitlementActive by rememberSaveable { mutableStateOf<Boolean?>(null) }
     var ownerAccessCheckComplete by rememberSaveable { mutableStateOf(false) }
     var ownerAccessCheckMessage by rememberSaveable { mutableStateOf("") }
     var ownerAccessActionBusy by rememberSaveable { mutableStateOf(false) }
 
-    // Only a team owner is gated by their own Commercial entitlement. Teammates who
-    // joined someone else's workspace do not need to subscribe to Commercial themselves.
+    // A team stays available only while its owner has active Commercial. Invited
+    // members do not need their own Commercial plan, so check the owner through a
+    // membership-scoped server RPC for every selected team.
     suspend fun refreshOwnerWorkspaceAccess() {
+        val previousActiveWorkspaceOwnerEntitlement = activeWorkspaceOwnerCommercialEntitlementActive
         if (!account.signedIn) {
             hasOwnedTeamWorkspace = false
             ownedWorkspaceIds = emptySet()
             activeWorkspaceIsOwnedByUser = false
             ownerCommercialEntitlementActive = null
+            activeWorkspaceOwnerCommercialEntitlementActive = null
             ownerAccessCheckMessage = ""
             ownerAccessCheckComplete = true
             return
@@ -90,12 +94,16 @@ fun WorkspaceScreen(
         val workspaceResult = cloud.listWorkspaces()
         if (!workspaceResult.isSuccess) {
             ownerAccessCheckMessage = workspaceResult.error
-                ?: "Couldn't verify workspace ownership. Check your connection and retry."
-            // Never drop a previously read-only decision because a refresh failed.
-            // On a first load, use only the account's cached trusted plan as fallback.
-            if (ownerCommercialEntitlementActive == null) {
-                ownerCommercialEntitlementActive = currentPlan == BeeKeepPlan.COMMERCIAL
-            }
+                ?: "Couldn't verify workspace access. Check your connection and retry."
+            // Reuse the account-scoped ownership list only for an already known team owner.
+            // Never reuse a previous workspace owner's entitlement for an invited member.
+            activeWorkspaceIsOwnedByUser = activeWorkspaceId?.let { it in ownedWorkspaceIds } == true
+            activeWorkspaceOwnerCommercialEntitlementActive =
+                if (hasActiveTeam && activeWorkspaceIsOwnedByUser) {
+                    ownerCommercialEntitlementActive ?: (currentPlan == BeeKeepPlan.COMMERCIAL)
+                } else {
+                    null
+                }
             ownerAccessCheckComplete = true
             return
         }
@@ -104,27 +112,57 @@ fun WorkspaceScreen(
         ownedWorkspaceIds = workspaces.filter { !it.is_personal && it.member_role == "owner" }
             .map { it.id }.toSet()
         hasOwnedTeamWorkspace = ownedWorkspaceIds.isNotEmpty()
-        activeWorkspaceIsOwnedByUser = activeWorkspaceId?.let { it in ownedWorkspaceIds } == true
-        if (!hasOwnedTeamWorkspace) {
-            ownerCommercialEntitlementActive = null
-            ownerAccessCheckMessage = ""
-            ownerAccessCheckComplete = true
-            return
+        activeWorkspaceIsOwnedByUser = workspaces.any {
+            it.id == activeWorkspaceId && !it.is_personal && it.member_role == "owner"
         }
 
-        // The owner entitlement applies to every workspace this account owns, even
-        // when the currently active workspace belongs to someone else.
-        val entitlement = cloud.myActiveCommercialEntitlement()
-        if (entitlement.isSuccess) {
-            ownerCommercialEntitlementActive = entitlement.value == true
-            ownerAccessCheckMessage = if (entitlement.value == true) "" else
-                "The server reports that this account has no active Commercial entitlement."
+        if (hasOwnedTeamWorkspace) {
+            val ownEntitlement = cloud.myActiveCommercialEntitlement()
+            if (ownEntitlement.isSuccess) {
+                ownerCommercialEntitlementActive = ownEntitlement.value == true
+            } else if (ownerCommercialEntitlementActive == null) {
+                ownerCommercialEntitlementActive = currentPlan == BeeKeepPlan.COMMERCIAL
+            }
         } else {
-            // Use only the signed-in account's cached server-verified plan while offline.
-            // If no verified Commercial plan is cached, fail closed to read-only.
-            ownerCommercialEntitlementActive = currentPlan == BeeKeepPlan.COMMERCIAL
-            ownerAccessCheckMessage = entitlement.error
-                ?: "Couldn't verify Commercial access. Check your connection and retry."
+            ownerCommercialEntitlementActive = null
+        }
+
+        val activeTeam = workspaces.firstOrNull {
+            it.id == activeWorkspaceId && !it.is_personal
+        }
+        if (activeTeam == null) {
+            activeWorkspaceOwnerCommercialEntitlementActive = null
+            ownerAccessCheckMessage = ""
+        } else if (activeTeam.member_role == "owner") {
+            activeWorkspaceOwnerCommercialEntitlementActive = ownerCommercialEntitlementActive
+            ownerAccessCheckMessage = if (ownerCommercialEntitlementActive == false) {
+                "Your Commercial subscription is inactive."
+            } else ""
+        } else {
+            val ownerEntitlement = cloud.workspaceOwnerCommercialEntitlement(activeTeam.id)
+            if (ownerEntitlement.isSuccess) {
+                activeWorkspaceOwnerCommercialEntitlementActive = ownerEntitlement.value == true
+                ownerAccessCheckMessage = if (ownerEntitlement.value == true) "" else
+                    "The workspace owner's Commercial subscription is inactive."
+            } else {
+                activeWorkspaceOwnerCommercialEntitlementActive = null
+                ownerAccessCheckMessage = ownerEntitlement.error
+                    ?: "Couldn't verify the workspace owner's Commercial subscription. Check your connection and retry."
+            }
+        }
+
+        // When the selected team's owner status changes (or cannot be verified),
+        // re-activate the same workspace so SupabaseGateway immediately updates the
+        // local Room write gate for owners and invited members alike.
+        if (activeTeam != null &&
+            (previousActiveWorkspaceOwnerEntitlement != activeWorkspaceOwnerCommercialEntitlementActive ||
+                activeWorkspaceOwnerCommercialEntitlementActive == null)
+        ) {
+            val activation = cloud.activateWorkspace(activeTeam.id)
+            if (!activation.isSuccess && ownerAccessCheckMessage.isBlank()) {
+                ownerAccessCheckMessage = activation.error
+                    ?: "The workspace access state could not be refreshed. Try again."
+            }
         }
         ownerAccessCheckComplete = true
     }
@@ -137,33 +175,34 @@ fun WorkspaceScreen(
             ownedWorkspaceIds = emptySet()
             activeWorkspaceIsOwnedByUser = false
             ownerCommercialEntitlementActive = null
+            activeWorkspaceOwnerCommercialEntitlementActive = null
             ownerAccessCheckMessage = ""
         }
         ownerAccessCheckComplete = false
         refreshOwnerWorkspaceAccess()
     }
-    androidx.compose.runtime.LaunchedEffect(account.signedIn, hasOwnedTeamWorkspace) {
-        if (account.signedIn && hasOwnedTeamWorkspace) {
+    androidx.compose.runtime.LaunchedEffect(account.signedIn, hasOwnedTeamWorkspace, activeWorkspaceId) {
+        if (account.signedIn && (hasOwnedTeamWorkspace || hasActiveTeam)) {
             while (true) {
                 delay(60_000)
-                val entitlement = cloud.myActiveCommercialEntitlement()
-                // Refresh periodically while the app stays open so expiry takes effect
-                // without deleting or resetting the selected team's local database.
-                if (entitlement.isSuccess) {
-                    ownerCommercialEntitlementActive = entitlement.value == true
-                    ownerAccessCheckMessage = if (entitlement.value == true) "" else
-                        "The server reports that this account has no active Commercial entitlement."
-                }
+                // Keep the selected team's lock state current while the app remains open.
+                refreshOwnerWorkspaceAccess()
             }
         }
     }
     val readOnlyOwnedWorkspaceIds: Set<String> = if (ownerCommercialEntitlementActive == false) ownedWorkspaceIds.toSet() else emptySet()
 
-    val workspaceAccessPaused = account.signedIn &&
+    val workspaceAccessLocked = account.signedIn &&
+        hasActiveTeam &&
         ownerAccessAccountId == account.userId &&
         ownerAccessCheckComplete &&
-        activeWorkspaceIsOwnedByUser &&
-        ownerCommercialEntitlementActive == false
+        activeWorkspaceOwnerCommercialEntitlementActive == false
+
+    val workspaceAccessCouldNotBeVerified = account.signedIn &&
+        hasActiveTeam &&
+        ownerAccessAccountId == account.userId &&
+        ownerAccessCheckComplete &&
+        activeWorkspaceOwnerCommercialEntitlementActive == null
 
     Column(
         modifier = Modifier
@@ -187,44 +226,73 @@ fun WorkspaceScreen(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
-        } else if (workspaceAccessPaused) {
+        } else if (workspaceAccessLocked || workspaceAccessCouldNotBeVerified) {
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(24.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
             ) {
                 Column(
-                    modifier = Modifier.fillMaxWidth().padding(18.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                    modifier = Modifier.fillMaxWidth().padding(20.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
                         Icon(
                             imageVector = Icons.Rounded.Lock,
                             contentDescription = null,
                             tint = MaterialTheme.colorScheme.error,
-                            modifier = Modifier.size(28.dp)
+                            modifier = Modifier.size(32.dp)
                         )
                         Column(
-                            modifier = Modifier.weight(1f).padding(start = 10.dp),
-                            verticalArrangement = Arrangement.spacedBy(2.dp)
+                            modifier = Modifier.weight(1f),
+                            verticalArrangement = Arrangement.spacedBy(3.dp)
                         ) {
-                            Text("Workspace access paused", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.ExtraBold)
-                            Text("An active Commercial entitlement is required for the owner of a team workspace.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(
+                                if (workspaceAccessLocked) "Workspace locked" else "Workspace access unavailable",
+                                style = MaterialTheme.typography.titleLarge,
+                                fontWeight = FontWeight.ExtraBold
+                            )
+                            Text(
+                                if (workspaceAccessLocked && activeWorkspaceIsOwnedByUser) {
+                                    "Your Commercial subscription has expired."
+                                } else if (workspaceAccessLocked) {
+                                    "The workspace owner's Commercial subscription is inactive."
+                                } else {
+                                    "BeeKeep couldn't verify the workspace owner's Commercial subscription."
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
                         }
                     }
                     Text(
-                        "Your team's hives, apiaries and history remain saved and available to view and export. BeeKeep will not delete or reset records because a plan expired. New edits and workspace management are paused, and queued edits stay on this device until Commercial is active again.",
+                        when {
+                            workspaceAccessCouldNotBeVerified ->
+                                "This workspace stays locked until BeeKeep can verify its access. Check your connection and try again. Your team records have not been deleted."
+                            activeWorkspaceIsOwnedByUser ->
+                                "Renew Commercial to unlock this workspace. Your hives, apiaries and history are preserved, and queued edits stay on this device until access is restored."
+                            else ->
+                                "Ask the workspace owner to renew Commercial. Team access will return when the owner's subscription is active again. Your team records remain saved."
+                        },
                         style = MaterialTheme.typography.bodyMedium
                     )
-                    Button(
-                        onClick = onUpgrade,
-                        modifier = Modifier.fillMaxWidth(),
-                        enabled = !ownerAccessActionBusy
-                    ) { Text("RENEW COMMERCIAL") }
+                    if (workspaceAccessLocked && activeWorkspaceIsOwnedByUser) {
+                        Button(
+                            onClick = onUpgrade,
+                            modifier = Modifier.fillMaxWidth(),
+                            enabled = !ownerAccessActionBusy
+                        ) { Text("UPGRADE TO COMMERCIAL") }
+                    }
                     OutlinedButton(
                         onClick = {
                             scope.launch {
                                 ownerAccessActionBusy = true
+                                ownerAccessCheckComplete = false
                                 refreshOwnerWorkspaceAccess()
                                 ownerAccessActionBusy = false
                             }
@@ -232,38 +300,28 @@ fun WorkspaceScreen(
                         modifier = Modifier.fillMaxWidth(),
                         enabled = !ownerAccessActionBusy
                     ) { Text(if (ownerAccessActionBusy) "CHECKING…" else "CHECK ACCESS AGAIN") }
-                    if (hasActiveTeam) {
-                        OutlinedButton(
-                            onClick = {
-                                scope.launch {
-                                    ownerAccessActionBusy = true
-                                    val result = cloud.activateWorkspace(null)
-                                    ownerAccessCheckMessage = result.error
-                                        ?: "Switched to your personal data. Your team data remains saved."
-                                    ownerAccessActionBusy = false
-                                }
-                            },
-                            modifier = Modifier.fillMaxWidth(),
-                            enabled = !ownerAccessActionBusy
-                        ) { Text("SWITCH TO PERSONAL DATA") }
-                    }
-                    if (ownerAccessCheckMessage.isNotBlank()) {
-                        Text(ownerAccessCheckMessage, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    OutlinedButton(
+                        onClick = {
+                            scope.launch {
+                                ownerAccessActionBusy = true
+                                val result = cloud.activateWorkspace(null)
+                                ownerAccessCheckMessage = result.error
+                                    ?: "Switched to your personal data. Your team data remains saved."
+                                ownerAccessActionBusy = false
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        enabled = !ownerAccessActionBusy
+                    ) { Text("SWITCH TO PERSONAL DATA") }
+                    if (ownerAccessCheckMessage.isNotBlank() && workspaceAccessCouldNotBeVerified) {
+                        Text(
+                            ownerAccessCheckMessage,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error
+                        )
                     }
                 }
             }
-            // The owned team remains selectable and browsable. Mutating controls are
-            // disabled by WorkspaceManagementSection and the active Room database is
-            // separately marked read-only by SupabaseGateway.
-            WorkspaceCloudSyncSection(cloud = cloud)
-            WorkspaceManagementSection(
-                cloud = cloud,
-                activity = activity,
-                currentPlan = currentPlan,
-                readOnlyWorkspaceIds = readOnlyOwnedWorkspaceIds,
-                onUpgrade = onUpgrade,
-                onWorkspaceMembershipChanged = onWorkspaceMembershipChanged
-            )
         } else {
             Card(
                 modifier = Modifier.fillMaxWidth(),

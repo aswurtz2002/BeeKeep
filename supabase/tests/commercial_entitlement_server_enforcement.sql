@@ -54,6 +54,19 @@ insert into commercial_entitlement_test_context(key, value)
 select 'workspace_id', id::text
 from public.beekeep_create_workspace('Commercial entitlement regression');
 
+do $owner_workspace_status$
+declare active_value boolean;
+begin
+    select active into active_value
+      from public.beekeep_workspace_owner_commercial_entitlement(
+          (select value::uuid from commercial_entitlement_test_context where key = 'workspace_id')
+      );
+    if active_value is distinct from true then
+        raise exception 'The Commercial workspace owner should see an active workspace entitlement';
+    end if;
+end;
+$owner_workspace_status$;
+
 insert into commercial_entitlement_test_context(key, value)
 select 'admin_invitation_token', invite_token
 from public.beekeep_create_workspace_invitation(
@@ -74,6 +87,19 @@ select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-000000000082
 select * from public.beekeep_accept_workspace_invitation(
     (select value from commercial_entitlement_test_context where key = 'admin_invitation_token')
 );
+
+do $invited_member_workspace_status$
+declare active_value boolean;
+begin
+    select active into active_value
+      from public.beekeep_workspace_owner_commercial_entitlement(
+          (select value::uuid from commercial_entitlement_test_context where key = 'workspace_id')
+      );
+    if active_value is distinct from true then
+        raise exception 'An invited member should see the active Commercial status of the workspace owner';
+    end if;
+end;
+$invited_member_workspace_status$;
 
 -- An invited admin can collaborate while the owner is Commercial.
 select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-000000000081', false);
@@ -145,6 +171,21 @@ update auth.users
  where id = '00000000-0000-0000-0000-000000000081';
 
 set role authenticated;
+select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-000000000082', false);
+
+do $downgraded_workspace_status$
+declare active_value boolean;
+begin
+    select active into active_value
+      from public.beekeep_workspace_owner_commercial_entitlement(
+          (select value::uuid from commercial_entitlement_test_context where key = 'workspace_id')
+      );
+    if active_value is distinct from false then
+        raise exception 'Existing invited members must see the workspace as locked after owner downgrade';
+    end if;
+end;
+$downgraded_workspace_status$;
+
 select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-000000000083', false);
 
 -- The pending invitation must not grant membership after the owner downgrades.

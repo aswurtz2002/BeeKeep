@@ -18,9 +18,11 @@ class WorkspaceAccessPolicyTest {
     }
 
     @Test
-    fun invitedAdminsAndMembersDoNotNeedTheirOwnCommercialPlan() {
-        assertFalse(WorkspaceAccessPolicy.isReadOnly("admin", ownerCommercialEntitlementActive = false))
-        assertFalse(WorkspaceAccessPolicy.isReadOnly("member", ownerCommercialEntitlementActive = false))
+    fun invitedAdminsAndMembersAreLockedWhenWorkspaceOwnerLosesCommercial() {
+        assertFalse(WorkspaceAccessPolicy.isReadOnly("admin", ownerCommercialEntitlementActive = true))
+        assertFalse(WorkspaceAccessPolicy.isReadOnly("member", ownerCommercialEntitlementActive = true))
+        assertTrue(WorkspaceAccessPolicy.isReadOnly("admin", ownerCommercialEntitlementActive = false))
+        assertTrue(WorkspaceAccessPolicy.isReadOnly("member", ownerCommercialEntitlementActive = false))
     }
 
     @Test

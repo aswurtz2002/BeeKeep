@@ -2476,7 +2476,6 @@ fun BeeKeepApp(
                     screen = Screen.PURCHASES
                 },
                 currentPlan = purchasePlan,
-                hiveLimitOverride = cloudHiveLimitOverride,
                 deadCount = deadHives.size,
                 onOpenSupportAdmin = { screen = Screen.SUPPORT_ADMIN },
                 activity = activity,
@@ -3415,7 +3414,6 @@ private fun MoreScreen(
     onUpgrade: () -> Unit,
     onOpenSupportAdmin: () -> Unit,
     currentPlan: BeeKeepPlan,
-    hiveLimitOverride: Int?,
     deadCount: Int,
     activity: ComponentActivity,
     cloud: SupabaseGateway
@@ -3520,17 +3518,6 @@ private fun MoreScreen(
                         fontWeight = FontWeight.ExtraBold,
                         style = MaterialTheme.typography.titleMedium,
                         color = Color(0xFF92400E)
-                    )
-                    Text(
-                        if (currentPlan == BeeKeepPlan.HOBBYIST) {
-                            "Hobbyist: 15 hives / 3 apiaries • Commercial: 10,000 hives / 1,000 apiaries"
-                        } else {
-                            val hives = String.format(java.util.Locale.CANADA, "%,d", BeeKeepEntitlements.hiveLimit(currentPlan, hiveLimitOverride))
-                            val apiaries = String.format(java.util.Locale.CANADA, "%,d", BeeKeepEntitlements.apiaryLimit(currentPlan))
-                            "$hives hive limit • $apiaries apiary limit"
-                        },
-                        color = Color(0xFF78350F),
-                        style = MaterialTheme.typography.bodySmall
                     )
                 }
                 Icon(Icons.Rounded.ChevronRight, contentDescription = "Open BeeKeep plans", tint = Color(0xFFB45309), modifier = Modifier.size(28.dp))
