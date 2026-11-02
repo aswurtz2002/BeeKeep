@@ -22,7 +22,6 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import org.json.JSONArray
-import java.util.Locale
 import kotlin.math.roundToInt
 
 @OptIn(ExperimentalCoroutinesApi::class)
