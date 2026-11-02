@@ -493,10 +493,10 @@ fun BeeKeepApp(
     var purchasePlanName by rememberSaveable {
         mutableStateOf(BeeKeepEntitlements.currentPlan(context).name)
     }
-    val localPurchasePlan = runCatching { BeeKeepPlan.valueOf(purchasePlanName) }.getOrDefault(BeeKeepPlan.FREE)
+    val localPurchasePlan = BeeKeepPlan.fromStoredValue(purchasePlanName)
     // Release quotas follow the authenticated server entitlement rather than defaulting every
     // paid customer to Free. Debug builds retain the local purchase simulator.
-    val purchasePlan = if (BuildConfig.DEBUG) localPurchasePlan else serverVerifiedPlan ?: BeeKeepPlan.FREE
+    val purchasePlan = if (BuildConfig.DEBUG) localPurchasePlan else serverVerifiedPlan ?: BeeKeepPlan.HOBBYIST
     val effectiveHiveLimit = BeeKeepEntitlements.hiveLimit(purchasePlan, cloudHiveLimitOverride)
     var lockedHiveIds by remember { mutableStateOf(BeeKeepEntitlements.lockedHiveIds(context)) }
     var lockedHivePromptVisible by rememberSaveable { mutableStateOf(false) }
@@ -561,21 +561,20 @@ fun BeeKeepApp(
     var hasJoinedTeamWorkspace by rememberSaveable {
         mutableStateOf(autoVoicePrefs.getString("selected_team_workspace_id", "").orEmpty().isNotBlank())
     }
-    val isUltimatePlan = purchasePlan == BeeKeepPlan.ULTIMATE ||
-        purchasePlan == BeeKeepPlan.ULTIMATE_YEARLY
-    var hasServerUltimateEntitlement by rememberSaveable { mutableStateOf(false) }
+    val isCommercialPlan = purchasePlan == BeeKeepPlan.COMMERCIAL
+    var hasServerCommercialEntitlement by rememberSaveable { mutableStateOf(false) }
     androidx.compose.runtime.LaunchedEffect(account.signedIn, purchasePlan) {
         if (!account.signedIn) {
-            hasServerUltimateEntitlement = false
+            hasServerCommercialEntitlement = false
         } else {
-            val entitlement = cloud.myActiveUltimateEntitlement()
+            val entitlement = cloud.myActiveCommercialEntitlement()
             // Preserve a previously verified entitlement during transient network failures.
             if (entitlement.isSuccess) {
-                hasServerUltimateEntitlement = entitlement.value == true
+                hasServerCommercialEntitlement = entitlement.value == true
             }
         }
     }
-    val hasUltimateWorkspaceAccess = isUltimatePlan || hasServerUltimateEntitlement
+    val hasCommercialWorkspaceAccess = isCommercialPlan || hasServerCommercialEntitlement
     var workspaceMembershipResolvedForUser by rememberSaveable { mutableStateOf(false) }
 
     // Discover team access from the signed-in account on every device. A saved local workspace
@@ -602,7 +601,7 @@ fun BeeKeepApp(
         }
     }
 
-    val showWorkspaceDestination = hasUltimateWorkspaceAccess ||
+    val showWorkspaceDestination = hasCommercialWorkspaceAccess ||
         (account.signedIn && (hasJoinedTeamWorkspace || !workspaceMembershipResolvedForUser)) ||
         !activeWorkspaceId.isNullOrBlank()
     androidx.compose.runtime.LaunchedEffect(activeWorkspaceId) {
@@ -641,8 +640,8 @@ fun BeeKeepApp(
 
     // Keep a Pro session's expiry live while BeeKeep stays open, not only on app resume.
     androidx.compose.runtime.LaunchedEffect(purchasePlanName) {
-        if (purchasePlan.isProSubscription) {
-            val expiresAt = BeeKeepEntitlements.debugProExpiresAt(context)
+        if (purchasePlan.isPaidSubscription) {
+            val expiresAt = BeeKeepEntitlements.debugCommercialExpiresAt(context)
             if (expiresAt != null) {
                 val remainingMillis = expiresAt - System.currentTimeMillis()
                 if (remainingMillis > 0L) kotlinx.coroutines.delay(remainingMillis)
@@ -1535,37 +1534,33 @@ fun BeeKeepApp(
                 if (BuildConfig.DEBUG) {
                     scope.launch {
                         val previousPlan = BeeKeepEntitlements.currentPlan(context)
-                        val hadLockedHives = lockedHiveIds.isNotEmpty()
                         val serverSync = cloud.syncDebugPlanToStaging(plan)
 
                         BeeKeepEntitlements.setDebugPlan(context, plan)
                         purchasePlanName = plan.name
-                        lockedHiveIds = BeeKeepEntitlements.lockedHiveIds(context)
+                        lockedHiveIds = emptySet()
 
-                        if (plan != BeeKeepPlan.FREE) {
+                        if (plan != BeeKeepPlan.HOBBYIST) {
                             screen = purchaseSuccessScreen
                         }
 
-                        val term = if (
-                            plan == BeeKeepPlan.PRO_YEARLY || plan == BeeKeepPlan.ULTIMATE_YEARLY
-                        ) "year" else "month"
                         val localMessage = when {
-                            plan == BeeKeepPlan.FREE && previousPlan.isProSubscription ->
-                                "Debug test plan reset to Free. Subscription-created hives stay locked until a paid plan is activated again."
-                            plan == BeeKeepPlan.FREE ->
-                                "Debug test plan reset to Free."
-                            previousPlan == BeeKeepPlan.FREE && hadLockedHives ->
-                                "BeeKeep ${plan.displayName} activated. Previously locked hives are unlocked for another $term."
+                            plan == BeeKeepPlan.HOBBYIST && previousPlan.isPaidSubscription ->
+                                "Debug plan reset to Hobbyist. All existing hives and apiaries remain visible and editable."
+                            plan == BeeKeepPlan.HOBBYIST ->
+                                "Debug test plan set to Hobbyist."
+                            previousPlan == BeeKeepPlan.HOBBYIST ->
+                                "BeeKeep Commercial activated. Existing records were preserved."
                             else -> "Debug test plan activated: BeeKeep ${plan.displayName}."
                         }
                         val fullMessage = if (serverSync.isSuccess) {
-                            if (plan == BeeKeepPlan.ULTIMATE || plan == BeeKeepPlan.ULTIMATE_YEARLY) {
-                                "$localMessage Staging workspace entitlement synced."
+                            if (plan == BeeKeepPlan.COMMERCIAL) {
+                                "$localMessage Staging Commercial entitlement synced."
                             } else {
                                 "$localMessage Staging cloud entitlement updated."
                             }
                         } else {
-                            "$localMessage Staging workspace entitlement was NOT updated: ${serverSync.error}. This device-only simulation will not unlock team workspace creation."
+                            "$localMessage Staging entitlement was NOT updated: ${serverSync.error}. This device-only simulation does not change the server plan."
                         }
                         snackbarHostState.showSnackbar(fullMessage)
                     }
@@ -2339,7 +2334,7 @@ fun BeeKeepApp(
                 activity = activity,
                 cloud = cloud,
                 currentPlan = purchasePlan,
-                hasUltimateAccess = hasUltimateWorkspaceAccess,
+                hasUltimateAccess = hasCommercialWorkspaceAccess,
                 activeWorkspaceId = activeWorkspaceId,
                 hiveCount = hives.size,
                 apiaryCount = apiaries.size,
@@ -2352,7 +2347,7 @@ fun BeeKeepApp(
                     hasJoinedTeamWorkspace = joined
                     if (!joined && activeWorkspaceId.isNullOrBlank()) {
                         autoVoicePrefs.edit { remove("selected_team_workspace_id") }
-                        if (!hasUltimateWorkspaceAccess && screen == Screen.WORKSPACE) {
+                        if (!hasCommercialWorkspaceAccess && screen == Screen.WORKSPACE) {
                             screen = Screen.MORE
                         }
                     }
@@ -3382,20 +3377,20 @@ private fun MoreScreen(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(24.dp),
             colors = CardDefaults.cardColors(
-                containerColor = if (currentPlan == BeeKeepPlan.FREE) Color(0xFFFFF7E6) else MaterialTheme.colorScheme.surface
+                containerColor = if (currentPlan == BeeKeepPlan.HOBBYIST) Color(0xFFFFF7E6) else MaterialTheme.colorScheme.surface
             ),
             border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFD97706))
         ) {
             Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                     Text(
-                        if (currentPlan == BeeKeepPlan.FREE) "Upgrade BeeKeep" else "BeeKeep ${currentPlan.displayName} active",
+                        if (currentPlan == BeeKeepPlan.HOBBYIST) "Upgrade BeeKeep" else "BeeKeep ${currentPlan.displayName} active",
                         fontWeight = FontWeight.ExtraBold,
                         style = MaterialTheme.typography.titleMedium,
                         color = Color(0xFF92400E)
                     )
                     Text(
-                        if (currentPlan == BeeKeepPlan.FREE) {
+                        if (currentPlan == BeeKeepPlan.HOBBYIST) {
                             "Plans from $2.99 CAD/month • Ultimate: 10,000 hive limit"
                         } else {
                             val hives = String.format(java.util.Locale.CANADA, "%,d", BeeKeepEntitlements.hiveLimit(currentPlan, hiveLimitOverride))
