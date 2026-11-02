@@ -157,6 +157,25 @@ class SupabaseGateway(
         }
     }
 
+    /**
+     * The owner of a shared workspace must have an active Commercial entitlement.
+     * The decision comes from the trusted SECURITY DEFINER RPC. Offline, keep only
+     * the signed-in account's last server-verified plan as a temporary fallback.
+     */
+    private suspend fun hasActiveCommercialEntitlementForWorkspaceOwner(
+        supabase: SupabaseClient
+    ): Boolean {
+        return try {
+            supabase.postgrest.rpc("beekeep_my_active_ultimate_entitlement")
+                .decodeList<BeeKeepUltimateEntitlement>()
+                .firstOrNull()?.active == true
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Throwable) {
+            BeeKeepEntitlements.currentPlan(appContext) == BeeKeepPlan.COMMERCIAL
+        }
+    }
+
     private suspend fun restoreWorkspaceForAccount(supabase: SupabaseClient, userId: String) {
         val prefs = appContext.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
         val workspaceId = prefs.getString("active_team_workspace_id", "")
@@ -213,9 +232,17 @@ class SupabaseGateway(
             }
         }
 
-        val readOnly = if (membershipLookupCompleted) {
-            memberWorkspace?.member_role == "viewer"
+        val memberRole = memberWorkspace?.member_role
+        val ownerCommercialActive = if (membershipLookupCompleted && memberRole == "owner") {
+            hasActiveCommercialEntitlementForWorkspaceOwner(supabase)
         } else {
+            true
+        }
+        val readOnly = if (membershipLookupCompleted) {
+            memberRole == "viewer" || (memberRole == "owner" && !ownerCommercialActive)
+        } else {
+            // During an outage preserve the role-based read-only state already recorded
+            // for this account; the owner entitlement is rechecked as soon as online.
             prefs.getBoolean("active_team_workspace_read_only", false)
         }
         repository.switchWorkspace(
@@ -1131,9 +1158,15 @@ class SupabaseGateway(
                         .firstOrNull { it.id == cleanId && !it.is_personal }
                         ?: error("You no longer have access to that team workspace.")
                 }
+                val ownerCommercialActive = if (workspace?.member_role == "owner") {
+                    hasActiveCommercialEntitlementForWorkspaceOwner(supabase)
+                } else {
+                    true
+                }
                 repository.switchWorkspace(
                     workspaceId = cleanId,
-                    readOnly = workspace?.member_role == "viewer",
+                    readOnly = workspace?.member_role == "viewer" ||
+                        (workspace?.member_role == "owner" && !ownerCommercialActive),
                     ownerUserId = userId
                 )
                 val syncResult = syncNowUnlocked()
