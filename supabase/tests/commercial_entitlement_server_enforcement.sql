@@ -127,7 +127,8 @@ begin
       );
     if quota_row.active is distinct from true
        or quota_row.effective_hive_limit <> 11000
-       or quota_row.effective_apiary_limit <> 1000 then
+       or quota_row.effective_apiary_limit <> 1000
+       or quota_row.member_role <> 'admin' then
         raise exception 'An invited Hobbyist must receive the workspace quota of 11,000 hives and 1,000 apiaries.';
     end if;
 end;
