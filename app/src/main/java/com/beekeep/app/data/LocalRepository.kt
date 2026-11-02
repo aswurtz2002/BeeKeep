@@ -31,15 +31,27 @@ class LocalHiveRepository(context: Context) {
     private val prefs = appContext.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
     private val inspectionNoteDraftPrefs = appContext.getSharedPreferences(INSPECTION_NOTE_DRAFTS, Context.MODE_PRIVATE)
     private val inspectionFormDraftPrefs = appContext.getSharedPreferences(InspectionFormDraftStore.PREFERENCES_NAME, Context.MODE_PRIVATE)
-    // Start on private/local data. The cloud gateway restores a cached team only after
-    // checking the signed-in account against the account that last selected that workspace.
-    private val _activeWorkspaceId = MutableStateFlow<String?>(null)
+
+    // Restore the last account-bound team database synchronously. The cloud gateway validates
+    // the saved owner against the restored Supabase session before BeeKeep displays any records.
+    // This avoids briefly rendering personal apiaries while an already-selected team is restored.
+    private val initialActiveWorkspaceId = prefs.getString("active_team_workspace_id", "")
+        .orEmpty().trim().takeIf { workspaceId ->
+            workspaceId.isNotBlank() &&
+                prefs.getString("active_team_workspace_user_id", null)?.isNotBlank() == true
+        }
+    private val initialActiveWorkspaceReadOnly = initialActiveWorkspaceId != null &&
+        prefs.getBoolean("active_team_workspace_read_only", true)
+    private val _activeWorkspaceId = MutableStateFlow(initialActiveWorkspaceId)
     val activeWorkspaceId: StateFlow<String?> = _activeWorkspaceId.asStateFlow()
-    private val _activeWorkspaceReadOnly = MutableStateFlow(false)
+    private val _activeWorkspaceReadOnly = MutableStateFlow(initialActiveWorkspaceReadOnly)
     val activeWorkspaceReadOnly: StateFlow<Boolean> = _activeWorkspaceReadOnly.asStateFlow()
     private val _readOnlyWriteAttempt = MutableStateFlow(0L)
     val readOnlyWriteAttempt: StateFlow<Long> = _readOnlyWriteAttempt.asStateFlow()
-    private val _database = MutableStateFlow(BeeKeepRoomDb.get(appContext))
+    private val _database = MutableStateFlow(
+        initialActiveWorkspaceId?.let { BeeKeepRoomDb.getForWorkspace(appContext, it) }
+            ?: BeeKeepRoomDb.get(appContext)
+    )
     private val db: BeeKeepRoomDb get() = _database.value
     @Volatile
     private var activeQuotaLimits = BeeKeepQuotaLimits.forPlan(
