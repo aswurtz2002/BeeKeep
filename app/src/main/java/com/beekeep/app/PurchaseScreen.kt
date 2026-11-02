@@ -80,14 +80,11 @@ internal fun PurchaseScreen(
             billing = "always",
             description = "The default plan for every BeeKeep account.",
             features = listOf("15 hive limit", "3 apiary limit", "Cloud sync"),
-            current = currentPlan == BeeKeepPlan.HOBBYIST,
+            current = false,
             highlighted = false,
-            actionLabel = when (currentPlan) {
-                BeeKeepPlan.HOBBYIST -> "CURRENT PLAN"
-                BeeKeepPlan.COMMERCIAL -> "LOCKED WHILE COMMERCIAL ACTIVE"
-            },
+            actionLabel = null,
             actionEnabled = false,
-            onAction = { /* Hobbyist is the default tier, not a selectable downgrade. */ }
+            statusLabel = "ALWAYS ACTIVE"
         )
 
         PlanCard(
@@ -172,11 +169,12 @@ private fun PlanCard(
     current: Boolean,
     highlighted: Boolean,
     badgeText: String? = null,
-    actionLabel: String,
+    statusLabel: String? = null,
+    actionLabel: String?,
     actionEnabled: Boolean,
     billingCycle: CommercialBillingCycle? = null,
     onBillingCycleChange: ((CommercialBillingCycle) -> Unit)? = null,
-    onAction: () -> Unit
+    onAction: (() -> Unit)? = null
 ) {
     val borderColor = if (highlighted) Color(0xFFD97706) else MaterialTheme.colorScheme.outlineVariant
     Card(
@@ -224,8 +222,20 @@ private fun PlanCard(
                     Text(feature, modifier = Modifier.weight(1f), fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
                 }
             }
-            Button(onClick = onAction, modifier = Modifier.fillMaxWidth().height(52.dp), enabled = actionEnabled, shape = RoundedCornerShape(15.dp)) {
-                Text(actionLabel, fontWeight = FontWeight.ExtraBold)
+            if (actionLabel != null && onAction != null) {
+                Button(onClick = onAction, modifier = Modifier.fillMaxWidth().height(52.dp), enabled = actionEnabled, shape = RoundedCornerShape(15.dp)) {
+                    Text(actionLabel, fontWeight = FontWeight.ExtraBold)
+                }
+            }
+            if (statusLabel != null) {
+                Row(
+                    Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(Icons.Rounded.CheckCircle, contentDescription = null, tint = Color(0xFF15803D), modifier = Modifier.size(18.dp))
+                    Text(statusLabel, color = Color(0xFF15803D), style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.ExtraBold)
+                }
             }
             if (current) {
                 Text("This is your active plan.", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
