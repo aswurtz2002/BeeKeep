@@ -65,7 +65,7 @@ fun WorkspaceManagementSection(
     cloud: SupabaseGateway,
     activity: ComponentActivity,
     currentPlan: BeeKeepPlan,
-    readOnly: Boolean = false,
+    readOnlyWorkspaceId: String? = null,
     usernameRefreshKey: Int = 0,
     onUpgrade: () -> Unit,
     onWorkspaceMembershipChanged: (Boolean) -> Unit = {}
@@ -115,8 +115,10 @@ fun WorkspaceManagementSection(
         !account.userId.isNullOrBlank() &&
         loadedWorkspaceAccountId == account.userId
 
-    LaunchedEffect(readOnly) {
-        if (readOnly) {
+    val selectedWorkspaceReadOnly = selectedWorkspace?.id == readOnlyWorkspaceId
+
+    LaunchedEffect(readOnlyWorkspaceId, selectedWorkspace?.id) {
+        if (selectedWorkspaceReadOnly) {
             showCreateDialog = false
             showCopyPersonalData = false
             showDangerZone = false
@@ -133,7 +135,7 @@ fun WorkspaceManagementSection(
         emptyList()
     }
     val selectedWorkspace = sharedWorkspaces.firstOrNull { it.id == selectedWorkspaceId }
-    val canManage = !readOnly && (selectedWorkspace?.member_role == "owner" || selectedWorkspace?.member_role == "admin")
+    val canManage = !selectedWorkspaceReadOnly && (selectedWorkspace?.member_role == "owner" || selectedWorkspace?.member_role == "admin")
     val canAssignAdmin = !readOnly && selectedWorkspace?.member_role == "owner"
 
     suspend fun refreshWorkspacePeople(workspaceId: String) {
