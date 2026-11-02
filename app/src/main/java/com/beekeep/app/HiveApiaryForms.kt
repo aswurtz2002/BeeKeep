@@ -74,7 +74,7 @@ internal fun AddHiveScreen(
     defaultQueenStatus: String = "Laying",
     defaultStrength: Int = 3,
     hiveLimitPromptVisible: Boolean = false,
-    currentPlan: BeeKeepPlan = BeeKeepPlan.FREE,
+    currentPlan: BeeKeepPlan = BeeKeepPlan.HOBBYIST,
     onDismissHiveLimitPrompt: () -> Unit = {},
     onOpenUpgrade: () -> Unit = {},
     onBack: () -> Unit,
@@ -179,9 +179,9 @@ internal fun AddHiveScreen(
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(BeeKeepEntitlements.hiveLimitMessage(currentPlan))
-                    // Ultimate's primary limit message already contains the safety reassurance and support guidance.
-                    // Keep the extra explanation for lower plans only, so Ultimate doesn't repeat itself.
-                    if (currentPlan != BeeKeepPlan.ULTIMATE && currentPlan != BeeKeepPlan.ULTIMATE_YEARLY) {
+                    // Commercial's primary limit message already contains the safety reassurance and support guidance.
+                    // Keep the extra explanation for lower plans only, so Commercial doesn't repeat itself.
+                    if (currentPlan != BeeKeepPlan.COMMERCIAL) {
                         Text("Your existing hive records remain safe. Choose a plan with a higher limit to keep adding hives.")
                     }
                 }
@@ -191,7 +191,7 @@ internal fun AddHiveScreen(
                     onClick = onOpenUpgrade,
                     shape = RoundedCornerShape(14.dp)
                 ) {
-                    Text(if (currentPlan == BeeKeepPlan.ULTIMATE || currentPlan == BeeKeepPlan.ULTIMATE_YEARLY) "VIEW PLAN DETAILS" else "VIEW UPGRADE PLANS", fontWeight = FontWeight.ExtraBold)
+                    Text(if (currentPlan == BeeKeepPlan.COMMERCIAL) "VIEW PLAN DETAILS" else "VIEW UPGRADE PLANS", fontWeight = FontWeight.ExtraBold)
                 }
             },
             dismissButton = {
@@ -210,7 +210,7 @@ internal fun AddApiaryScreen(
     onBack: () -> Unit,
     onDelete: ((Long, (Boolean, String?) -> Unit) -> Unit)? = null,
     apiaryLimitPromptVisible: Boolean = false,
-    currentPlan: BeeKeepPlan = BeeKeepPlan.FREE,
+    currentPlan: BeeKeepPlan = BeeKeepPlan.HOBBYIST,
     onDismissApiaryLimitPrompt: () -> Unit = {},
     onOpenUpgrade: () -> Unit = {},
     onSave: (Long?, String, String, Double?, Double?, String, String) -> Unit
@@ -654,7 +654,7 @@ internal fun AddApiaryScreen(
             confirmButton = {
                 Button(onClick = onOpenUpgrade, shape = RoundedCornerShape(14.dp)) {
                     Text(
-                        if (currentPlan == BeeKeepPlan.ULTIMATE || currentPlan == BeeKeepPlan.ULTIMATE_YEARLY) "VIEW PLAN DETAILS" else "VIEW UPGRADE PLANS",
+                        if (currentPlan == BeeKeepPlan.COMMERCIAL) "VIEW PLAN DETAILS" else "VIEW UPGRADE PLANS",
                         fontWeight = FontWeight.ExtraBold
                     )
                 }

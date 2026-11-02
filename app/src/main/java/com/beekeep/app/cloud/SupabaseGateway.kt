@@ -129,6 +129,9 @@ class SupabaseGateway(
                 _verifiedPlan.value = null
                 verifiedPlanUserId = null
             } else {
+                // Load only this account's previously server-verified plan before trying the network.
+                // Release ViewModel creation checks use the same cached entitlement as the plan UI.
+                BeeKeepEntitlements.activateCloudHiveLimitOverride(appContext, userId)
                 refreshVerifiedPlanForUser(userId)
                 refreshHiveLimitOverrideForUser(userId)
                 restoreWorkspaceForAccount(supabase, userId)
@@ -146,6 +149,10 @@ class SupabaseGateway(
             // If session identity cannot be established, fail closed to private/local data.
             stopRealtime()
             repository.switchWorkspace(null)
+            BeeKeepEntitlements.activateCloudHiveLimitOverride(appContext, null)
+            _hiveLimitOverride.value = null
+            _verifiedPlan.value = null
+            verifiedPlanUserId = null
             _account.value = CloudAccountState(configured = true, signedIn = false, error = error.message)
         }
     }
@@ -228,20 +235,23 @@ class SupabaseGateway(
         if (cleanUserId.isEmpty()) return
         if (verifiedPlanUserId != cleanUserId) {
             verifiedPlanUserId = cleanUserId
-            _verifiedPlan.value = null
+            // Seed the UI from this account's last server-verified cache while the RPC refreshes.
+            _verifiedPlan.value = BeeKeepEntitlements.currentPlan(appContext)
         }
         val supabase = client ?: return
         try {
             val response = supabase.postgrest.rpc("beekeep_my_hive_entitlement")
                 .decodeList<BeeKeepServerEntitlement>()
                 .firstOrNull()
-            _verifiedPlan.value = response?.let {
+            val verifiedPlan = response?.let {
                 BeeKeepEntitlements.planFromServerEntitlement(
                     planCode = it.planCode,
                     baseHiveLimit = it.baseHiveLimit,
                     isActivePaidPlan = it.isActivePaidPlan
                 )
-            } ?: BeeKeepPlan.FREE
+            } ?: BeeKeepPlan.HOBBYIST
+            _verifiedPlan.value = verifiedPlan
+            BeeKeepEntitlements.updateCloudVerifiedPlan(appContext, cleanUserId, verifiedPlan)
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (_: Throwable) {
@@ -263,7 +273,7 @@ class SupabaseGateway(
                 .decodeList<BeeKeepHiveLimitOverride>()
                 .firstOrNull()
             val limit = response?.hive_limit_override?.takeIf {
-                it in BeeKeepEntitlements.PRO_HIVE_LIMIT..BeeKeepEntitlements.MAX_CUSTOM_HIVE_LIMIT
+                it in BeeKeepEntitlements.COMMERCIAL_HIVE_LIMIT..BeeKeepEntitlements.MAX_CUSTOM_HIVE_LIMIT
             }
             BeeKeepEntitlements.updateCloudHiveLimitOverride(appContext, userId, limit)
             _hiveLimitOverride.value = limit
@@ -1373,15 +1383,20 @@ class SupabaseGateway(
         }
 
     /**
-     * Reads the signed-in account's server-managed Ultimate entitlement. The database derives
+     * Reads the signed-in account's server-managed Commercial entitlement. The database derives
      * this from trusted auth app metadata; local plan simulation is never an authorization source.
      */
-    suspend fun myActiveUltimateEntitlement(): WorkspaceOperationResult<Boolean> =
+    suspend fun myActiveCommercialEntitlement(): WorkspaceOperationResult<Boolean> =
         workspaceOperation {
+            // The RPC name is historical; it now authorizes the Commercial tier.
             client!!.postgrest.rpc("beekeep_my_active_ultimate_entitlement")
                 .decodeList<BeeKeepUltimateEntitlement>()
-                .firstOrNull()?.active ?: error("Ultimate entitlement was not returned")
+                .firstOrNull()?.active ?: error("Commercial entitlement was not returned")
         }
+
+    @Deprecated("Use myActiveCommercialEntitlement")
+    suspend fun myActiveUltimateEntitlement(): WorkspaceOperationResult<Boolean> =
+        myActiveCommercialEntitlement()
 
     /**
      * Debug purchase simulation is synced only to the isolated staging Edge Function.
@@ -1398,11 +1413,8 @@ class SupabaseGateway(
             return WorkspaceOperationResult(error = "Sign in to BeeKeep Cloud to sync the staging test entitlement.")
         }
         val serverPlan = when (plan) {
-            BeeKeepPlan.FREE -> "free"
-            BeeKeepPlan.PRO -> "pro_monthly"
-            BeeKeepPlan.PRO_YEARLY -> "pro_yearly"
-            BeeKeepPlan.ULTIMATE -> "ultimate_monthly"
-            BeeKeepPlan.ULTIMATE_YEARLY -> "ultimate_yearly"
+            BeeKeepPlan.HOBBYIST -> "hobbyist"
+            BeeKeepPlan.COMMERCIAL -> "commercial_monthly"
         }
         return try {
             val response = supabase.functions.invoke(

@@ -33,7 +33,6 @@ Deno.serve(async (req: Request) => {
     return respond(503, { success: false, error: "Supabase URL is not configured." });
   }
 
-  // Defense in depth: even if someone deploys this source elsewhere, it never grants there.
   if (hostname !== `${STAGING_PROJECT_REF}.supabase.co`) {
     return respond(404, { success: false, error: "This test endpoint is available only in BeeKeep-Staging." });
   }
@@ -60,19 +59,32 @@ Deno.serve(async (req: Request) => {
     return respond(400, { success: false, error: "Expected a JSON body." });
   }
   const plan = body.plan;
-  const durations: Record<string, number> = {
+  const planToStore: Record<string, string | null> = {
+    hobbyist: null,
+    free: null,
+    commercial: "ultimate_monthly",
+    commercial_monthly: "ultimate_monthly",
+    commercial_yearly: "ultimate_yearly",
+    ultimate_monthly: "ultimate_monthly",
+    ultimate_yearly: "ultimate_yearly",
+    pro_monthly: null,
+    pro_yearly: null,
+  };
+  const durationDays: Record<string, number> = {
+    hobbyist: 0,
     free: 0,
-    pro_monthly: 30,
-    pro_yearly: 365,
+    commercial: 30,
+    commercial_monthly: 30,
+    commercial_yearly: 365,
     ultimate_monthly: 30,
     ultimate_yearly: 365,
+    pro_monthly: 0,
+    pro_yearly: 0,
   };
-  if (typeof plan !== "string" || !(plan in durations)) {
+  if (typeof plan !== "string" || !Object.prototype.hasOwnProperty.call(planToStore, plan)) {
     return respond(400, { success: false, error: "Unknown debug plan." });
   }
 
-  // This elevated client exists only inside the isolated staging function. Service-role
-  // credentials never leave Supabase and user-provided metadata is never trusted.
   const admin = createClient(supabaseUrl, serviceRoleKey, {
     auth: { persistSession: false, autoRefreshToken: false },
   });
@@ -81,12 +93,13 @@ Deno.serve(async (req: Request) => {
     return respond(500, { success: false, error: "Could not load the staging account." });
   }
   const currentMetadata = currentUserResult.user.app_metadata ?? {};
-  const expiry = plan === "free"
+  const storedPlan = planToStore[plan];
+  const expiry = storedPlan === null
     ? null
-    : new Date(Date.now() + durations[plan] * 24 * 60 * 60 * 1000).toISOString();
+    : new Date(Date.now() + durationDays[plan] * 24 * 60 * 60 * 1000).toISOString();
   const updatedMetadata = {
     ...currentMetadata,
-    beekeep_plan: plan === "free" ? null : plan,
+    beekeep_plan: storedPlan,
     beekeep_subscription_expires_at: expiry,
   };
   const { error: updateError } = await admin.auth.admin.updateUserById(userData.user.id, {
@@ -96,9 +109,5 @@ Deno.serve(async (req: Request) => {
     return respond(500, { success: false, error: "Could not update the staging test entitlement." });
   }
 
-  return respond(200, {
-    success: true,
-    active: plan === "ultimate_monthly" || plan === "ultimate_yearly",
-    plan,
-  });
+  return respond(200, { success: true, active: storedPlan !== null, plan });
 });

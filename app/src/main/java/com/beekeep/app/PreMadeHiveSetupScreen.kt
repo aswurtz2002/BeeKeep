@@ -57,9 +57,9 @@ internal fun PreMadeHiveSetupScreen(
     existingApiaryNames: List<String> = emptyList(),
     existingHiveCount: Int = 0,
     addToExistingWorkspace: Boolean = false,
-    hiveLimit: Int = BeeKeepEntitlements.hiveLimit(BeeKeepPlan.FREE),
-    apiaryLimit: Int = BeeKeepEntitlements.apiaryLimit(BeeKeepPlan.FREE),
-    currentPlan: BeeKeepPlan = BeeKeepPlan.FREE,
+    hiveLimit: Int = BeeKeepEntitlements.hiveLimit(BeeKeepPlan.HOBBYIST),
+    apiaryLimit: Int = BeeKeepEntitlements.apiaryLimit(BeeKeepPlan.HOBBYIST),
+    currentPlan: BeeKeepPlan = BeeKeepPlan.HOBBYIST,
     onBack: () -> Unit,
     onUpgrade: () -> Unit = {},
     onComplete: (createdApiaries: Int, createdHives: Int) -> Unit
@@ -388,7 +388,7 @@ internal fun PreMadeHiveSetupScreen(
                         BeeKeepEntitlements.isApiaryLimitError(message)
                     ) {
                         OutlinedButton(onClick = onUpgrade, modifier = Modifier.fillMaxWidth(), enabled = !isSaving) {
-                            Text(if (currentPlan == BeeKeepPlan.ULTIMATE || currentPlan == BeeKeepPlan.ULTIMATE_YEARLY) {
+                            Text(if (currentPlan == BeeKeepPlan.COMMERCIAL) {
                                 "VIEW PLAN DETAILS"
                             } else {
                                 "VIEW UPGRADE PLANS"
@@ -499,7 +499,7 @@ internal fun PreMadeHiveSetupScreen(
                         shape = RoundedCornerShape(14.dp)
                     ) {
                         Text(
-                            if (currentPlan == BeeKeepPlan.ULTIMATE || currentPlan == BeeKeepPlan.ULTIMATE_YEARLY) {
+                            if (currentPlan == BeeKeepPlan.COMMERCIAL) {
                                 "VIEW PLAN DETAILS"
                             } else {
                                 "VIEW UPGRADE PLANS"
@@ -542,7 +542,7 @@ internal fun PreMadeHiveSetupScreen(
                         shape = RoundedCornerShape(14.dp)
                     ) {
                         Text(
-                            if (currentPlan == BeeKeepPlan.ULTIMATE || currentPlan == BeeKeepPlan.ULTIMATE_YEARLY) {
+                            if (currentPlan == BeeKeepPlan.COMMERCIAL) {
                                 "VIEW PLAN DETAILS"
                             } else {
                                 "VIEW UPGRADE PLANS"

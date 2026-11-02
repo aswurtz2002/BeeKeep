@@ -6,14 +6,18 @@ import kotlinx.serialization.Serializable
 /**
  * Server-trusted entitlement for the currently signed-in user.
  * Values are derived from auth.users.raw_app_meta_data, never editable profile metadata.
+ * The wire field retains its historical name until the Supabase RPC migration is introduced.
  */
 @Serializable
 data class BeeKeepServerEntitlement(
     @SerialName("plan_code") val planCode: String = "free",
-    @SerialName("base_hive_limit") val baseHiveLimit: Int = 150,
+    @SerialName("base_hive_limit") val baseHiveLimit: Int = 15,
     @SerialName("custom_hive_limit") val customHiveLimit: Int? = null,
-    @SerialName("effective_hive_limit") val effectiveHiveLimit: Int = 150,
+    @SerialName("effective_hive_limit") val effectiveHiveLimit: Int = 15,
     @SerialName("expires_at") val expiresAt: String? = null,
     @SerialName("is_active_paid_plan") val isActivePaidPlan: Boolean = false,
-    @SerialName("is_active_ultimate") val isActiveUltimate: Boolean = false
-)
+    @SerialName("is_active_ultimate") val isActiveCommercial: Boolean = false
+) {
+    @Deprecated("Use isActiveCommercial")
+    val isActiveUltimate: Boolean get() = isActiveCommercial
+}
