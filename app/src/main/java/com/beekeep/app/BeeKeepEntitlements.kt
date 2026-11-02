@@ -52,6 +52,9 @@ internal object BeeKeepPricing {
     val commercialYearlyDiscountPercent: Int
         get() = (commercialYearlySavingsCad / (COMMERCIAL_MONTHLY_CAD * 12) * 100).roundToInt()
 
+    fun commercialYearlyDiscountDescription(): String =
+        "Billed yearly. Save ${commercialYearlyDiscountPercent}% compared with monthly billing."
+
     @Deprecated("Use COMMERCIAL_MONTHLY_CAD") const val ULTIMATE_MONTHLY_CAD = COMMERCIAL_MONTHLY_CAD
     @Deprecated("Use COMMERCIAL_YEARLY_CAD") const val ULTIMATE_YEARLY_CAD = COMMERCIAL_YEARLY_CAD
     @Deprecated("Use commercialYearlySavingsCad") val ultimateYearlySavingsCad: Double
