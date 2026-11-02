@@ -1558,14 +1558,15 @@ class LocalHiveRepository(context: Context) {
         assessBackupRestoreQuotas(
             currentApiaryNames = currentApiaries.filterNot { it.deleted }.map { it.name },
             importedApiaryNames = rows.filter { it.optString("type") == "apiary" }
-                .map { it.getJSONObject("payload").optString("name") },
+                .map { it.getJSONObject("payload") }
+                .filterNot { it.optBoolean("deleted", false) }
+                .map { it.optString("name") },
             currentHiveKeys = currentHives.filterNot { it.deleted }
                 .map { it.number to it.apiaryName },
             importedHiveKeys = rows.filter { it.optString("type") == "hive" }
-                .map {
-                    val payload = it.getJSONObject("payload")
-                    payload.optString("number") to payload.optString("apiary")
-                },
+                .map { it.getJSONObject("payload") }
+                .filterNot { it.optBoolean("deleted", false) }
+                .map { it.optString("number") to it.optString("apiary") },
             hiveLimit = hiveLimit,
             apiaryLimit = apiaryLimit,
             planName = planName
