@@ -48,7 +48,7 @@ class LocalHiveRepository(context: Context) {
     )
 
     /** The ViewModel supplies limits for the currently selected personal or team dataset. */
-    fun updateQuotaLimits(limits: BeeKeepQuotaLimits) {
+    internal fun updateQuotaLimits(limits: BeeKeepQuotaLimits) {
         activeQuotaLimits = limits
     }
 

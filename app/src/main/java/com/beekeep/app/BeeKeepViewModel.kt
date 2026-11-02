@@ -54,7 +54,7 @@ class BeeKeepViewModel(
         BeeKeepEntitlements.hiveLimit(appContext)
     )
 
-    fun updateQuotaLimits(limits: BeeKeepQuotaLimits) {
+    internal fun updateQuotaLimits(limits: BeeKeepQuotaLimits) {
         activeQuotaLimits = limits
         repo.updateQuotaLimits(limits)
     }
