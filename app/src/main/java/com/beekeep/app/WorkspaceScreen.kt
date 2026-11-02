@@ -65,6 +65,7 @@ fun WorkspaceScreen(
     val account by cloud.account.collectAsState()
     val scope = rememberCoroutineScope()
     var hasOwnedTeamWorkspace by rememberSaveable { mutableStateOf(false) }
+    var ownedWorkspaceIds by remember { mutableStateOf<Set<String>>(emptySet()) }
     var activeWorkspaceIsOwnedByUser by rememberSaveable { mutableStateOf(false) }
     var ownerAccessAccountId by rememberSaveable { mutableStateOf<String?>(null) }
     var ownerCommercialEntitlementActive by rememberSaveable { mutableStateOf<Boolean?>(null) }
@@ -77,6 +78,7 @@ fun WorkspaceScreen(
     suspend fun refreshOwnerWorkspaceAccess() {
         if (!account.signedIn) {
             hasOwnedTeamWorkspace = false
+            ownedWorkspaceIds = emptySet()
             activeWorkspaceIsOwnedByUser = false
             ownerCommercialEntitlementActive = null
             ownerAccessCheckMessage = ""
@@ -94,10 +96,10 @@ fun WorkspaceScreen(
         }
 
         val workspaces = workspaceResult.value.orEmpty()
-        hasOwnedTeamWorkspace = workspaces.any { !it.is_personal && it.member_role == "owner" }
-        activeWorkspaceIsOwnedByUser = !activeWorkspaceId.isNullOrBlank() && workspaces.any {
-            it.id == activeWorkspaceId && !it.is_personal && it.member_role == "owner"
-        }
+        ownedWorkspaceIds = workspaces.filter { !it.is_personal && it.member_role == "owner" }
+            .map { it.id }.toSet()
+        hasOwnedTeamWorkspace = ownedWorkspaceIds.isNotEmpty()
+        activeWorkspaceIsOwnedByUser = activeWorkspaceId in ownedWorkspaceIds
         if (!activeWorkspaceIsOwnedByUser) {
             ownerCommercialEntitlementActive = null
             ownerAccessCheckMessage = ""
@@ -125,6 +127,7 @@ fun WorkspaceScreen(
             // Do not carry a previous account's owner/entitlement decision across sign-in.
             ownerAccessAccountId = account.userId
             hasOwnedTeamWorkspace = false
+            ownedWorkspaceIds = emptySet()
             activeWorkspaceIsOwnedByUser = false
             ownerCommercialEntitlementActive = null
             ownerAccessCheckMessage = ""
@@ -248,7 +251,7 @@ fun WorkspaceScreen(
                 cloud = cloud,
                 activity = activity,
                 currentPlan = currentPlan,
-                readOnlyWorkspaceId = activeWorkspaceId,
+                readOnlyWorkspaceIds = ownedWorkspaceIds,
                 onUpgrade = onUpgrade,
                 onWorkspaceMembershipChanged = onWorkspaceMembershipChanged
             )
@@ -390,7 +393,7 @@ fun WorkspaceScreen(
                 cloud = cloud,
                 activity = activity,
                 currentPlan = currentPlan,
-                readOnlyWorkspaceId = null,
+                readOnlyWorkspaceIds = emptySet(),
                 onUpgrade = onUpgrade,
                 onWorkspaceMembershipChanged = onWorkspaceMembershipChanged
             )
