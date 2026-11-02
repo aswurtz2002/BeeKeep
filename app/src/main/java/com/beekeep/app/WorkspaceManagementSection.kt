@@ -94,10 +94,10 @@ fun WorkspaceManagementSection(
     var workspaceMenuExpanded by remember { mutableStateOf(false) }
     var invitations by remember { mutableStateOf<List<BeeKeepWorkspaceInvitation>>(emptyList()) }
     var loading by remember { mutableStateOf(false) }
-    var hasUltimateEntitlement by remember { mutableStateOf(false) }
+    var hasCommercialEntitlement by remember { mutableStateOf(false) }
     var entitlementCheckFailed by remember { mutableStateOf(false) }
     var loadedWorkspaceAccountId by remember { mutableStateOf<String?>(null) }
-    var showUltimateRequiredDialog by rememberSaveable { mutableStateOf(false) }
+    var showCommercialRequiredDialog by rememberSaveable { mutableStateOf(false) }
     var message by rememberSaveable { mutableStateOf("") }
     var showCreateDialog by remember { mutableStateOf(false) }
     var newWorkspaceName by rememberSaveable { mutableStateOf("") }
@@ -152,60 +152,60 @@ fun WorkspaceManagementSection(
     }
 
     /**
-     * Verify entitlement with the server. In debug builds, sync the selected Ultimate
+     * Verify entitlement with the server. In debug builds, sync the selected Commercial
      * test plan to the isolated staging backend if the server has not recorded it yet.
      * A sync/verification failure is shown as an error, not a false upgrade prompt.
      */
-    suspend fun refreshUltimateEntitlement(): Boolean? {
-        val initial = cloud.myActiveUltimateEntitlement()
+    suspend fun refreshCommercialEntitlement(): Boolean? {
+        val initial = cloud.myActiveCommercialEntitlement()
         if (initial.isSuccess && initial.value == true) {
-            hasUltimateEntitlement = true
+            hasCommercialEntitlement = true
             entitlementCheckFailed = false
             message = ""
             return true
         }
 
-        val debugUltimateSelected = BuildConfig.DEBUG &&
-            (currentPlan == BeeKeepPlan.ULTIMATE || currentPlan == BeeKeepPlan.ULTIMATE_YEARLY)
-        if (debugUltimateSelected) {
+        val debugCommercialSelected = BuildConfig.DEBUG &&
+            (currentPlan == BeeKeepPlan.COMMERCIAL)
+        if (debugCommercialSelected) {
             val synced = cloud.syncDebugPlanToStaging(currentPlan)
             if (!synced.isSuccess) {
-                hasUltimateEntitlement = false
+                hasCommercialEntitlement = false
                 entitlementCheckFailed = true
-                message = "Ultimate is selected on this device, but its BeeKeep-Staging entitlement sync failed: " +
-                    (synced.error ?: "unknown error") + ". Re-select Ultimate in Plans while online, then retry."
+                message = "Commercial is selected on this device, but its BeeKeep-Staging entitlement sync failed: " +
+                    (synced.error ?: "unknown error") + ". Re-select Commercial in Plans while online, then retry."
                 return null
             }
 
-            val verified = cloud.myActiveUltimateEntitlement()
+            val verified = cloud.myActiveCommercialEntitlement()
             if (!verified.isSuccess) {
-                hasUltimateEntitlement = false
+                hasCommercialEntitlement = false
                 entitlementCheckFailed = true
                 message = verified.error
-                    ?: "The Ultimate test plan synced, but BeeKeep could not verify it. Check your connection and retry."
+                    ?: "The Commercial test plan synced, but BeeKeep could not verify it. Check your connection and retry."
                 return null
             }
 
-            hasUltimateEntitlement = verified.value == true
-            entitlementCheckFailed = !hasUltimateEntitlement
-            if (hasUltimateEntitlement) {
+            hasCommercialEntitlement = verified.value == true
+            entitlementCheckFailed = !hasCommercialEntitlement
+            if (hasCommercialEntitlement) {
                 message = ""
                 return true
             }
 
-            message = "The test-plan sync completed, but BeeKeep-Staging still reports no active Ultimate entitlement. Re-select Ultimate in Plans while online, then retry."
+            message = "The test-plan sync completed, but BeeKeep-Staging still reports no active Commercial entitlement. Re-select Commercial in Plans while online, then retry."
             return null
         }
 
         if (!initial.isSuccess) {
-            hasUltimateEntitlement = false
+            hasCommercialEntitlement = false
             entitlementCheckFailed = true
             message = initial.error
-                ?: "Couldn't verify your Ultimate subscription. Check your connection and try again."
+                ?: "Couldn't verify your Commercial subscription. Check your connection and try again."
             return null
         }
 
-        hasUltimateEntitlement = false
+        hasCommercialEntitlement = false
         entitlementCheckFailed = false
         message = ""
         return false
@@ -231,7 +231,7 @@ fun WorkspaceManagementSection(
             showJoinAnotherTeam = false
             showPendingInvitations = false
             showInvitePanel = false
-            showUltimateRequiredDialog = false
+            showCommercialRequiredDialog = false
             showCreateDialog = false
             newWorkspaceName = ""
             inviteEmail = ""
@@ -242,7 +242,7 @@ fun WorkspaceManagementSection(
             removeMemberTarget = null
             refreshingPeople = false
             loading = false
-            hasUltimateEntitlement = false
+            hasCommercialEntitlement = false
             entitlementCheckFailed = false
             selectedWorkspaceSection = "overview"
             workspaceMenuExpanded = false
@@ -251,7 +251,7 @@ fun WorkspaceManagementSection(
         }
         if (!account.signedIn || account.userId.isNullOrBlank()) {
             activeWorkspaceId = ""
-            hasUltimateEntitlement = false
+            hasCommercialEntitlement = false
             entitlementCheckFailed = false
             workspaces = emptyList()
             members = emptyList()
@@ -271,8 +271,8 @@ fun WorkspaceManagementSection(
         } else {
             ""
         }
-        val entitlement = cloud.myActiveUltimateEntitlement()
-        hasUltimateEntitlement = entitlement.value == true
+        val entitlement = cloud.myActiveCommercialEntitlement()
+        hasCommercialEntitlement = entitlement.value == true
         entitlementCheckFailed = !entitlement.isSuccess
         loading = true
         val result = cloud.listWorkspaces()
@@ -379,16 +379,16 @@ fun WorkspaceManagementSection(
                         Button(
                             enabled = !loading,
                             onClick = {
-                                // Recheck server entitlement. Debug Ultimate plans are synced only
+                                // Recheck server entitlement. Debug Commercial plans are synced only
                                 // to BeeKeep-Staging; verification failures are not upgrade denials.
                                 scope.launch {
                                     loading = true
-                                    when (refreshUltimateEntitlement()) {
+                                    when (refreshCommercialEntitlement()) {
                                         true -> {
-                                            showUltimateRequiredDialog = false
+                                            showCommercialRequiredDialog = false
                                             showCreateDialog = true
                                         }
-                                        false -> showUltimateRequiredDialog = true
+                                        false -> showCommercialRequiredDialog = true
                                         null -> Unit
                                     }
                                     loading = false
@@ -844,21 +844,21 @@ fun WorkspaceManagementSection(
                             if (opening && workspace.member_role == "owner") {
                                 scope.launch {
                                     loading = true
-                                    refreshUltimateEntitlement()
+                                    refreshCommercialEntitlement()
                                     loading = false
                                 }
                             }
                         }
                     ) {
-                        if (workspace.member_role == "owner" && !hasUltimateEntitlement && loading) {
+                        if (workspace.member_role == "owner" && !hasCommercialEntitlement && loading) {
                             Text(
-                                "Checking your Ultimate subscription…",
+                                "Checking your Commercial subscription…",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
-                        } else if (workspace.member_role == "owner" && !hasUltimateEntitlement && entitlementCheckFailed) {
+                        } else if (workspace.member_role == "owner" && !hasCommercialEntitlement && entitlementCheckFailed) {
                             Text(
-                                "BeeKeep couldn't verify Ultimate access. Check your connection and retry instead of upgrading again.",
+                                "BeeKeep couldn't verify Commercial access. Check your connection and retry instead of upgrading again.",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.error
                             )
@@ -867,15 +867,15 @@ fun WorkspaceManagementSection(
                                 onClick = {
                                     scope.launch {
                                         loading = true
-                                        refreshUltimateEntitlement()
+                                        refreshCommercialEntitlement()
                                         loading = false
                                     }
                                 },
                                 modifier = Modifier.fillMaxWidth()
                             ) { Text("RETRY ULTIMATE CHECK") }
-                        } else if (workspace.member_role == "owner" && !hasUltimateEntitlement) {
+                        } else if (workspace.member_role == "owner" && !hasCommercialEntitlement) {
                             Text(
-                                "An active BeeKeep Ultimate subscription is required for workspace owners to invite teammates.",
+                                "An active BeeKeep Commercial subscription is required for workspace owners to invite teammates.",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -1213,26 +1213,26 @@ fun WorkspaceManagementSection(
         )
     }
 
-    if (accountWorkspaceDataReady && showUltimateRequiredDialog) {
+    if (accountWorkspaceDataReady && showCommercialRequiredDialog) {
         AlertDialog(
-            onDismissRequest = { showUltimateRequiredDialog = false },
-            title = { Text("Ultimate required") },
+            onDismissRequest = { showCommercialRequiredDialog = false },
+            title = { Text("Commercial required") },
             text = {
                 Text(
-                    "An active BeeKeep Ultimate subscription is required to create and own a team workspace. " +
-                        "People you invite can join and use your team workspace without buying Ultimate themselves."
+                    "An active BeeKeep Commercial subscription is required to create and own a team workspace. " +
+                        "People you invite can join and use your team workspace without buying Commercial themselves."
                 )
             },
             confirmButton = {
                 Button(
                     onClick = {
-                        showUltimateRequiredDialog = false
+                        showCommercialRequiredDialog = false
                         onUpgrade()
                     }
                 ) { Text("UPGRADE TO ULTIMATE") }
             },
             dismissButton = {
-                TextButton(onClick = { showUltimateRequiredDialog = false }) {
+                TextButton(onClick = { showCommercialRequiredDialog = false }) {
                     Text("NOT NOW")
                 }
             }
