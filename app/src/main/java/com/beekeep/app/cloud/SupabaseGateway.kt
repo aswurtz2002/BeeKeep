@@ -85,6 +85,9 @@ class SupabaseGateway(
     private val _accountInitialized = MutableStateFlow(false)
     /** True after Supabase has restored the stored session and the account identity is known. */
     val accountInitialized: StateFlow<Boolean> = _accountInitialized.asStateFlow()
+    private val _workspaceSelectionInitialized = MutableStateFlow(false)
+    /** Monotonic startup barrier set after the saved dataset is validated or safely retained. */
+    val workspaceSelectionInitialized: StateFlow<Boolean> = _workspaceSelectionInitialized.asStateFlow()
 
     private val _hiveLimitOverride = MutableStateFlow<Int?>(null)
     /** A verified override for the signed-in account, or null when none is granted. */
@@ -112,13 +115,27 @@ class SupabaseGateway(
         val supabase = client
         if (!configured || supabase == null) {
             stopRealtime()
-            repository.switchWorkspace(null)
-            BeeKeepEntitlements.activateCloudHiveLimitOverride(appContext, null)
-            _hiveLimitOverride.value = null
-            _verifiedPlan.value = null
-            verifiedPlanUserId = null
+            val prefs = appContext.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
+            val cachedWorkspaceId = prefs.getString("active_team_workspace_id", "").orEmpty().trim()
+            val cachedOwnerId = prefs.getString("active_team_workspace_user_id", null)
+                ?.trim()?.takeIf { it.isNotEmpty() }
+            if (ActiveWorkspaceSessionPolicy.canKeepCachedWorkspace(
+                    cachedWorkspaceId, cachedOwnerId, cachedOwnerId
+                )
+            ) {
+                repository.switchWorkspace(
+                    cachedWorkspaceId,
+                    readOnly = true,
+                    ownerUserId = cachedOwnerId
+                )
+            } else {
+                repository.switchWorkspace(null)
+            }
+            // A build without a cloud connection can still display a previously account-bound
+            // team cache, but it cannot grant writes until the owner and role are verified again.
             _account.value = CloudAccountState(configured = false, signedIn = false)
             _accountInitialized.value = true
+            _workspaceSelectionInitialized.value = true
             return
         }
         try {
@@ -127,13 +144,23 @@ class SupabaseGateway(
             val session = supabase.auth.currentSessionOrNull()
             val userId = session?.user?.id?.trim()?.takeIf { it.isNotEmpty() }
             if (userId == null) {
+                // A successfully restored session with no user is a confirmed sign-out, unlike a
+                // transient auth/network failure. Only this path clears the selected workspace.
                 stopRealtime()
                 repository.switchWorkspace(null)
+                appContext.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE).edit()
+                    .remove("last_cloud_user_id")
+                    .remove("last_cloud_user_email")
+                    .apply()
                 BeeKeepEntitlements.activateCloudHiveLimitOverride(appContext, null)
                 _hiveLimitOverride.value = null
                 _verifiedPlan.value = null
                 verifiedPlanUserId = null
             } else {
+                appContext.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE).edit()
+                    .putString("last_cloud_user_id", userId)
+                    .putString("last_cloud_user_email", session?.user?.email.orEmpty())
+                    .apply()
                 // Load only this account's previously server-verified plan before trying the network.
                 // Release ViewModel creation checks use the same cached entitlement as the plan UI.
                 BeeKeepEntitlements.activateCloudHiveLimitOverride(appContext, userId)
@@ -148,19 +175,54 @@ class SupabaseGateway(
                 userId = userId
             )
             _accountInitialized.value = true
+            _workspaceSelectionInitialized.value = true
             if (enableRealtime && userId != null) startRealtime() else stopRealtime()
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (error: Throwable) {
-            // If session identity cannot be established, fail closed to private/local data.
+            // A failed auth/network refresh is not a sign-out. Keep the last account-bound team
+            // and verified entitlement instead of forcing the user into their personal dataset.
             stopRealtime()
-            repository.switchWorkspace(null)
-            BeeKeepEntitlements.activateCloudHiveLimitOverride(appContext, null)
-            _hiveLimitOverride.value = null
-            _verifiedPlan.value = null
-            verifiedPlanUserId = null
-            _account.value = CloudAccountState(configured = true, signedIn = false, error = error.message)
+            val prefs = appContext.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
+            val cachedWorkspaceId = prefs.getString("active_team_workspace_id", "").orEmpty().trim()
+            val storedOwnerId = prefs.getString("active_team_workspace_user_id", null)
+                ?.trim()?.takeIf { it.isNotEmpty() }
+            val cachedUserId = prefs.getString("last_cloud_user_id", null)
+                ?.trim()?.takeIf { it.isNotEmpty() }
+                ?: _account.value.userId?.trim()?.takeIf { it.isNotEmpty() }
+                ?: storedOwnerId
+            val canKeepTeam = ActiveWorkspaceSessionPolicy.canKeepCachedWorkspace(
+                cachedWorkspaceId,
+                cachedUserId,
+                storedOwnerId
+            )
+            if (canKeepTeam) {
+                if (repository.activeWorkspaceId.value != cachedWorkspaceId) {
+                    repository.switchWorkspace(
+                        cachedWorkspaceId,
+                        readOnly = prefs.getBoolean("active_team_workspace_read_only", true),
+                        ownerUserId = storedOwnerId
+                    )
+                }
+                BeeKeepEntitlements.activateCloudHiveLimitOverride(appContext, cachedUserId)
+                _hiveLimitOverride.value =
+                    BeeKeepEntitlements.cachedCloudHiveLimitOverride(appContext, cachedUserId!!)
+                if (verifiedPlanUserId != cachedUserId || _verifiedPlan.value == null) {
+                    _verifiedPlan.value = BeeKeepEntitlements.currentPlan(appContext)
+                    verifiedPlanUserId = cachedUserId
+                }
+            }
+            val lastKnownUserId = cachedUserId
+            _account.value = CloudAccountState(
+                configured = true,
+                signedIn = lastKnownUserId != null,
+                email = prefs.getString("last_cloud_user_email", null).orEmpty(),
+                userId = lastKnownUserId,
+                error = error.message?.takeIf { it.isNotBlank() }
+                    ?: "BeeKeep couldn't refresh your cloud session. Your saved workspace remains on this device."
+            )
             _accountInitialized.value = true
+            _workspaceSelectionInitialized.value = true
         }
     }
 
@@ -259,7 +321,14 @@ class SupabaseGateway(
                 membershipLookupCompleted = false
             }
             if (membershipLookupCompleted && memberWorkspace == null) {
-                repository.switchWorkspace(null)
+                // Membership can have been revoked while this device still has a selected,
+                // account-bound local copy. Keep that selection as a read-only archive instead
+                // of silently moving the beekeeper to personal data.
+                repository.switchWorkspace(
+                    workspaceId = workspaceId,
+                    readOnly = true,
+                    ownerUserId = userId
+                )
                 return
             }
         }
@@ -1241,10 +1310,29 @@ class SupabaseGateway(
                 .decodeList<BeeKeepWorkspace>()
                 .firstOrNull { it.id == workspaceId && !it.is_personal }
             if (workspace == null) {
-                // The membership was revoked or the selected workspace was deleted.
-                // Keep the cached team database intact, but stop displaying it as the active dataset.
-                repository.switchWorkspace(null)
-                val message = "You no longer have access to this team workspace. Switched back to your personal workspace."
+                // Do not silently change the selected dataset when the remote membership lookup
+                // cannot find the team. Keep an account-bound cache selected but read-only; it
+                // remains local and no outbox records are uploaded without verified membership.
+                val prefs = appContext.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
+                val storedOwnerId = prefs.getString("active_team_workspace_user_id", null)
+                    ?.trim()?.takeIf { it.isNotEmpty() }
+                val keepSelectedTeam = ActiveWorkspaceSessionPolicy.canKeepCachedWorkspace(
+                    workspaceId, userId, storedOwnerId
+                )
+                if (keepSelectedTeam) {
+                    repository.switchWorkspace(
+                        workspaceId = workspaceId,
+                        readOnly = true,
+                        ownerUserId = userId
+                    )
+                } else {
+                    repository.switchWorkspace(null)
+                }
+                val message = if (keepSelectedTeam) {
+                    "This team is still selected. BeeKeep couldn't verify team access, so its saved data is temporarily view-only. Reconnect or switch workspaces manually."
+                } else {
+                    "You no longer have access to this team workspace."
+                }
                 _account.value = _account.value.copy(syncing = false, signedIn = true, email = userEmail, error = message)
                 return CloudResult.Failure(message)
             }
