@@ -872,7 +872,7 @@ fun WorkspaceManagementSection(
                                     }
                                 },
                                 modifier = Modifier.fillMaxWidth()
-                            ) { Text("RETRY ULTIMATE CHECK") }
+                            ) { Text("RETRY COMMERCIAL CHECK") }
                         } else if (workspace.member_role == "owner" && !hasCommercialEntitlement) {
                             Text(
                                 "An active BeeKeep Commercial subscription is required for workspace owners to invite teammates.",
@@ -882,7 +882,7 @@ fun WorkspaceManagementSection(
                             Button(
                                 onClick = onUpgrade,
                                 modifier = Modifier.fillMaxWidth()
-                            ) { Text("UPGRADE TO ULTIMATE") }
+                            ) { Text("UPGRADE TO COMMERCIAL") }
                         } else {
                         OutlinedTextField(
                             value = inviteEmail,
