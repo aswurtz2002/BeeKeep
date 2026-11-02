@@ -258,7 +258,7 @@ internal fun AdminHiveLimitScreen(
                 val tierName = adminTierName(result)
                 val status = when {
                     result.isActiveUltimate -> "Active Commercial"
-                    result.isActivePaidPlan -> "Hobbyist (legacy Pro)"
+                    result.isActivePaidPlan -> "Hobbyist"
                     result.planCode?.contains("pro", ignoreCase = true) == true ||
                         result.planCode?.contains("ultimate", ignoreCase = true) == true -> "Commercial inactive or expired"
                     else -> "Hobbyist plan"
