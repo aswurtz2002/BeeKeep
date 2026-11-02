@@ -70,18 +70,21 @@ fun WorkspaceScreen(
     var activeWorkspaceIsOwnedByUser by rememberSaveable { mutableStateOf(false) }
     var ownerAccessAccountId by rememberSaveable { mutableStateOf<String?>(null) }
     var ownerCommercialEntitlementActive by rememberSaveable { mutableStateOf<Boolean?>(null) }
+    var activeWorkspaceOwnerCommercialEntitlementActive by rememberSaveable { mutableStateOf<Boolean?>(null) }
     var ownerAccessCheckComplete by rememberSaveable { mutableStateOf(false) }
     var ownerAccessCheckMessage by rememberSaveable { mutableStateOf("") }
     var ownerAccessActionBusy by rememberSaveable { mutableStateOf(false) }
 
-    // Only a team owner is gated by their own Commercial entitlement. Teammates who
-    // joined someone else's workspace do not need to subscribe to Commercial themselves.
+    // A team stays available only while its owner has active Commercial. Invited
+    // members do not need their own Commercial plan, so check the owner through a
+    // membership-scoped server RPC for every selected team.
     suspend fun refreshOwnerWorkspaceAccess() {
         if (!account.signedIn) {
             hasOwnedTeamWorkspace = false
             ownedWorkspaceIds = emptySet()
             activeWorkspaceIsOwnedByUser = false
             ownerCommercialEntitlementActive = null
+            activeWorkspaceOwnerCommercialEntitlementActive = null
             ownerAccessCheckMessage = ""
             ownerAccessCheckComplete = true
             return
@@ -90,11 +93,11 @@ fun WorkspaceScreen(
         val workspaceResult = cloud.listWorkspaces()
         if (!workspaceResult.isSuccess) {
             ownerAccessCheckMessage = workspaceResult.error
-                ?: "Couldn't verify workspace ownership. Check your connection and retry."
-            // Never drop a previously read-only decision because a refresh failed.
-            // On a first load, use only the account's cached trusted plan as fallback.
-            if (ownerCommercialEntitlementActive == null) {
-                ownerCommercialEntitlementActive = currentPlan == BeeKeepPlan.COMMERCIAL
+                ?: "Couldn't verify workspace access. Check your connection and retry."
+            // A known owner may use this account's last server-verified plan while offline.
+            if (activeWorkspaceIsOwnedByUser || activeWorkspaceOwnerCommercialEntitlementActive == null) {
+                activeWorkspaceOwnerCommercialEntitlementActive =
+                    ownerCommercialEntitlementActive ?: (currentPlan == BeeKeepPlan.COMMERCIAL)
             }
             ownerAccessCheckComplete = true
             return
@@ -104,27 +107,43 @@ fun WorkspaceScreen(
         ownedWorkspaceIds = workspaces.filter { !it.is_personal && it.member_role == "owner" }
             .map { it.id }.toSet()
         hasOwnedTeamWorkspace = ownedWorkspaceIds.isNotEmpty()
-        activeWorkspaceIsOwnedByUser = activeWorkspaceId?.let { it in ownedWorkspaceIds } == true
-        if (!hasOwnedTeamWorkspace) {
-            ownerCommercialEntitlementActive = null
-            ownerAccessCheckMessage = ""
-            ownerAccessCheckComplete = true
-            return
+        activeWorkspaceIsOwnedByUser = workspaces.any {
+            it.id == activeWorkspaceId && !it.is_personal && it.member_role == "owner"
         }
 
-        // The owner entitlement applies to every workspace this account owns, even
-        // when the currently active workspace belongs to someone else.
-        val entitlement = cloud.myActiveCommercialEntitlement()
-        if (entitlement.isSuccess) {
-            ownerCommercialEntitlementActive = entitlement.value == true
-            ownerAccessCheckMessage = if (entitlement.value == true) "" else
-                "The server reports that this account has no active Commercial entitlement."
+        if (hasOwnedTeamWorkspace) {
+            val ownEntitlement = cloud.myActiveCommercialEntitlement()
+            if (ownEntitlement.isSuccess) {
+                ownerCommercialEntitlementActive = ownEntitlement.value == true
+            } else if (ownerCommercialEntitlementActive == null) {
+                ownerCommercialEntitlementActive = currentPlan == BeeKeepPlan.COMMERCIAL
+            }
         } else {
-            // Use only the signed-in account's cached server-verified plan while offline.
-            // If no verified Commercial plan is cached, fail closed to read-only.
-            ownerCommercialEntitlementActive = currentPlan == BeeKeepPlan.COMMERCIAL
-            ownerAccessCheckMessage = entitlement.error
-                ?: "Couldn't verify Commercial access. Check your connection and retry."
+            ownerCommercialEntitlementActive = null
+        }
+
+        val activeTeam = workspaces.firstOrNull {
+            it.id == activeWorkspaceId && !it.is_personal
+        }
+        if (activeTeam == null) {
+            activeWorkspaceOwnerCommercialEntitlementActive = null
+            ownerAccessCheckMessage = ""
+        } else if (activeTeam.member_role == "owner") {
+            activeWorkspaceOwnerCommercialEntitlementActive = ownerCommercialEntitlementActive
+            ownerAccessCheckMessage = if (ownerCommercialEntitlementActive == false) {
+                "Your Commercial subscription is inactive."
+            } else ""
+        } else {
+            val ownerEntitlement = cloud.workspaceOwnerCommercialEntitlement(activeTeam.id)
+            if (ownerEntitlement.isSuccess) {
+                activeWorkspaceOwnerCommercialEntitlementActive = ownerEntitlement.value == true
+                ownerAccessCheckMessage = if (ownerEntitlement.value == true) "" else
+                    "The workspace owner's Commercial subscription is inactive."
+            } else {
+                activeWorkspaceOwnerCommercialEntitlementActive = null
+                ownerAccessCheckMessage = ownerEntitlement.error
+                    ?: "Couldn't verify the workspace owner's Commercial subscription. Check your connection and retry."
+            }
         }
         ownerAccessCheckComplete = true
     }
@@ -137,33 +156,34 @@ fun WorkspaceScreen(
             ownedWorkspaceIds = emptySet()
             activeWorkspaceIsOwnedByUser = false
             ownerCommercialEntitlementActive = null
+            activeWorkspaceOwnerCommercialEntitlementActive = null
             ownerAccessCheckMessage = ""
         }
         ownerAccessCheckComplete = false
         refreshOwnerWorkspaceAccess()
     }
-    androidx.compose.runtime.LaunchedEffect(account.signedIn, hasOwnedTeamWorkspace) {
-        if (account.signedIn && hasOwnedTeamWorkspace) {
+    androidx.compose.runtime.LaunchedEffect(account.signedIn, hasOwnedTeamWorkspace, activeWorkspaceId) {
+        if (account.signedIn && (hasOwnedTeamWorkspace || hasActiveTeam)) {
             while (true) {
                 delay(60_000)
-                val entitlement = cloud.myActiveCommercialEntitlement()
-                // Refresh periodically while the app stays open so expiry takes effect
-                // without deleting or resetting the selected team's local database.
-                if (entitlement.isSuccess) {
-                    ownerCommercialEntitlementActive = entitlement.value == true
-                    ownerAccessCheckMessage = if (entitlement.value == true) "" else
-                        "The server reports that this account has no active Commercial entitlement."
-                }
+                // Keep the selected team's lock state current while the app remains open.
+                refreshOwnerWorkspaceAccess()
             }
         }
     }
     val readOnlyOwnedWorkspaceIds: Set<String> = if (ownerCommercialEntitlementActive == false) ownedWorkspaceIds.toSet() else emptySet()
 
-    val workspaceAccessPaused = account.signedIn &&
+    val workspaceAccessLocked = account.signedIn &&
+        hasActiveTeam &&
         ownerAccessAccountId == account.userId &&
         ownerAccessCheckComplete &&
-        activeWorkspaceIsOwnedByUser &&
-        ownerCommercialEntitlementActive == false
+        activeWorkspaceOwnerCommercialEntitlementActive == false
+
+    val workspaceAccessCouldNotBeVerified = account.signedIn &&
+        hasActiveTeam &&
+        ownerAccessAccountId == account.userId &&
+        ownerAccessCheckComplete &&
+        activeWorkspaceOwnerCommercialEntitlementActive == null
 
     Column(
         modifier = Modifier
