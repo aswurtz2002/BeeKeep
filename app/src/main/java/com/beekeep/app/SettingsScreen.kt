@@ -110,6 +110,7 @@ internal fun SettingsScreen(
     hiveLimit: Int,
     apiaryLimit: Int,
     planName: String,
+    quotaEnforcementReady: Boolean,
     onFastTagAssignmentModeChange: (Boolean) -> Unit,
     largeFieldText: Boolean,
     onLargeFieldTextChange: (Boolean) -> Unit,
@@ -720,7 +721,7 @@ if (backupMessage.isNotBlank()) Text(backupMessage, color = if (backupMessage.st
             },
             confirmButton = {
                 Button(
-                    enabled = !busy,
+                    enabled = !busy && quotaEnforcementReady,
                     onClick = {
                         pendingBackupPreview = null
                         pendingBackupJson = null
