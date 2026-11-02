@@ -560,6 +560,10 @@ declare
     invite_row public.beekeep_workspace_invitations%rowtype;
     attempt_row public.beekeep_workspace_invitation_attempts%rowtype;
     owner_id uuid;
+    owner_metadata jsonb;
+    owner_plan text;
+    owner_expiry_text text;
+    owner_expiry timestamptz;
     token_value text := trim(coalesce(invite_token, ''));
 begin
     if caller_id is null then
@@ -639,12 +643,37 @@ begin
         raise exception 'This team workspace is no longer available';
     end if;
 
-    perform 1
+    select coalesce(u.raw_app_meta_data, '{}'::jsonb)
+      into owner_metadata
       from auth.users u
      where u.id = owner_id
      for share;
 
-    if not found or not public.beekeep_user_has_active_commercial(owner_id) then
+    if not found then
+        raise exception 'The team workspace owner account is unavailable'
+            using errcode = '42501';
+    end if;
+
+    owner_plan := regexp_replace(
+        lower(coalesce(owner_metadata ->> 'beekeep_plan', '')),
+        '[^a-z]',
+        '',
+        'g'
+    );
+    owner_expiry_text := nullif(trim(owner_metadata ->> 'beekeep_subscription_expires_at'), '');
+    owner_expiry := null;
+    if owner_plan in (
+        'commercial', 'commercialmonthly', 'commercialyearly',
+        'ultimate', 'ultimatemonthly', 'ultimateyearly'
+    ) and owner_expiry_text is not null then
+        begin
+            owner_expiry := owner_expiry_text::timestamptz;
+        exception when others then
+            owner_expiry := null;
+        end;
+    end if;
+
+    if owner_expiry is null or owner_expiry <= now() then
         raise exception 'The team workspace owner must have an active BeeKeep Commercial subscription before this invitation can be accepted.'
             using errcode = '42501';
     end if;
