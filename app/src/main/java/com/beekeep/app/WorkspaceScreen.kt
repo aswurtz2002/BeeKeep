@@ -100,22 +100,24 @@ fun WorkspaceScreen(
             .map { it.id }.toSet()
         hasOwnedTeamWorkspace = ownedWorkspaceIds.isNotEmpty()
         activeWorkspaceIsOwnedByUser = activeWorkspaceId?.let { it in ownedWorkspaceIds } == true
-        if (!activeWorkspaceIsOwnedByUser) {
+        if (!hasOwnedTeamWorkspace) {
             ownerCommercialEntitlementActive = null
             ownerAccessCheckMessage = ""
             ownerAccessCheckComplete = true
             return
         }
 
+        // The owner entitlement applies to every workspace this account owns, even
+        // when the currently active workspace belongs to someone else.
         val entitlement = cloud.myActiveCommercialEntitlement()
         if (entitlement.isSuccess) {
             ownerCommercialEntitlementActive = entitlement.value == true
             ownerAccessCheckMessage = if (entitlement.value == true) "" else
                 "The server reports that this account has no active Commercial entitlement."
         } else {
-            // A network error is not proof that a plan expired. Keep the page available
-            // on verification errors; server-side row-level security still protects writes.
-            ownerCommercialEntitlementActive = null
+            // Use only the signed-in account's cached server-verified plan while offline.
+            // If no verified Commercial plan is cached, fail closed to read-only.
+            ownerCommercialEntitlementActive = currentPlan == BeeKeepPlan.COMMERCIAL
             ownerAccessCheckMessage = entitlement.error
                 ?: "Couldn't verify Commercial access. Check your connection and retry."
         }
@@ -135,8 +137,8 @@ fun WorkspaceScreen(
         ownerAccessCheckComplete = false
         refreshOwnerWorkspaceAccess()
     }
-    androidx.compose.runtime.LaunchedEffect(account.signedIn, activeWorkspaceIsOwnedByUser) {
-        if (account.signedIn && activeWorkspaceIsOwnedByUser) {
+    androidx.compose.runtime.LaunchedEffect(account.signedIn, hasOwnedTeamWorkspace) {
+        if (account.signedIn && hasOwnedTeamWorkspace) {
             while (true) {
                 delay(60_000)
                 val entitlement = cloud.myActiveCommercialEntitlement()
@@ -251,7 +253,7 @@ fun WorkspaceScreen(
                 cloud = cloud,
                 activity = activity,
                 currentPlan = currentPlan,
-                readOnlyWorkspaceIds = ownedWorkspaceIds,
+                readOnlyWorkspaceIds = ownedWorkspaceIds.takeIf { ownerCommercialEntitlementActive == false }.orEmpty(),
                 onUpgrade = onUpgrade,
                 onWorkspaceMembershipChanged = onWorkspaceMembershipChanged
             )
@@ -393,7 +395,7 @@ fun WorkspaceScreen(
                 cloud = cloud,
                 activity = activity,
                 currentPlan = currentPlan,
-                readOnlyWorkspaceIds = emptySet(),
+                readOnlyWorkspaceIds = ownedWorkspaceIds.takeIf { ownerCommercialEntitlementActive == false }.orEmpty(),
                 onUpgrade = onUpgrade,
                 onWorkspaceMembershipChanged = onWorkspaceMembershipChanged
             )
