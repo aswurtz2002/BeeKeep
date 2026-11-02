@@ -54,7 +54,7 @@ fun WorkspaceScreen(
     activity: ComponentActivity,
     cloud: SupabaseGateway,
     currentPlan: BeeKeepPlan,
-    hasUltimateAccess: Boolean,
+    hasCommercialAccess: Boolean,
     activeWorkspaceId: String?,
     hiveCount: Int,
     apiaryCount: Int,
@@ -65,17 +65,17 @@ fun WorkspaceScreen(
     val account by cloud.account.collectAsState()
     val scope = rememberCoroutineScope()
     var hasOwnedTeamWorkspace by rememberSaveable { mutableStateOf(false) }
-    var ownerUltimateEntitlementActive by rememberSaveable { mutableStateOf<Boolean?>(null) }
+    var ownerCommercialEntitlementActive by rememberSaveable { mutableStateOf<Boolean?>(null) }
     var ownerAccessCheckComplete by rememberSaveable { mutableStateOf(false) }
     var ownerAccessCheckMessage by rememberSaveable { mutableStateOf("") }
     var ownerAccessActionBusy by rememberSaveable { mutableStateOf(false) }
 
-    // Only a team owner is gated by their own Ultimate entitlement. Teammates who
-    // joined someone else's workspace do not need to subscribe to Ultimate themselves.
+    // Only a team owner is gated by their own Commercial entitlement. Teammates who
+    // joined someone else's workspace do not need to subscribe to Commercial themselves.
     suspend fun refreshOwnerWorkspaceAccess() {
         if (!account.signedIn) {
             hasOwnedTeamWorkspace = false
-            ownerUltimateEntitlementActive = null
+            ownerCommercialEntitlementActive = null
             ownerAccessCheckMessage = ""
             ownerAccessCheckComplete = true
             return
@@ -85,7 +85,7 @@ fun WorkspaceScreen(
         if (!workspaceResult.isSuccess) {
             ownerAccessCheckMessage = workspaceResult.error
                 ?: "Couldn't verify workspace ownership. Check your connection and retry."
-            ownerUltimateEntitlementActive = null
+            ownerCommercialEntitlementActive = null
             ownerAccessCheckComplete = true
             return
         }
@@ -94,23 +94,23 @@ fun WorkspaceScreen(
             !it.is_personal && it.member_role == "owner"
         }
         if (!hasOwnedTeamWorkspace) {
-            ownerUltimateEntitlementActive = null
+            ownerCommercialEntitlementActive = null
             ownerAccessCheckMessage = ""
             ownerAccessCheckComplete = true
             return
         }
 
-        val entitlement = cloud.myActiveUltimateEntitlement()
+        val entitlement = cloud.myActiveCommercialEntitlement()
         if (entitlement.isSuccess) {
-            ownerUltimateEntitlementActive = entitlement.value == true
+            ownerCommercialEntitlementActive = entitlement.value == true
             ownerAccessCheckMessage = if (entitlement.value == true) "" else
-                "The server reports that this account has no active Ultimate entitlement."
+                "The server reports that this account has no active Commercial entitlement."
         } else {
             // A network error is not proof that a plan expired. Keep the page available
             // on verification errors; server-side row-level security still protects writes.
-            ownerUltimateEntitlementActive = null
+            ownerCommercialEntitlementActive = null
             ownerAccessCheckMessage = entitlement.error
-                ?: "Couldn't verify Ultimate access. Check your connection and retry."
+                ?: "Couldn't verify Commercial access. Check your connection and retry."
         }
         ownerAccessCheckComplete = true
     }
@@ -123,13 +123,13 @@ fun WorkspaceScreen(
         if (account.signedIn && hasOwnedTeamWorkspace) {
             while (true) {
                 delay(60_000)
-                val entitlement = cloud.myActiveUltimateEntitlement()
+                val entitlement = cloud.myActiveCommercialEntitlement()
                 // Refresh periodically while the app stays open so expiry takes effect
                 // without deleting or resetting the selected team's local database.
                 if (entitlement.isSuccess) {
-                    ownerUltimateEntitlementActive = entitlement.value == true
+                    ownerCommercialEntitlementActive = entitlement.value == true
                     ownerAccessCheckMessage = if (entitlement.value == true) "" else
-                        "The server reports that this account has no active Ultimate entitlement."
+                        "The server reports that this account has no active Commercial entitlement."
                 }
             }
         }
@@ -137,7 +137,7 @@ fun WorkspaceScreen(
     val workspaceAccessPaused = account.signedIn &&
         ownerAccessCheckComplete &&
         hasOwnedTeamWorkspace &&
-        ownerUltimateEntitlementActive == false
+        ownerCommercialEntitlementActive == false
 
     Column(
         modifier = Modifier
@@ -183,11 +183,11 @@ fun WorkspaceScreen(
                             verticalArrangement = Arrangement.spacedBy(2.dp)
                         ) {
                             Text("Workspace access paused", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.ExtraBold)
-                            Text("An active Ultimate entitlement is required for the owner of a team workspace.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text("An active Commercial entitlement is required for the owner of a team workspace.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
                     Text(
-                        "Your team's databases, hives, apiaries, inspection history, and queued local edits are retained. BeeKeep will not delete or reset records because a plan expired. Team cloud writes may remain blocked until Ultimate is active again.",
+                        "Your team's databases, hives, apiaries, inspection history, and queued local edits are retained. BeeKeep will not delete or reset records because a plan expired. Team cloud writes may remain blocked until Commercial is active again.",
                         style = MaterialTheme.typography.bodyMedium
                     )
                     Button(
@@ -312,7 +312,7 @@ fun WorkspaceScreen(
                             Text(
                                 when {
                                     hasActiveTeam -> "TEAM WORKSPACE ACTIVE"
-                                    hasUltimateAccess -> "ULTIMATE ACCESS"
+                                    hasCommercialAccess -> "ULTIMATE ACCESS"
                                     else -> currentPlan.displayName.uppercase()
                                 },
                                 style = MaterialTheme.typography.labelMedium,
@@ -339,10 +339,10 @@ fun WorkspaceScreen(
                         }
                     } else {
                         Text(
-                            if (hasUltimateAccess) {
-                                "Ultimate includes team creation. You can also join another beekeeper’s workspace with an invitation code."
+                            if (hasCommercialAccess) {
+                                "Commercial includes team creation. You can also join another beekeeper’s workspace with an invitation code."
                             } else {
-                                "Joining a team does not require Ultimate. Ultimate is required only to create a new team workspace."
+                                "Joining a team does not require Commercial. Commercial is required only to create a new team workspace."
                             },
                             color = MaterialTheme.colorScheme.onPrimaryContainer,
                             style = MaterialTheme.typography.bodySmall,
@@ -353,7 +353,7 @@ fun WorkspaceScreen(
             }
             WorkspaceCloudSyncSection(cloud = cloud)
 
-            if (hasOwnedTeamWorkspace && ownerUltimateEntitlementActive == null && ownerAccessCheckMessage.isNotBlank()) {
+            if (hasOwnedTeamWorkspace && ownerCommercialEntitlementActive == null && ownerAccessCheckMessage.isNotBlank()) {
                 Text(
                     ownerAccessCheckMessage,
                     style = MaterialTheme.typography.bodySmall,
@@ -399,7 +399,7 @@ private fun WorkspaceMetric(
 }
 
 /**
- * Compact invitation entry kept on More so people can join a team without Ultimate.
+ * Compact invitation entry kept on More so people can join a team without Commercial.
  * Account sign-in stays on More, alongside the rest of the existing account controls.
  */
 @Composable
@@ -442,7 +442,7 @@ fun WorkspaceJoinEntry(
                 ) {
                     Text("Join a workspace", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.ExtraBold)
                     Text(
-                        "An invitation code is all you need. Ultimate is not required to join.",
+                        "An invitation code is all you need. Commercial is not required to join.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
