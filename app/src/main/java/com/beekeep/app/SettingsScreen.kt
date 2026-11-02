@@ -86,6 +86,7 @@ import com.beekeep.app.cloud.CloudResult
 import com.beekeep.app.cloud.SupabaseGateway
 import com.beekeep.app.data.DataBackupPreview
 import com.beekeep.app.data.LocalHiveRepository
+import com.beekeep.app.data.canRestoreBackupToWorkspace
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -129,6 +130,31 @@ internal fun SettingsScreen(
     // Use MainActivity's live repository: it follows the selected personal/team database.
     val activeWorkspaceId by repository.activeWorkspaceId.collectAsState()
     val activeWorkspaceReadOnly by repository.activeWorkspaceReadOnly.collectAsState()
+    var restoreWorkspaceOwnerVerified by remember { mutableStateOf(activeWorkspaceId.isNullOrBlank()) }
+    var restoreWorkspaceRoleCheckComplete by remember { mutableStateOf(activeWorkspaceId.isNullOrBlank()) }
+
+    LaunchedEffect(activeWorkspaceId, account.signedIn, account.userId) {
+        if (activeWorkspaceId.isNullOrBlank()) {
+            restoreWorkspaceOwnerVerified = true
+            restoreWorkspaceRoleCheckComplete = true
+        } else {
+            restoreWorkspaceOwnerVerified = false
+            restoreWorkspaceRoleCheckComplete = false
+            if (account.signedIn) {
+                val workspaces = cloud.listWorkspaces()
+                restoreWorkspaceOwnerVerified = workspaces.isSuccess &&
+                    workspaces.value.orEmpty().any {
+                        it.id == activeWorkspaceId && !it.is_personal &&
+                            canRestoreBackupToWorkspace(isPersonalWorkspace = false, memberRole = it.member_role)
+                    }
+            }
+            restoreWorkspaceRoleCheckComplete = true
+        }
+    }
+    val canRestoreBackup = quotaEnforcementReady &&
+        !activeWorkspaceReadOnly &&
+        restoreWorkspaceRoleCheckComplete &&
+        restoreWorkspaceOwnerVerified
 
     var readyBeep by remember(preferences) { mutableStateOf(preferences.getBoolean("voice_ready_beep", true)) }
     var speakHiveNumber by remember(preferences) { mutableStateOf(preferences.getBoolean("speak_hive_number_on_scan", true)) }
@@ -442,7 +468,9 @@ internal fun SettingsScreen(
                     when {
                         activeWorkspaceReadOnly -> "This workspace is view-only. You can export it, but restore and reset are disabled."
                         activeWorkspaceId.isNullOrBlank() -> "Export and restore apply only to your personal data on this device."
-                        else -> "Export and restore apply only to the selected team's data. Personal records remain separate."
+                        !restoreWorkspaceRoleCheckComplete -> "Checking workspace owner permissions for backup restore…"
+                        !restoreWorkspaceOwnerVerified -> "You can export this team workspace. Only its owner can restore a backup, using the owner's plan limits."
+                        else -> "Export and restore apply to this team workspace using the owner's plan limits. Personal records remain separate."
                     },
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     style = MaterialTheme.typography.bodySmall
@@ -504,16 +532,18 @@ internal fun SettingsScreen(
                     OutlinedButton(
                         onClick = { openBackupLauncher.launch(arrayOf("application/json", "text/*", "*/*")) },
                         modifier = Modifier.weight(1f),
-                        enabled = !busy && !activeWorkspaceReadOnly && quotaEnforcementReady
+                        enabled = !busy && canRestoreBackup
                     ) {
                         Icon(Icons.Rounded.Restore, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(Modifier.width(6.dp))
                         Text("RESTORE")
                     }
                 }
-if (!quotaEnforcementReady) {
+if (!canRestoreBackup && !activeWorkspaceReadOnly && backupMessage.isBlank()) {
                     Text(
-                        "Checking your BeeKeep plan before restoring a backup…",
+                        if (!quotaEnforcementReady) "Checking your BeeKeep plan before restoring a backup…"
+                        else if (!restoreWorkspaceRoleCheckComplete) "Checking workspace owner permissions…"
+                        else "Only the workspace owner can restore a backup into team data.",
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         style = MaterialTheme.typography.bodySmall
                     )
@@ -728,7 +758,7 @@ if (!quotaEnforcementReady) {
             },
             confirmButton = {
                 Button(
-                    enabled = !busy && quotaEnforcementReady,
+                    enabled = !busy && canRestoreBackup,
                     onClick = {
                         pendingBackupPreview = null
                         pendingBackupJson = null
