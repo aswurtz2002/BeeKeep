@@ -41,6 +41,12 @@ class BeeKeepEntitlementsTest {
     }
 
     @Test
+    fun nfcFeaturesAreCommercialOnly() {
+        assertFalse(BeeKeepEntitlements.canUseNfc(BeeKeepPlan.HOBBYIST))
+        assertTrue(BeeKeepEntitlements.canUseNfc(BeeKeepPlan.COMMERCIAL))
+    }
+
+    @Test
     fun eachActivePlanHasTheRequestedHiveAndApiaryCaps() {
         assertEquals(15, BeeKeepEntitlements.hiveLimit(BeeKeepPlan.HOBBYIST))
         assertEquals(3, BeeKeepEntitlements.apiaryLimit(BeeKeepPlan.HOBBYIST))
