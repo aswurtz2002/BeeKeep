@@ -82,9 +82,12 @@ internal fun PurchaseScreen(
             features = listOf("15 hive limit", "3 apiary limit", "Cloud sync"),
             current = currentPlan == BeeKeepPlan.HOBBYIST,
             highlighted = false,
-            actionLabel = if (currentPlan == BeeKeepPlan.HOBBYIST) "CURRENT PLAN" else "SWITCH TO HOBBYIST",
-            actionEnabled = debugBuild && currentPlan != BeeKeepPlan.HOBBYIST,
-            onAction = { onChoosePlan(BeeKeepPlan.HOBBYIST) }
+            actionLabel = when (currentPlan) {
+                BeeKeepPlan.HOBBYIST -> "CURRENT PLAN"
+                BeeKeepPlan.COMMERCIAL -> "LOCKED WHILE COMMERCIAL ACTIVE"
+            },
+            actionEnabled = false,
+            onAction = { /* Hobbyist is the default tier, not a selectable downgrade. */ }
         )
 
         PlanCard(
@@ -102,7 +105,7 @@ internal fun PurchaseScreen(
             description = when (selectedBillingCycle) {
                 CommercialBillingCycle.MONTHLY -> "For larger operations. Billed monthly."
                 CommercialBillingCycle.YEARLY ->
-                    "Billed yearly. Save ${BeeKeepPricing.formatCad(BeeKeepPricing.commercialYearlySavingsCad)} compared with monthly billing."
+                    BeeKeepPricing.commercialYearlyDiscountDescription()
             },
             features = listOf(
                 "10,000 hive limit",
