@@ -611,6 +611,27 @@ fun BeeKeepApp(
             delay(60_000)
         }
     }
+    // Keep the selected Room dataset's write gate aligned with the live owner entitlement,
+    // even when the beekeeper is on another screen and WorkspaceScreen is not mounted.
+    androidx.compose.runtime.LaunchedEffect(
+        activeWorkspaceId,
+        selectedTeamQuota?.active,
+        selectedTeamQuota?.memberRole,
+        activeWorkspaceReadOnly
+    ) {
+        val workspaceId = activeWorkspaceId?.trim()?.takeIf { it.isNotEmpty() } ?: return@LaunchedEffect
+        val quota = selectedTeamQuota ?: return@LaunchedEffect
+        val expectedReadOnly = !quota.active || quota.memberRole !in setOf("owner", "admin", "member")
+        if (activeWorkspaceReadOnly != expectedReadOnly) {
+            val result = cloud.activateWorkspace(workspaceId)
+            if (!result.isSuccess) {
+                teamQuotaSnapshot = null
+                teamQuotaError = result.error
+                    ?: "Workspace access could not be refreshed. Check your connection and retry."
+            }
+        }
+    }
+
     androidx.compose.runtime.LaunchedEffect(
         activeWorkspaceId,
         purchasePlan,
