@@ -20,6 +20,7 @@ import androidx.compose.material.icons.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
@@ -29,12 +30,18 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.layout.PaddingValues
+
+private enum class CommercialBillingCycle { MONTHLY, YEARLY }
 
 @Composable
 internal fun PurchaseScreen(
@@ -45,6 +52,9 @@ internal fun PurchaseScreen(
 ) {
     BackHandler { onBack() }
     val debugBuild = BuildConfig.DEBUG
+    var selectedBillingCycle by rememberSaveable {
+        mutableStateOf(CommercialBillingCycle.MONTHLY)
+    }
 
     Column(
         Modifier.fillMaxSize()
@@ -79,9 +89,21 @@ internal fun PurchaseScreen(
 
         PlanCard(
             title = "Commercial",
-            price = BeeKeepPricing.formatCad(BeeKeepPricing.COMMERCIAL_MONTHLY_CAD),
-            billing = "CAD / month",
-            description = "For larger operations. Annual billing is $59.99 CAD / year (save 28%).",
+            price = BeeKeepPricing.formatCad(
+                when (selectedBillingCycle) {
+                    CommercialBillingCycle.MONTHLY -> BeeKeepPricing.COMMERCIAL_MONTHLY_CAD
+                    CommercialBillingCycle.YEARLY -> BeeKeepPricing.COMMERCIAL_YEARLY_CAD
+                }
+            ),
+            billing = when (selectedBillingCycle) {
+                CommercialBillingCycle.MONTHLY -> "CAD / month"
+                CommercialBillingCycle.YEARLY -> "CAD / year"
+            },
+            description = when (selectedBillingCycle) {
+                CommercialBillingCycle.MONTHLY -> "For larger operations. Billed monthly."
+                CommercialBillingCycle.YEARLY ->
+                    "Billed yearly. Save ${BeeKeepPricing.formatCad(BeeKeepPricing.commercialYearlySavingsCad)} compared with monthly billing."
+            },
             features = listOf(
                 "10,000 hive limit",
                 "1,000 apiary limit",
@@ -99,6 +121,8 @@ internal fun PurchaseScreen(
                 else -> "PURCHASES COMING SOON"
             },
             actionEnabled = debugBuild,
+            billingCycle = selectedBillingCycle,
+            onBillingCycleChange = { selectedBillingCycle = it },
             onAction = { onChoosePlan(BeeKeepPlan.COMMERCIAL) }
         )
 
@@ -147,6 +171,8 @@ private fun PlanCard(
     badgeText: String? = null,
     actionLabel: String,
     actionEnabled: Boolean,
+    billingCycle: CommercialBillingCycle? = null,
+    onBillingCycleChange: ((CommercialBillingCycle) -> Unit)? = null,
     onAction: () -> Unit
 ) {
     val borderColor = if (highlighted) Color(0xFFD97706) else MaterialTheme.colorScheme.outlineVariant
@@ -163,6 +189,25 @@ private fun PlanCard(
                     Surface(color = Color(0xFFDCFCE7), contentColor = Color(0xFF166534), shape = RoundedCornerShape(50)) {
                         Text(badgeText, modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp), style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.ExtraBold)
                     }
+                }
+            }
+            if (billingCycle != null && onBillingCycleChange != null) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    BillingCycleTab(
+                        label = "Monthly",
+                        selected = billingCycle == CommercialBillingCycle.MONTHLY,
+                        modifier = Modifier.weight(1f),
+                        onClick = { onBillingCycleChange(CommercialBillingCycle.MONTHLY) }
+                    )
+                    BillingCycleTab(
+                        label = "Yearly · Save ${BeeKeepPricing.commercialYearlyDiscountPercent}%",
+                        selected = billingCycle == CommercialBillingCycle.YEARLY,
+                        modifier = Modifier.weight(1f),
+                        onClick = { onBillingCycleChange(CommercialBillingCycle.YEARLY) }
+                    )
                 }
             }
             Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
@@ -182,6 +227,37 @@ private fun PlanCard(
             if (current) {
                 Text("This is your active plan.", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
             }
+        }
+    }
+}
+
+
+@Composable
+private fun BillingCycleTab(
+    label: String,
+    selected: Boolean,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
+    if (selected) {
+        Button(
+            onClick = onClick,
+            modifier = modifier.height(44.dp),
+            shape = RoundedCornerShape(13.dp),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = Color(0xFFD97706),
+                contentColor = Color.White
+            )
+        ) {
+            Text(label, fontWeight = FontWeight.ExtraBold, maxLines = 1, softWrap = false)
+        }
+    } else {
+        OutlinedButton(
+            onClick = onClick,
+            modifier = modifier.height(44.dp),
+            shape = RoundedCornerShape(13.dp)
+        ) {
+            Text(label, fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false)
         }
     }
 }
