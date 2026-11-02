@@ -133,3 +133,8 @@ data class WorkspaceOperationResult<T>(
 ) {
     val isSuccess: Boolean get() = error == null
 }
+/** Centralizes the client-side role and owner-entitlement read-only rule. */
+internal object WorkspaceAccessPolicy {
+    fun isReadOnly(memberRole: String?, ownerCommercialEntitlementActive: Boolean): Boolean =
+        memberRole == "viewer" || (memberRole == "owner" && !ownerCommercialEntitlementActive)
+}
