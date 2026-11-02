@@ -99,6 +99,7 @@ import java.util.Locale
 internal fun SettingsScreen(
     padding: PaddingValues,
     activity: ComponentActivity,
+    repository: LocalHiveRepository,
     preferences: android.content.SharedPreferences,
     darkMode: Boolean,
     onDarkModeChange: (Boolean) -> Unit,
@@ -119,7 +120,9 @@ internal fun SettingsScreen(
     BackHandler { onBack() }
     val scope = rememberCoroutineScope()
     val account by cloud.account.collectAsState()
-    val repository = remember(context) { LocalHiveRepository(context) }
+    // Use MainActivity's live repository: it follows the selected personal/team database.
+    val activeWorkspaceId by repository.activeWorkspaceId.collectAsState()
+    val activeWorkspaceReadOnly by repository.activeWorkspaceReadOnly.collectAsState()
 
     var readyBeep by remember(preferences) { mutableStateOf(preferences.getBoolean("voice_ready_beep", true)) }
     var speakHiveNumber by remember(preferences) { mutableStateOf(preferences.getBoolean("speak_hive_number_on_scan", true)) }
@@ -411,6 +414,19 @@ internal fun SettingsScreen(
             }
 
             SettingsSection("Data, backup & sync", Icons.Rounded.Cloud) {
+                Text(
+                    if (activeWorkspaceId.isNullOrBlank()) "Backup target: Personal data" else "Backup target: Active team workspace",
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    when {
+                        activeWorkspaceReadOnly -> "This workspace is view-only. You can export it, but restore and reset are disabled."
+                        activeWorkspaceId.isNullOrBlank() -> "Export and restore apply only to your personal data on this device."
+                        else -> "Export and restore apply only to the selected team's data. Personal records remain separate."
+                    },
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodySmall
+                )
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                         Text("BeeKeep Cloud", fontWeight = FontWeight.Bold)
@@ -468,7 +484,7 @@ internal fun SettingsScreen(
                     OutlinedButton(
                         onClick = { openBackupLauncher.launch(arrayOf("application/json", "text/*", "*/*")) },
                         modifier = Modifier.weight(1f),
-                        enabled = !busy
+                        enabled = !busy && !activeWorkspaceReadOnly
                     ) {
                         Icon(Icons.Rounded.Restore, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(Modifier.width(6.dp))
@@ -556,7 +572,8 @@ if (backupMessage.isNotBlank()) Text(backupMessage, color = if (backupMessage.st
             }
 
             Card(
-                onClick = { if (!resettingApiaries) confirmResetApiaries = true },
+                onClick = { if (!resettingApiaries && !activeWorkspaceReadOnly) confirmResetApiaries = true },
+                enabled = !resettingApiaries && !activeWorkspaceReadOnly,
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(20.dp),
                 colors = CardDefaults.cardColors(
@@ -612,7 +629,7 @@ if (backupMessage.isNotBlank()) Text(backupMessage, color = if (backupMessage.st
             },
             confirmButton = {
                 Button(
-                    enabled = !resettingApiaries,
+                    enabled = !resettingApiaries && !activeWorkspaceReadOnly,
                     colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
                     onClick = {
                         if (resettingApiaries) return@Button
