@@ -1449,6 +1449,21 @@ class SupabaseGateway(
         myActiveCommercialEntitlement()
 
     /**
+     * Reads the trusted Commercial entitlement of a specific shared workspace owner.
+     * The server returns a result only when the signed-in account is a member of that workspace.
+     */
+    suspend fun workspaceOwnerCommercialEntitlement(
+        workspaceId: String
+    ): WorkspaceOperationResult<Boolean> = workspaceOperation {
+        require(workspaceId.isNotBlank()) { "A workspace is required to check its subscription." }
+        client!!.postgrest.rpc(
+            "beekeep_workspace_owner_commercial_entitlement",
+            buildJsonObject { put("target_workspace_id", workspaceId) }
+        ).decodeList<BeeKeepUltimateEntitlement>().firstOrNull()?.active
+            ?: error("Workspace owner entitlement was not returned.")
+    }
+
+    /**
      * Debug purchase simulation is synced only to the isolated staging Edge Function.
      * The function itself rejects every project except BeeKeep-Staging and cannot grant
      * entitlement on production. Release builds never call this method.
