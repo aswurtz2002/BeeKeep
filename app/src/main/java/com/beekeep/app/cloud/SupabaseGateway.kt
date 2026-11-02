@@ -241,7 +241,7 @@ class SupabaseGateway(
                     baseHiveLimit = it.baseHiveLimit,
                     isActivePaidPlan = it.isActivePaidPlan
                 )
-            } ?: BeeKeepPlan.FREE
+            } ?: BeeKeepPlan.HOBBYIST
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (_: Throwable) {
@@ -1376,12 +1376,17 @@ class SupabaseGateway(
      * Reads the signed-in account's server-managed Ultimate entitlement. The database derives
      * this from trusted auth app metadata; local plan simulation is never an authorization source.
      */
-    suspend fun myActiveUltimateEntitlement(): WorkspaceOperationResult<Boolean> =
+    suspend fun myActiveCommercialEntitlement(): WorkspaceOperationResult<Boolean> =
         workspaceOperation {
+            // The RPC name is historical; it now authorizes the Commercial tier.
             client!!.postgrest.rpc("beekeep_my_active_ultimate_entitlement")
                 .decodeList<BeeKeepUltimateEntitlement>()
-                .firstOrNull()?.active ?: error("Ultimate entitlement was not returned")
+                .firstOrNull()?.active ?: error("Commercial entitlement was not returned")
         }
+
+    @Deprecated("Use myActiveCommercialEntitlement")
+    suspend fun myActiveUltimateEntitlement(): WorkspaceOperationResult<Boolean> =
+        myActiveCommercialEntitlement()
 
     /**
      * Debug purchase simulation is synced only to the isolated staging Edge Function.
@@ -1398,11 +1403,8 @@ class SupabaseGateway(
             return WorkspaceOperationResult(error = "Sign in to BeeKeep Cloud to sync the staging test entitlement.")
         }
         val serverPlan = when (plan) {
-            BeeKeepPlan.FREE -> "free"
-            BeeKeepPlan.PRO -> "pro_monthly"
-            BeeKeepPlan.PRO_YEARLY -> "pro_yearly"
-            BeeKeepPlan.ULTIMATE -> "ultimate_monthly"
-            BeeKeepPlan.ULTIMATE_YEARLY -> "ultimate_yearly"
+            BeeKeepPlan.HOBBYIST -> "hobbyist"
+            BeeKeepPlan.COMMERCIAL -> "commercial_monthly"
         }
         return try {
             val response = supabase.functions.invoke(
