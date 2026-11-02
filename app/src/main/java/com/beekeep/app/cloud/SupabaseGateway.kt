@@ -1373,7 +1373,7 @@ class SupabaseGateway(
         }
 
     /**
-     * Reads the signed-in account's server-managed Ultimate entitlement. The database derives
+     * Reads the signed-in account's server-managed Commercial entitlement. The database derives
      * this from trusted auth app metadata; local plan simulation is never an authorization source.
      */
     suspend fun myActiveCommercialEntitlement(): WorkspaceOperationResult<Boolean> =
