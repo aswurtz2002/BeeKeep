@@ -17,4 +17,7 @@ data class BeeKeepServerEntitlement(
     @SerialName("expires_at") val expiresAt: String? = null,
     @SerialName("is_active_paid_plan") val isActivePaidPlan: Boolean = false,
     @SerialName("is_active_ultimate") val isActiveCommercial: Boolean = false
-)
+) {
+    @Deprecated("Use isActiveCommercial")
+    val isActiveUltimate: Boolean get() = isActiveCommercial
+}
