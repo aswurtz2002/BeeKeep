@@ -672,7 +672,10 @@ fun BeeKeepApp(
         if (!commercialEntitlementResolved) return@LaunchedEffect
         if (isCommercialPlan) {
             // The passive reader may have been held off while the account was restoring.
-            nfc.setPassiveReadingEnabled(activity, true)
+            // Fast-assignment mode owns NFC reads and must keep the passive reader suspended.
+            val allowPassiveReads = !fastTagAssignmentMode &&
+                !fastAssignmentSessionActive && !fastAssignmentScreenActive
+            nfc.setPassiveReadingEnabled(activity, allowPassiveReads)
         } else {
             nfc.stop(activity)
             nfc.finishFastAssignmentFlow(activity, preserveLastUid = false)
@@ -2511,7 +2514,10 @@ fun BeeKeepApp(
                     } else {
                     fastTagAssignmentMode = enabled
                     autoVoicePrefs.edit { putBoolean("fast_tag_assignment_mode", enabled) }
-                    if (enabled) (activity as? MainActivity)?.stopHiveAnnouncements()
+                    if (enabled) {
+                        (activity as? MainActivity)?.stopHiveAnnouncements()
+                        nfc.setPassiveReadingEnabled(activity, false)
+                    }
                     if (!enabled) {
                         fastAssignmentSessionActive = false
                         fastAssignmentScreenActive = false
