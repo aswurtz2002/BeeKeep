@@ -81,7 +81,7 @@ Deno.serve(async (req: Request) => {
     pro_monthly: 0,
     pro_yearly: 0,
   };
-  if (typeof plan !== "string" || !(plan in planToStore)) {
+  if (typeof plan !== "string" || !Object.prototype.hasOwnProperty.call(planToStore, plan)) {
     return respond(400, { success: false, error: "Unknown debug plan." });
   }
 
