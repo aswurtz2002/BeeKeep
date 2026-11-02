@@ -249,6 +249,7 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
                     val incomingNfc by pendingNfcResult.collectAsStateWithLifecycle()
                     BeeKeepApp(
                         vm, nfc, this, locationController, cloud, darkMode, incomingNfc,
+                        repository = repository,
                         onSpeakHiveNumber = ::speakHiveNumber,
                         largeFieldText = largeFieldText,
                         onLargeFieldTextChange = { value ->
@@ -417,6 +418,7 @@ fun BeeKeepApp(
     cloud: SupabaseGateway,
     darkMode: Boolean,
     incomingNfc: NfcResult.Read?,
+    repository: LocalHiveRepository,
     onSpeakHiveNumber: (String) -> Unit,
     largeFieldText: Boolean,
     onLargeFieldTextChange: (Boolean) -> Unit,
