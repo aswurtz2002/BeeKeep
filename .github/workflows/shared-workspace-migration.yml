@@ -133,3 +133,11 @@ jobs:
         run: psql -v ON_ERROR_STOP=1 -f supabase/tests/document_conflict_guards.sql
       - name: Verify explicit deletion overrides device clock skew
         run: psql -v ON_ERROR_STOP=1 -f supabase/tests/delete_timestamp_reconciliation.sql
+      - name: Apply Commercial entitlement and apiary quota enforcement
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261102041836_beekeep_commercial_entitlements_and_apiary_limits.sql
+      - name: Restrict internal Commercial helper grants
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261102041925_beekeep_internal_commercial_owner_helper_acl.sql
+      - name: Enforce Commercial entitlement for personal cloud NFC assignments
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261102042210_beekeep_nfc_entitlement_guard.sql
+      - name: Verify Commercial entitlements, workspace downgrade security, NFC and apiary quotas
+        run: psql -v ON_ERROR_STOP=1 -f supabase/tests/commercial_entitlement_server_enforcement.sql
