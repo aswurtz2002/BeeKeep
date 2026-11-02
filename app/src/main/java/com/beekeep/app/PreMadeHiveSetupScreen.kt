@@ -60,6 +60,7 @@ internal fun PreMadeHiveSetupScreen(
     hiveLimit: Int = BeeKeepEntitlements.hiveLimit(BeeKeepPlan.HOBBYIST),
     apiaryLimit: Int = BeeKeepEntitlements.apiaryLimit(BeeKeepPlan.HOBBYIST),
     currentPlan: BeeKeepPlan = BeeKeepPlan.HOBBYIST,
+    quotaEnforcementReady: Boolean = true,
     onBack: () -> Unit,
     onUpgrade: () -> Unit = {},
     onComplete: (createdApiaries: Int, createdHives: Int) -> Unit
@@ -100,6 +101,10 @@ internal fun PreMadeHiveSetupScreen(
     BackHandler { if (!isSaving && !largeBatchConfirmationVisible) onBack() }
 
     fun submitSetup(confirmedLargeBatch: Boolean = false) {
+        if (!quotaEnforcementReady) {
+            errorMessage = "Couldn't verify this workspace's subscription limits. Check your connection and try again."
+            return
+        }
         val cleanedNames = apiaryNames.map { it.trim() }
         val normalizedNames = cleanedNames.map { it.lowercase(Locale.ROOT) }
         val starts = startNumbers.map { it.toIntOrNull() }
@@ -486,7 +491,7 @@ internal fun PreMadeHiveSetupScreen(
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text("This setup requests ${String.format(Locale.CANADA, "%,d", totalHives)} starter hives.")
                         Text("You currently have $formattedHiveCount hives counted against ${currentPlan.displayName}; your plan allows $formattedHiveLimit.")
-                        Text(BeeKeepEntitlements.hiveLimitMessage(currentPlan))
+                        Text(BeeKeepEntitlements.hiveLimitMessage(currentPlan, hiveLimit))
                         Text("Your existing hive records remain safe.")
                     }
                 },
