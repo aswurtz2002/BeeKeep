@@ -2504,6 +2504,7 @@ fun BeeKeepApp(
                 hiveLimit = effectiveHiveLimit,
                 apiaryLimit = BeeKeepEntitlements.apiaryLimit(purchasePlan),
                 planName = purchasePlan.displayName,
+                quotaEnforcementReady = commercialEntitlementResolved,
                 onFastTagAssignmentModeChange = { enabled ->
                     if (enabled && !commercialEntitlementResolved) {
                         scope.launch { snackbarHostState.showSnackbar("Checking your BeeKeep plan…") }
