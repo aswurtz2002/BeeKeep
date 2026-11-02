@@ -107,6 +107,9 @@ internal fun SettingsScreen(
     onAutoVoiceEnabledChange: (Boolean) -> Unit,
     fastTagAssignmentMode: Boolean,
     nfcEntitled: Boolean,
+    hiveLimit: Int,
+    apiaryLimit: Int,
+    planName: String,
     onFastTagAssignmentModeChange: (Boolean) -> Unit,
     largeFieldText: Boolean,
     onLargeFieldTextChange: (Boolean) -> Unit,
@@ -725,7 +728,12 @@ if (backupMessage.isNotBlank()) Text(backupMessage, color = if (backupMessage.st
                             busy = true
                             backupMessage = "Restoring backup…"
                             try {
-                                val result = repository.restoreDataBackupJson(restoreJson)
+                                val result = repository.restoreDataBackupJson(
+                                    raw = restoreJson,
+                                    hiveLimit = hiveLimit,
+                                    apiaryLimit = apiaryLimit,
+                                    planName = planName
+                                )
                                 backupMessage = "Processed ${result.processedRecords} backup records. Newer local records were preserved."
                                 when (val syncResult = cloud.syncNow()) {
                                     CloudResult.Success -> {
