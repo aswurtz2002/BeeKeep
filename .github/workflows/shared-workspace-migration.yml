@@ -138,6 +138,6 @@ jobs:
       - name: Restrict internal Commercial helper grants
         run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261102041925_beekeep_internal_commercial_owner_helper_acl.sql
       - name: Enforce Commercial entitlement for personal cloud NFC assignments
-        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261102042130_beekeep_nfc_entitlement_guard.sql
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261102042210_beekeep_nfc_entitlement_guard.sql
       - name: Verify Commercial entitlements, workspace downgrade security, NFC and apiary quotas
         run: psql -v ON_ERROR_STOP=1 -f supabase/tests/commercial_entitlement_server_enforcement.sql
