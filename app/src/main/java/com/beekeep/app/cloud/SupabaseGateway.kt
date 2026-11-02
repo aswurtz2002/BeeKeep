@@ -183,6 +183,31 @@ class SupabaseGateway(
         }
     }
 
+    /**
+     * Resolve the workspace owner's trusted Commercial entitlement for every team role.
+     * Invited members cannot use their own plan to bypass the owner's subscription lock.
+     * If the membership-scoped check fails, fail closed and keep the local team read-only.
+     */
+    private suspend fun hasActiveCommercialEntitlementForWorkspace(
+        supabase: SupabaseClient,
+        workspaceId: String,
+        memberRole: String?
+    ): Boolean {
+        if (memberRole == "owner") {
+            return hasActiveCommercialEntitlementForWorkspaceOwner(supabase)
+        }
+        return try {
+            supabase.postgrest.rpc(
+                "beekeep_workspace_owner_commercial_entitlement",
+                buildJsonObject { put("target_workspace_id", workspaceId) }
+            ).decodeList<BeeKeepUltimateEntitlement>().firstOrNull()?.active == true
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Throwable) {
+            false
+        }
+    }
+
     private suspend fun restoreWorkspaceForAccount(supabase: SupabaseClient, userId: String) {
         val prefs = appContext.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
         val workspaceId = prefs.getString("active_team_workspace_id", "")
@@ -240,17 +265,17 @@ class SupabaseGateway(
         }
 
         val memberRole = memberWorkspace?.member_role
-        val ownerCommercialActive = if (membershipLookupCompleted && memberRole == "owner") {
-            hasActiveCommercialEntitlementForWorkspaceOwner(supabase)
+        val ownerCommercialActive = if (membershipLookupCompleted && memberRole != null) {
+            hasActiveCommercialEntitlementForWorkspace(supabase, workspaceId, memberRole)
         } else {
-            true
+            false
         }
         val readOnly = if (membershipLookupCompleted) {
             WorkspaceAccessPolicy.isReadOnly(memberRole, ownerCommercialActive)
         } else {
-            // During an outage preserve the role-based read-only state already recorded
-            // for this account; the owner entitlement is rechecked as soon as online.
-            prefs.getBoolean("active_team_workspace_read_only", false)
+            // A first-time/offline membership check must not grant local edit access.
+            // Preserve an existing explicit read-only state, otherwise fail closed.
+            prefs.getBoolean("active_team_workspace_read_only", true)
         }
         repository.switchWorkspace(
             workspaceId = workspaceId,
@@ -1165,8 +1190,12 @@ class SupabaseGateway(
                         .firstOrNull { it.id == cleanId && !it.is_personal }
                         ?: error("You no longer have access to that team workspace.")
                 }
-                val ownerCommercialActive = if (workspace?.member_role == "owner") {
-                    hasActiveCommercialEntitlementForWorkspaceOwner(supabase)
+                val ownerCommercialActive = if (workspace != null) {
+                    hasActiveCommercialEntitlementForWorkspace(
+                        supabase,
+                        workspace.id,
+                        workspace.member_role
+                    )
                 } else {
                     true
                 }
@@ -1220,11 +1249,11 @@ class SupabaseGateway(
                 return CloudResult.Failure(message)
             }
 
-            val ownerCommercialActive = if (workspace.member_role == "owner") {
-                hasActiveCommercialEntitlementForWorkspaceOwner(supabase)
-            } else {
-                true
-            }
+            val ownerCommercialActive = hasActiveCommercialEntitlementForWorkspace(
+                supabase,
+                workspaceId,
+                workspace.member_role
+            )
             val readOnly = WorkspaceAccessPolicy.isReadOnly(
                 memberRole = workspace.member_role,
                 ownerCommercialEntitlementActive = ownerCommercialActive
