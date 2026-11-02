@@ -638,7 +638,7 @@ fun BeeKeepApp(
     val selected by vm.selected.collectAsStateWithLifecycle()
     val ready by vm.ready.collectAsStateWithLifecycle()
 
-    // Keep a Pro session's expiry live while BeeKeep stays open, not only on app resume.
+    // Keep the Commercial test subscription's expiry live while BeeKeep stays open, not only on app resume.
     androidx.compose.runtime.LaunchedEffect(purchasePlanName) {
         if (purchasePlan.isPaidSubscription) {
             val expiresAt = BeeKeepEntitlements.debugCommercialExpiresAt(context)
@@ -2334,7 +2334,7 @@ fun BeeKeepApp(
                 activity = activity,
                 cloud = cloud,
                 currentPlan = purchasePlan,
-                hasUltimateAccess = hasCommercialWorkspaceAccess,
+                hasCommercialAccess = hasCommercialWorkspaceAccess,
                 activeWorkspaceId = activeWorkspaceId,
                 hiveCount = hives.size,
                 apiaryCount = apiaries.size,
