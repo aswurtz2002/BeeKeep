@@ -3365,7 +3365,7 @@ private fun MoreScreen(
                 Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                         Text("Support admin tools", fontWeight = FontWeight.ExtraBold, style = MaterialTheme.typography.titleMedium)
-                        Text("Manage approved Ultimate hive-limit exceptions", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("Manage approved Commercial hive-limit exceptions", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     Icon(Icons.Rounded.Lock, "Open support admin tools", tint = Color(0xFFB45309), modifier = Modifier.size(28.dp))
                 }
@@ -3391,7 +3391,7 @@ private fun MoreScreen(
                     )
                     Text(
                         if (currentPlan == BeeKeepPlan.HOBBYIST) {
-                            "Plans from $2.99 CAD/month • Ultimate: 10,000 hive limit"
+                            "Hobbyist: 15 hives / 3 apiaries • Commercial: 10,000 hives / 1,000 apiaries"
                         } else {
                             val hives = String.format(java.util.Locale.CANADA, "%,d", BeeKeepEntitlements.hiveLimit(currentPlan, hiveLimitOverride))
                             val apiaries = String.format(java.util.Locale.CANADA, "%,d", BeeKeepEntitlements.apiaryLimit(currentPlan))
