@@ -90,7 +90,11 @@ fun WorkspaceScreen(
         if (!workspaceResult.isSuccess) {
             ownerAccessCheckMessage = workspaceResult.error
                 ?: "Couldn't verify workspace ownership. Check your connection and retry."
-            ownerCommercialEntitlementActive = null
+            // Never drop a previously read-only decision because a refresh failed.
+            // On a first load, use only the account's cached trusted plan as fallback.
+            if (ownerCommercialEntitlementActive == null) {
+                ownerCommercialEntitlementActive = currentPlan == BeeKeepPlan.COMMERCIAL
+            }
             ownerAccessCheckComplete = true
             return
         }
