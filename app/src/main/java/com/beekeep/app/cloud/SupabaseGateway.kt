@@ -1478,6 +1478,21 @@ class SupabaseGateway(
         myActiveCommercialEntitlement()
 
     /**
+     * Reads the owner's active plan and exact server quota for the selected shared workspace.
+     * Membership is checked inside the SECURITY DEFINER RPC; invitees cannot supply an owner ID.
+     */
+    suspend fun workspaceOwnerQuotaEntitlement(
+        workspaceId: String
+    ): WorkspaceOperationResult<BeeKeepWorkspaceOwnerQuotaEntitlement> = workspaceOperation {
+        require(workspaceId.isNotBlank()) { "A workspace is required to check its quota." }
+        client!!.postgrest.rpc(
+            "beekeep_workspace_owner_quota_entitlement",
+            buildJsonObject { put("target_workspace_id", workspaceId) }
+        ).decodeList<BeeKeepWorkspaceOwnerQuotaEntitlement>().firstOrNull()
+            ?: error("Workspace owner quota was not returned.")
+    }
+
+    /**
      * Reads the trusted Commercial entitlement of a specific shared workspace owner.
      * The server returns a result only when the signed-in account is a member of that workspace.
      */
