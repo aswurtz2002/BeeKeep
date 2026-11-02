@@ -141,5 +141,7 @@ jobs:
         run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261102042210_beekeep_nfc_entitlement_guard.sql
       - name: Expose workspace owner Commercial status to invited members
         run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261102042500_beekeep_workspace_owner_commercial_entitlement_rpc.sql
+      - name: Expose membership-scoped workspace owner quota limits
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261102043000_beekeep_workspace_owner_quota_entitlement_rpc.sql
       - name: Verify Commercial entitlements, workspace downgrade security, NFC and apiary quotas
         run: psql -v ON_ERROR_STOP=1 -f supabase/tests/commercial_entitlement_server_enforcement.sql

@@ -1,5 +1,6 @@
--- Regression tests for Commercial entitlements, invitation acceptance, and server quotas.
--- Run after 20261102040000_beekeep_commercial_entitlements_and_apiary_limits.sql.
+-- Regression tests for Commercial entitlements, invitation acceptance, owner quota lookup,
+-- NFC downgrade protection, and server-enforced quotas.
+-- Run after the 2026110204* Commercial entitlement migrations and the owner-quota RPC migration.
 -- The entire fixture is rolled back, including users, workspaces, invitations and documents.
 begin;
 
@@ -17,10 +18,24 @@ set email = excluded.email,
     raw_app_meta_data = excluded.raw_app_meta_data,
     raw_user_meta_data = excluded.raw_user_meta_data;
 
+-- Verify the selected team carries the owner's approved custom hive allowance.
+insert into public.beekeep_user_hive_limit_overrides (user_id, hive_limit_override, reason)
+values (
+    '00000000-0000-0000-0000-000000000081',
+    11000,
+    'Regression: workspace owner custom hive allowance'
+)
+on conflict (user_id) do update
+set hive_limit_override = excluded.hive_limit_override,
+    reason = excluded.reason;
+
 do $plan_resolution_assertions$
 begin
     if public.beekeep_server_base_hive_limit('00000000-0000-0000-0000-000000000081') <> 10000 then
         raise exception 'Active Commercial must receive the 10,000 hive base limit';
+    end if;
+    if public.beekeep_resolved_hive_limit('00000000-0000-0000-0000-000000000081') <> 11000 then
+        raise exception 'Workspace owner custom hive allowance must resolve to 11,000';
     end if;
     if public.beekeep_resolved_apiary_limit('00000000-0000-0000-0000-000000000081') <> 1000 then
         raise exception 'Active Commercial must receive the 1,000 apiary limit';
@@ -83,10 +98,40 @@ from public.beekeep_create_workspace_invitation(
     'member'
 );
 
+-- A non-member cannot read the workspace owner's limits by guessing a workspace ID.
+select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-000000000084', false);
+do $nonmember_quota_assertion$
+declare row_count integer;
+begin
+    select count(*) into row_count
+      from public.beekeep_workspace_owner_quota_entitlement(
+          (select value::uuid from commercial_entitlement_test_context where key = 'workspace_id')
+      );
+    if row_count <> 0 then
+        raise exception 'A non-member received another workspace owner quota';
+    end if;
+end;
+$nonmember_quota_assertion$;
+
 select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-000000000082', false);
 select * from public.beekeep_accept_workspace_invitation(
     (select value from commercial_entitlement_test_context where key = 'admin_invitation_token')
 );
+
+do $invited_member_workspace_quota_assertion$
+declare quota_row record;
+begin
+    select * into quota_row
+      from public.beekeep_workspace_owner_quota_entitlement(
+          (select value::uuid from commercial_entitlement_test_context where key = 'workspace_id')
+      );
+    if quota_row.active is distinct from true
+       or quota_row.effective_hive_limit <> 11000
+       or quota_row.effective_apiary_limit <> 1000 then
+        raise exception 'An invited Hobbyist must receive the active owner's exact 11,000 / 1,000 workspace quota.';
+    end if;
+end;
+$invited_member_workspace_quota_assertion$;
 
 do $invited_member_workspace_status$
 declare active_value boolean;
@@ -185,6 +230,21 @@ begin
     end if;
 end;
 $downgraded_workspace_status$;
+
+do $downgraded_workspace_quota_assertion$
+declare quota_row record;
+begin
+    select * into quota_row
+      from public.beekeep_workspace_owner_quota_entitlement(
+          (select value::uuid from commercial_entitlement_test_context where key = 'workspace_id')
+      );
+    if quota_row.active is distinct from false
+       or quota_row.effective_hive_limit <> 15
+       or quota_row.effective_apiary_limit <> 3 then
+        raise exception 'A downgraded workspace must expose the Hobbyist quota and no longer retain the owner's Commercial override.';
+    end if;
+end;
+$downgraded_workspace_quota_assertion$;
 
 select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-000000000083', false);
 
