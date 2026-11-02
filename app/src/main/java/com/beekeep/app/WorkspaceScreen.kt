@@ -248,7 +248,7 @@ fun WorkspaceScreen(
                 cloud = cloud,
                 activity = activity,
                 currentPlan = currentPlan,
-                readOnly = true,
+                readOnlyWorkspaceId = activeWorkspaceId,
                 onUpgrade = onUpgrade,
                 onWorkspaceMembershipChanged = onWorkspaceMembershipChanged
             )
@@ -390,7 +390,7 @@ fun WorkspaceScreen(
                 cloud = cloud,
                 activity = activity,
                 currentPlan = currentPlan,
-                readOnly = false,
+                readOnlyWorkspaceId = null,
                 onUpgrade = onUpgrade,
                 onWorkspaceMembershipChanged = onWorkspaceMembershipChanged
             )
