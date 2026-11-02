@@ -1,6 +1,7 @@
 package com.beekeep.app.nfc
 
 import android.app.Activity
+import com.beekeep.app.BeeKeepEntitlements
 import android.content.Intent
 import android.nfc.tech.Ndef
 import android.nfc.tech.NdefFormatable
@@ -241,6 +242,10 @@ class NfcController {
      * because Android may dispatch an intent while ReaderMode is being re-armed.
      */
     fun beginFastAssignmentFlow(activity: Activity) {
+        if (!BeeKeepEntitlements.canUseNfc(activity)) {
+            fastAssignmentFlowActive = false
+            return
+        }
         fastAssignmentFlowActive = true
         setPassiveReadingEnabled(activity, false)
     }
@@ -300,7 +305,7 @@ class NfcController {
         // Compose screen effects may request passive reading while a fast-write
         // transaction is in progress. The transaction must retain exclusive NFC
         // ownership until it explicitly finishes or is cancelled.
-        val effectiveEnabled = enabled && !fastAssignmentFlowActive
+        val effectiveEnabled = enabled && !fastAssignmentFlowActive && BeeKeepEntitlements.canUseNfc(activity)
         if (passiveReadsEnabled == effectiveEnabled) {
             if (effectiveEnabled) enablePassiveIfNeeded(activity)
             return
@@ -435,6 +440,10 @@ class NfcController {
         onResult: (NfcResult) -> Unit,
         ignoredUid: String? = null
     ) {
+        if (!BeeKeepEntitlements.canUseNfc(activity)) {
+            onResult(NfcResult.Error("NFC scanning and tag management require BeeKeep Commercial. Your existing tag assignments are preserved and will remain saved."))
+            return
+        }
         val nfc = adapter ?: activity.getSystemService(NfcManager::class.java)?.defaultAdapter
         if (nfc == null) { onResult(NfcResult.Error("This phone does not have NFC.")); return }
         if (!nfc.isEnabled) { onResult(NfcResult.Error("NFC is turned off. Turn it on in Settings and try again.")); return }
@@ -525,6 +534,11 @@ class NfcController {
             NfcAdapter.FLAG_READER_NO_PLATFORM_SOUNDS
 
     private fun enablePassiveIfNeeded(activity: Activity) {
+        if (!BeeKeepEntitlements.canUseNfc(activity)) {
+            runCatching { adapter?.disableReaderMode(activity) }
+            passiveReaderActive = false
+            return
+        }
         if (!passiveReadsEnabled || !activityResumed || active.get() || passiveReaderActive || !knownHiveTagsReady ||
             passiveReadListener == null || activity.isFinishing || activity.isDestroyed) return
         val nfc = adapter ?: activity.getSystemService(NfcManager::class.java)?.defaultAdapter ?: return
