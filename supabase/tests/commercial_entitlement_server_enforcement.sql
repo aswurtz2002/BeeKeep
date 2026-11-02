@@ -10,9 +10,13 @@ values
      '{"beekeep_plan":"commercial_monthly","beekeep_subscription_expires_at":"2099-01-01T00:00:00Z"}'::jsonb, '{}'::jsonb),
     ('00000000-0000-0000-0000-000000000082', 'commercial-regression-admin@example.test', '{}'::jsonb, '{}'::jsonb),
     ('00000000-0000-0000-0000-000000000083', 'commercial-regression-pending@example.test', '{}'::jsonb, '{}'::jsonb),
-    ('00000000-0000-0000-0000-000000000084', 'commercial-regression-hobbyist@example.test', '{}'::jsonb, '{}'::jsonb),
+    ('00000000-0000-0000-0000-000000000084', 'commercial-regression-hobbyist@example.test', '{}'::jsonb,
+     '{"beekeep_plan":"commercial_monthly","beekeep_subscription_expires_at":"2099-01-01T00:00:00Z"}'::jsonb),
     ('00000000-0000-0000-0000-000000000085', 'commercial-regression-legacy-pro@example.test',
-     '{"beekeep_plan":"pro_monthly","beekeep_subscription_expires_at":"2099-01-01T00:00:00Z"}'::jsonb, '{}'::jsonb)
+     '{"beekeep_plan":"pro_monthly","beekeep_subscription_expires_at":"2099-01-01T00:00:00Z"}'::jsonb, '{}'::jsonb),
+    ('00000000-0000-0000-0000-000000000086', 'commercial-regression-expired@example.test',
+     '{"beekeep_plan":"commercial_monthly","beekeep_subscription_expires_at":"2020-01-01T00:00:00Z"}'::jsonb,
+     '{"beekeep_plan":"commercial_monthly","beekeep_subscription_expires_at":"2099-01-01T00:00:00Z"}'::jsonb)
 on conflict (id) do update
 set email = excluded.email,
     raw_app_meta_data = excluded.raw_app_meta_data,
@@ -52,6 +56,15 @@ begin
     if public.beekeep_user_has_active_commercial('00000000-0000-0000-0000-000000000085') then
         raise exception 'Legacy Pro must not receive Commercial features';
     end if;
+    if public.beekeep_server_base_hive_limit('00000000-0000-0000-0000-000000000084') <> 15
+       or public.beekeep_user_has_active_commercial('00000000-0000-0000-0000-000000000084') then
+        raise exception 'User-editable metadata must not grant Commercial features or quotas';
+    end if;
+    if public.beekeep_server_base_hive_limit('00000000-0000-0000-0000-000000000086') <> 15
+       or public.beekeep_resolved_apiary_limit('00000000-0000-0000-0000-000000000086') <> 3
+       or public.beekeep_user_has_active_commercial('00000000-0000-0000-0000-000000000086') then
+        raise exception 'An expired Commercial subscription must resolve to Hobbyist limits';
+    end if;
 end;
 $plan_resolution_assertions$;
 
@@ -81,6 +94,22 @@ begin
     end if;
 end;
 $owner_workspace_status$;
+
+do $owner_workspace_quota_assertion$
+declare quota_row record;
+begin
+    select * into quota_row
+      from public.beekeep_workspace_owner_quota_entitlement(
+          (select value::uuid from commercial_entitlement_test_context where key = 'workspace_id')
+      );
+    if quota_row.active is distinct from true
+       or quota_row.effective_hive_limit <> 11000
+       or quota_row.effective_apiary_limit <> 1000
+       or quota_row.member_role <> 'owner' then
+        raise exception 'A Commercial owner should receive their own resolved workspace quotas.';
+    end if;
+end;
+$owner_workspace_quota_assertion$;
 
 insert into commercial_entitlement_test_context(key, value)
 select 'admin_invitation_token', invite_token
