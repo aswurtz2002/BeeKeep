@@ -144,18 +144,52 @@ class SupabaseGateway(
             val session = supabase.auth.currentSessionOrNull()
             val userId = session?.user?.id?.trim()?.takeIf { it.isNotEmpty() }
             if (userId == null) {
-                // A successfully restored session with no user is a confirmed sign-out, unlike a
-                // transient auth/network failure. Only this path clears the selected workspace.
+                // The auth SDK can have no current session when an expired token cannot refresh
+                // offline. An explicit in-app sign-out clears the active workspace before it gets
+                // here, so retain an account-bound selection as read-only instead of mistaking an
+                // unavailable session for a user-requested switch to personal data.
                 stopRealtime()
-                repository.switchWorkspace(null)
-                appContext.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE).edit()
-                    .remove("last_cloud_user_id")
-                    .remove("last_cloud_user_email")
-                    .apply()
-                BeeKeepEntitlements.activateCloudHiveLimitOverride(appContext, null)
-                _hiveLimitOverride.value = null
-                _verifiedPlan.value = null
-                verifiedPlanUserId = null
+                val prefs = appContext.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
+                val cachedWorkspaceId = prefs.getString("active_team_workspace_id", "").orEmpty().trim()
+                val storedOwnerId = prefs.getString("active_team_workspace_user_id", null)
+                    ?.trim()?.takeIf { it.isNotEmpty() }
+                val cachedUserId = prefs.getString("last_cloud_user_id", null)
+                    ?.trim()?.takeIf { it.isNotEmpty() } ?: storedOwnerId
+                val keepCachedTeam = ActiveWorkspaceSessionPolicy.canKeepCachedWorkspace(
+                    cachedWorkspaceId,
+                    cachedUserId,
+                    storedOwnerId
+                )
+                if (keepCachedTeam) {
+                    repository.switchWorkspace(
+                        workspaceId = cachedWorkspaceId,
+                        readOnly = true,
+                        ownerUserId = storedOwnerId
+                    )
+                    BeeKeepEntitlements.activateCloudHiveLimitOverride(appContext, cachedUserId)
+                    _hiveLimitOverride.value =
+                        BeeKeepEntitlements.cachedCloudHiveLimitOverride(appContext, cachedUserId!!)
+                    _verifiedPlan.value = BeeKeepEntitlements.currentPlan(appContext)
+                    verifiedPlanUserId = cachedUserId
+                    _account.value = CloudAccountState(
+                        configured = true,
+                        signedIn = false,
+                        email = prefs.getString("last_cloud_user_email", null).orEmpty(),
+                        userId = cachedUserId,
+                        error = "Your cloud session isn't available. Your selected team remains on this device in view-only mode; sign in again to sync."
+                    )
+                } else {
+                    repository.switchWorkspace(null)
+                    prefs.edit()
+                        .remove("last_cloud_user_id")
+                        .remove("last_cloud_user_email")
+                        .apply()
+                    BeeKeepEntitlements.activateCloudHiveLimitOverride(appContext, null)
+                    _hiveLimitOverride.value = null
+                    _verifiedPlan.value = null
+                    verifiedPlanUserId = null
+                    _account.value = CloudAccountState(configured = true, signedIn = false)
+                }
             } else {
                 appContext.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE).edit()
                     .putString("last_cloud_user_id", userId)
