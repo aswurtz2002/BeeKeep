@@ -96,4 +96,18 @@ class BackupRestoreLimitPolicyTest {
         assertEquals(2, assessment.resultingApiaryCount)
         assertEquals(1, assessment.newApiaryCount)
     }
+    @Test
+    fun personalBackupRestoreIsAvailableWithoutWorkspaceMembership() {
+        assertTrue(canRestoreBackupToWorkspace(isPersonalWorkspace = true, memberRole = null))
+    }
+
+    @Test
+    fun teamBackupRestoreUsesOnlyTheWorkspaceOwnersEntitlement() {
+        assertTrue(canRestoreBackupToWorkspace(isPersonalWorkspace = false, memberRole = "owner"))
+        assertFalse(canRestoreBackupToWorkspace(isPersonalWorkspace = false, memberRole = "admin"))
+        assertFalse(canRestoreBackupToWorkspace(isPersonalWorkspace = false, memberRole = "member"))
+        assertFalse(canRestoreBackupToWorkspace(isPersonalWorkspace = false, memberRole = "viewer"))
+        assertFalse(canRestoreBackupToWorkspace(isPersonalWorkspace = false, memberRole = null))
+    }
+
 }
