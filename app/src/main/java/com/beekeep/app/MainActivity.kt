@@ -431,6 +431,20 @@ fun BeeKeepApp(
     onDarkModeChange: (Boolean) -> Unit
 ) {
     val context = LocalContext.current
+    val workspaceSelectionInitialized by cloud.workspaceSelectionInitialized.collectAsStateWithLifecycle()
+    if (!workspaceSelectionInitialized) {
+        Box(
+            Modifier.fillMaxSize(),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                "Restoring your selected workspace…",
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        return
+    }
     val cloudHiveLimitOverride by cloud.hiveLimitOverride.collectAsStateWithLifecycle()
     val serverVerifiedPlan by cloud.verifiedPlan.collectAsStateWithLifecycle()
     val cloudAccountInitialized by cloud.accountInitialized.collectAsStateWithLifecycle()
@@ -505,6 +519,7 @@ fun BeeKeepApp(
     val purchasePlan = if (BuildConfig.DEBUG) localPurchasePlan else serverVerifiedPlan ?: BeeKeepPlan.HOBBYIST
     var lockedHivePromptVisible by rememberSaveable { mutableStateOf(false) }
     var lockedHivePromptName by rememberSaveable { mutableStateOf<String?>(null) }
+    var lockedHivePromptHiveId by rememberSaveable { mutableStateOf<Long?>(null) }
     var purchaseBackScreen by rememberSaveable { mutableStateOf(Screen.MORE) }
     var purchaseSuccessScreen by rememberSaveable { mutableStateOf(Screen.HOME) }
     var selectedHiveOpen by rememberSaveable { mutableStateOf(false) }
@@ -566,6 +581,7 @@ fun BeeKeepApp(
         mutableStateOf<Pair<String, BeeKeepWorkspaceOwnerQuotaEntitlement>?>(null)
     }
     var teamQuotaError by remember { mutableStateOf<String?>(null) }
+    var teamQuotaRefreshSignal by remember { mutableIntStateOf(0) }
     val personalQuotaLimits = remember(purchasePlan, cloudHiveLimitOverride) {
         BeeKeepQuotaLimits.forPlan(purchasePlan, cloudHiveLimitOverride)
     }
@@ -619,7 +635,12 @@ fun BeeKeepApp(
 
     // A selected team uses the owner's server-resolved limits, never the invitee's personal plan.
     // Until that lookup succeeds, use a restrictive fallback and block quota-dependent writes.
-    androidx.compose.runtime.LaunchedEffect(activeWorkspaceId, account.signedIn, account.userId) {
+    androidx.compose.runtime.LaunchedEffect(
+        activeWorkspaceId,
+        account.signedIn,
+        account.userId,
+        teamQuotaRefreshSignal
+    ) {
         val workspaceId = activeWorkspaceId?.trim()?.takeIf { it.isNotEmpty() }
         if (workspaceId == null) {
             teamQuotaSnapshot = null
@@ -627,7 +648,8 @@ fun BeeKeepApp(
             return@LaunchedEffect
         }
 
-        teamQuotaSnapshot = null
+        // Keep the last verified quota for this workspace while offline. A failed refresh is not
+        // evidence that the owner's plan changed or that the selected team should use another cap.
         teamQuotaError = null
         if (!account.signedIn) {
             teamQuotaError = "Sign in to verify this workspace's subscription limits."
@@ -640,7 +662,6 @@ fun BeeKeepApp(
                 teamQuotaSnapshot = workspaceId to result.value!!
                 teamQuotaError = null
             } else {
-                teamQuotaSnapshot = null
                 teamQuotaError = result.error
                     ?: "Couldn't verify the workspace owner's subscription limits. Check your connection and retry."
             }
@@ -855,6 +876,7 @@ fun BeeKeepApp(
         }
         if (hive.id !in latestLockedHiveIds) return true
         lockedHivePromptName = hiveDisplayName(hive.number)
+        lockedHivePromptHiveId = hive.id
         lockedHivePromptVisible = true
         return false
     }
@@ -867,6 +889,7 @@ fun BeeKeepApp(
     fun openLockedHiveUpgrade() {
         lockedHivePromptVisible = false
         lockedHivePromptName = null
+        lockedHivePromptHiveId = null
         purchaseBackScreen = screen
         purchaseSuccessScreen = screen
         screen = Screen.PURCHASES
@@ -900,6 +923,17 @@ fun BeeKeepApp(
         inspecting = false
         selectedHiveOpen = false
         vm.clearHive()
+    }
+
+    // If a plan renewal unlocks the hive behind an already-open alert, dismiss that
+    // stale prompt immediately. The currently displayed hive/list can continue in place.
+    androidx.compose.runtime.LaunchedEffect(lockedHiveIds, lockedHivePromptVisible, lockedHivePromptHiveId) {
+        val promptHiveId = lockedHivePromptHiveId
+        if (lockedHivePromptVisible && promptHiveId != null && promptHiveId !in lockedHiveIds) {
+            lockedHivePromptVisible = false
+            lockedHivePromptName = null
+            lockedHivePromptHiveId = null
+        }
     }
 
     // Stop any in-flight hardware operation as soon as the currently open hive
@@ -1244,6 +1278,11 @@ fun BeeKeepApp(
             if (event == Lifecycle.Event.ON_RESUME) {
                 nfcEnabledForIndicator = nfc.isAvailable() && nfc.isEnabled()
                 purchasePlanName = BeeKeepEntitlements.currentPlan(context).name
+                // Refresh subscriptions that may have been renewed outside the open screen.
+                scope.launch {
+                    cloud.refreshAccount()
+                    teamQuotaRefreshSignal += 1
+                }
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -1732,6 +1771,7 @@ fun BeeKeepApp(
             onDismissRequest = {
                 lockedHivePromptVisible = false
                 lockedHivePromptName = null
+                lockedHivePromptHiveId = null
             },
             shape = RoundedCornerShape(26.dp),
             containerColor = Color(0xFFFFFBEB),
@@ -1757,6 +1797,7 @@ fun BeeKeepApp(
                     TextButton(onClick = {
                         lockedHivePromptVisible = false
                         lockedHivePromptName = null
+                        lockedHivePromptHiveId = null
                     }) { Text("OK") }
                 }
             },
@@ -1764,6 +1805,7 @@ fun BeeKeepApp(
                 TextButton(onClick = {
                     lockedHivePromptVisible = false
                     lockedHivePromptName = null
+                    lockedHivePromptHiveId = null
                 }) {
                     Text("NOT NOW", color = Color(0xFF78350F))
                 }
@@ -1791,6 +1833,13 @@ fun BeeKeepApp(
 
                         BeeKeepEntitlements.setDebugPlan(context, plan)
                         purchasePlanName = plan.name
+
+                        // The staging entitlement is authoritative now. Refresh both the account
+                        // plan and selected team's owner access, then refetch that team's quota.
+                        // The new locked-hive set is derived from this state, so the current screen
+                        // unlocks immediately without requiring the beekeeper to close/reopen it.
+                        cloud.refreshAccount()
+                        teamQuotaRefreshSignal += 1
 
                         if (plan != BeeKeepPlan.HOBBYIST) {
                             screen = purchaseSuccessScreen
