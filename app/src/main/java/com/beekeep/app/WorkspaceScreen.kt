@@ -79,6 +79,7 @@ fun WorkspaceScreen(
     // members do not need their own Commercial plan, so check the owner through a
     // membership-scoped server RPC for every selected team.
     suspend fun refreshOwnerWorkspaceAccess() {
+        val previousActiveWorkspaceOwnerEntitlement = activeWorkspaceOwnerCommercialEntitlementActive
         if (!account.signedIn) {
             hasOwnedTeamWorkspace = false
             ownedWorkspaceIds = emptySet()
@@ -147,6 +148,20 @@ fun WorkspaceScreen(
                 activeWorkspaceOwnerCommercialEntitlementActive = null
                 ownerAccessCheckMessage = ownerEntitlement.error
                     ?: "Couldn't verify the workspace owner's Commercial subscription. Check your connection and retry."
+            }
+        }
+
+        // When the selected team's owner status changes (or cannot be verified),
+        // re-activate the same workspace so SupabaseGateway immediately updates the
+        // local Room write gate for owners and invited members alike.
+        if (activeTeam != null &&
+            (previousActiveWorkspaceOwnerEntitlement != activeWorkspaceOwnerCommercialEntitlementActive ||
+                activeWorkspaceOwnerCommercialEntitlementActive == null)
+        ) {
+            val activation = cloud.activateWorkspace(activeTeam.id)
+            if (!activation.isSuccess && ownerAccessCheckMessage.isBlank()) {
+                ownerAccessCheckMessage = activation.error
+                    ?: "The workspace access state could not be refreshed. Try again."
             }
         }
         ownerAccessCheckComplete = true
