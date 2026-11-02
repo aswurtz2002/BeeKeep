@@ -45,6 +45,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.beekeep.app.cloud.SupabaseGateway
+import com.beekeep.app.cloud.WorkspaceAccessPolicy
 import com.beekeep.app.cloud.isSupportedWorkspaceInvitationCode
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
