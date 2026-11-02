@@ -207,44 +207,73 @@ fun WorkspaceScreen(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
-        } else if (workspaceAccessPaused) {
+        } else if (workspaceAccessLocked || workspaceAccessCouldNotBeVerified) {
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(24.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
             ) {
                 Column(
-                    modifier = Modifier.fillMaxWidth().padding(18.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                    modifier = Modifier.fillMaxWidth().padding(20.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
                         Icon(
                             imageVector = Icons.Rounded.Lock,
                             contentDescription = null,
                             tint = MaterialTheme.colorScheme.error,
-                            modifier = Modifier.size(28.dp)
+                            modifier = Modifier.size(32.dp)
                         )
                         Column(
-                            modifier = Modifier.weight(1f).padding(start = 10.dp),
-                            verticalArrangement = Arrangement.spacedBy(2.dp)
+                            modifier = Modifier.weight(1f),
+                            verticalArrangement = Arrangement.spacedBy(3.dp)
                         ) {
-                            Text("Workspace access paused", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.ExtraBold)
-                            Text("An active Commercial entitlement is required for the owner of a team workspace.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(
+                                if (workspaceAccessLocked) "Workspace locked" else "Workspace access unavailable",
+                                style = MaterialTheme.typography.titleLarge,
+                                fontWeight = FontWeight.ExtraBold
+                            )
+                            Text(
+                                if (workspaceAccessLocked && activeWorkspaceIsOwnedByUser) {
+                                    "Your Commercial subscription has expired."
+                                } else if (workspaceAccessLocked) {
+                                    "The workspace owner's Commercial subscription is inactive."
+                                } else {
+                                    "BeeKeep couldn't verify the workspace owner's Commercial subscription."
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
                         }
                     }
                     Text(
-                        "Your team's hives, apiaries and history remain saved and available to view and export. BeeKeep will not delete or reset records because a plan expired. New edits and workspace management are paused, and queued edits stay on this device until Commercial is active again.",
+                        when {
+                            workspaceAccessCouldNotBeVerified ->
+                                "This workspace stays locked until BeeKeep can verify its access. Check your connection and try again. Your team records have not been deleted."
+                            activeWorkspaceIsOwnedByUser ->
+                                "Renew Commercial to unlock this workspace. Your hives, apiaries and history are preserved, and queued edits stay on this device until access is restored."
+                            else ->
+                                "Ask the workspace owner to renew Commercial. Team access will return when the owner's subscription is active again. Your team records remain saved."
+                        },
                         style = MaterialTheme.typography.bodyMedium
                     )
-                    Button(
-                        onClick = onUpgrade,
-                        modifier = Modifier.fillMaxWidth(),
-                        enabled = !ownerAccessActionBusy
-                    ) { Text("RENEW COMMERCIAL") }
+                    if (workspaceAccessLocked && activeWorkspaceIsOwnedByUser) {
+                        Button(
+                            onClick = onUpgrade,
+                            modifier = Modifier.fillMaxWidth(),
+                            enabled = !ownerAccessActionBusy
+                        ) { Text("UPGRADE TO COMMERCIAL") }
+                    }
                     OutlinedButton(
                         onClick = {
                             scope.launch {
                                 ownerAccessActionBusy = true
+                                ownerAccessCheckComplete = false
                                 refreshOwnerWorkspaceAccess()
                                 ownerAccessActionBusy = false
                             }
@@ -252,38 +281,28 @@ fun WorkspaceScreen(
                         modifier = Modifier.fillMaxWidth(),
                         enabled = !ownerAccessActionBusy
                     ) { Text(if (ownerAccessActionBusy) "CHECKING…" else "CHECK ACCESS AGAIN") }
-                    if (hasActiveTeam) {
-                        OutlinedButton(
-                            onClick = {
-                                scope.launch {
-                                    ownerAccessActionBusy = true
-                                    val result = cloud.activateWorkspace(null)
-                                    ownerAccessCheckMessage = result.error
-                                        ?: "Switched to your personal data. Your team data remains saved."
-                                    ownerAccessActionBusy = false
-                                }
-                            },
-                            modifier = Modifier.fillMaxWidth(),
-                            enabled = !ownerAccessActionBusy
-                        ) { Text("SWITCH TO PERSONAL DATA") }
-                    }
-                    if (ownerAccessCheckMessage.isNotBlank()) {
-                        Text(ownerAccessCheckMessage, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    OutlinedButton(
+                        onClick = {
+                            scope.launch {
+                                ownerAccessActionBusy = true
+                                val result = cloud.activateWorkspace(null)
+                                ownerAccessCheckMessage = result.error
+                                    ?: "Switched to your personal data. Your team data remains saved."
+                                ownerAccessActionBusy = false
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        enabled = !ownerAccessActionBusy
+                    ) { Text("SWITCH TO PERSONAL DATA") }
+                    if (ownerAccessCheckMessage.isNotBlank() && workspaceAccessCouldNotBeVerified) {
+                        Text(
+                            ownerAccessCheckMessage,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error
+                        )
                     }
                 }
             }
-            // The owned team remains selectable and browsable. Mutating controls are
-            // disabled by WorkspaceManagementSection and the active Room database is
-            // separately marked read-only by SupabaseGateway.
-            WorkspaceCloudSyncSection(cloud = cloud)
-            WorkspaceManagementSection(
-                cloud = cloud,
-                activity = activity,
-                currentPlan = currentPlan,
-                readOnlyWorkspaceIds = readOnlyOwnedWorkspaceIds,
-                onUpgrade = onUpgrade,
-                onWorkspaceMembershipChanged = onWorkspaceMembershipChanged
-            )
         } else {
             Card(
                 modifier = Modifier.fillMaxWidth(),
