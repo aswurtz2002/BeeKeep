@@ -78,10 +78,13 @@ object BeeKeepEntitlements {
     private const val DEBUG_PRO_EXPIRY_KEY = "debug_pro_expires_at"
     private const val PRO_CREATED_HIVE_IDS_KEY = "debug_pro_created_hive_ids"
     private const val CLOUD_HIVE_OVERRIDE_PREFIX = "cloud_hive_limit_override_for_"
+    private const val CLOUD_PLAN_PREFIX = "cloud_verified_plan_for_"
     const val MAX_CUSTOM_HIVE_LIMIT = 1_000_000
 
     @Volatile private var activeCloudUserId: String? = null
     @Volatile private var activeCloudHiveLimitOverride: Int? = null
+    @Volatile private var activeCloudPlanUserId: String? = null
+    @Volatile private var activeCloudPlan: BeeKeepPlan? = null
 
     fun activateCloudHiveLimitOverride(context: Context, userId: String?) {
         val cleanUserId = userId?.trim()?.takeIf { it.isNotEmpty() }
@@ -89,11 +92,27 @@ object BeeKeepEntitlements {
         if (cleanUserId == null) {
             activeCloudUserId = null
             activeCloudHiveLimitOverride = null
+            activeCloudPlanUserId = null
+            activeCloudPlan = null
             return
         }
         activeCloudUserId = cleanUserId
         activeCloudHiveLimitOverride = prefs.getInt(CLOUD_HIVE_OVERRIDE_PREFIX + cleanUserId, -1)
             .takeIf { it in COMMERCIAL_HIVE_LIMIT..MAX_CUSTOM_HIVE_LIMIT }
+        activeCloudPlanUserId = cleanUserId
+        activeCloudPlan = prefs.getString(CLOUD_PLAN_PREFIX + cleanUserId, null)
+            ?.let(BeeKeepPlan::fromStoredValue)
+    }
+
+    /** Persists a plan returned by the signed-in account's trusted entitlement RPC. */
+    fun updateCloudVerifiedPlan(context: Context, userId: String, plan: BeeKeepPlan) {
+        val cleanUserId = userId.trim()
+        if (cleanUserId.isEmpty()) return
+        context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putString(CLOUD_PLAN_PREFIX + cleanUserId, plan.name)
+            .apply()
+        if (activeCloudPlanUserId == cleanUserId) activeCloudPlan = plan
     }
 
     fun updateCloudHiveLimitOverride(context: Context, userId: String, limit: Int?) {
@@ -117,7 +136,7 @@ object BeeKeepEntitlements {
     }
 
     fun currentPlan(context: Context): BeeKeepPlan {
-        if (!BuildConfig.DEBUG) return BeeKeepPlan.HOBBYIST
+        if (!BuildConfig.DEBUG) return activeCloudPlan ?: BeeKeepPlan.HOBBYIST
         val prefs = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         val saved = prefs.getString(DEBUG_PLAN_KEY, BeeKeepPlan.HOBBYIST.name)
         val plan = BeeKeepPlan.fromStoredValue(saved)
