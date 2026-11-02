@@ -84,6 +84,10 @@ class BeeKeepEntitlementsTest {
         assertEquals(59.88, BeeKeepPricing.COMMERCIAL_MONTHLY_CAD * 12, 0.001)
         assertEquals(29.89, BeeKeepPricing.commercialYearlySavingsCad, 0.001)
         assertEquals(50, BeeKeepPricing.commercialYearlyDiscountPercent)
+        assertEquals(
+            "Billed yearly. Save 50% compared with monthly billing.",
+            BeeKeepPricing.commercialYearlyDiscountDescription()
+        )
         assertEquals("$4.99", BeeKeepPricing.formatCad(BeeKeepPricing.COMMERCIAL_MONTHLY_CAD))
         assertEquals("$29.99", BeeKeepPricing.formatCad(BeeKeepPricing.COMMERCIAL_YEARLY_CAD))
     }
