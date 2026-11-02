@@ -198,7 +198,7 @@ internal fun HomeScreen(
     apiaryCount: Int,
     padding: androidx.compose.foundation.layout.PaddingValues,
     nfcEnabled: Boolean,
-    currentPlan: BeeKeepPlan = BeeKeepPlan.FREE,
+    currentPlan: BeeKeepPlan = BeeKeepPlan.HOBBYIST,
     onOpenApiaries: () -> Unit
 ) {
     LazyColumn(
@@ -277,12 +277,8 @@ internal fun HomeScreen(
                         modifier = Modifier.weight(1f),
                         verticalArrangement = Arrangement.spacedBy(5.dp)
                     ) {
-                        if (currentPlan != BeeKeepPlan.FREE) {
-                            val tierLabel = when (currentPlan) {
-                                BeeKeepPlan.PRO, BeeKeepPlan.PRO_YEARLY -> "Pro"
-                                BeeKeepPlan.ULTIMATE, BeeKeepPlan.ULTIMATE_YEARLY -> "Ultimate"
-                                BeeKeepPlan.FREE -> ""
-                            }
+                        if (currentPlan != BeeKeepPlan.HOBBYIST) {
+                            val tierLabel = currentPlan.displayName
                             Row(
                                 verticalAlignment = Alignment.Top,
                                 horizontalArrangement = Arrangement.spacedBy(5.dp)
