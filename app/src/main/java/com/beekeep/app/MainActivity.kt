@@ -649,11 +649,18 @@ fun BeeKeepApp(
     }
 
     fun showQuotaVerificationMessage() {
-        scope.launch {
-            snackbarHostState.showSnackbar(
+        val message = when {
+            activeWorkspaceId.isNullOrBlank() ->
+                "BeeKeep could not verify the active plan limits. Try again."
+            selectedTeamQuota == null ->
                 teamQuotaError ?: "Checking the workspace owner's subscription limits…"
-            )
+            !selectedTeamQuota.active ->
+                "This workspace is locked because the owner's Commercial subscription is inactive."
+            selectedTeamQuota.memberRole == "viewer" || activeWorkspaceReadOnly ->
+                "This workspace is view-only. Ask the owner to check your access."
+            else -> "Workspace access could not be verified. Check your connection and try again."
         }
+        scope.launch { snackbarHostState.showSnackbar(message) }
     }
     var hasJoinedTeamWorkspace by rememberSaveable {
         mutableStateOf(autoVoicePrefs.getString("selected_team_workspace_id", "").orEmpty().isNotBlank())

@@ -102,7 +102,7 @@ internal fun PreMadeHiveSetupScreen(
 
     fun submitSetup(confirmedLargeBatch: Boolean = false) {
         if (!quotaEnforcementReady) {
-            errorMessage = "Couldn't verify this workspace's subscription limits. Check your connection and try again."
+            errorMessage = "BeeKeep couldn't confirm that this workspace can be changed. Check the owner's Commercial subscription and your workspace role, then try again."
             return
         }
         val cleanedNames = apiaryNames.map { it.trim() }
