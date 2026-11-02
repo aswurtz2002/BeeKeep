@@ -2386,6 +2386,7 @@ fun BeeKeepApp(
             Screen.SETTINGS -> SettingsScreen(
                 padding = padding,
                 activity = activity,
+                repository = repository,
                 preferences = autoVoicePrefs,
                 darkMode = darkMode,
                 onDarkModeChange = onDarkModeChange,
