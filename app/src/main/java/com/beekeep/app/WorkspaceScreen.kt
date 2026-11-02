@@ -206,7 +206,7 @@ fun WorkspaceScreen(
                         }
                     }
                     Text(
-                        "Your team's databases, hives, apiaries, inspection history, and queued local edits are retained. BeeKeep will not delete or reset records because a plan expired. Team cloud writes may remain blocked until Commercial is active again.",
+                        "Your team's hives, apiaries and history remain saved and available to view and export. BeeKeep will not delete or reset records because a plan expired. New edits and workspace management are paused, and queued edits stay on this device until Commercial is active again.",
                         style = MaterialTheme.typography.bodyMedium
                     )
                     Button(
