@@ -125,6 +125,7 @@ fun WorkspaceManagementSection(
 
     LaunchedEffect(readOnlyWorkspaceIds, selectedWorkspace?.id) {
         if (selectedWorkspaceReadOnly) {
+            selectedWorkspaceSection = "overview"
             showCreateDialog = false
             showCopyPersonalData = false
             showDangerZone = false
