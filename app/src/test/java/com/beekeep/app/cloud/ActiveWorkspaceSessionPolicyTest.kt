@@ -23,4 +23,40 @@ class ActiveWorkspaceSessionPolicyTest {
         assertFalse(ActiveWorkspaceSessionPolicy.ownerMatches("user-a", null))
         assertFalse(ActiveWorkspaceSessionPolicy.ownerMatches("user-a", " "))
     }
+
+    @Test
+    fun matchingAccountCanKeepItsCachedWorkspaceSelectedDuringOfflineMembershipFailure() {
+        assertTrue(
+            ActiveWorkspaceSessionPolicy.canKeepCachedWorkspace(
+                workspaceId = "team-a",
+                sessionUserId = "user-a",
+                storedOwnerUserId = "user-a"
+            )
+        )
+        assertFalse(
+            ActiveWorkspaceSessionPolicy.canKeepCachedWorkspace(
+                workspaceId = "team-a",
+                sessionUserId = "user-b",
+                storedOwnerUserId = "user-a"
+            )
+        )
+        assertFalse(
+            ActiveWorkspaceSessionPolicy.canKeepCachedWorkspace(
+                workspaceId = null,
+                sessionUserId = "user-a",
+                storedOwnerUserId = "user-a"
+            )
+        )
+    }
+
+    @Test
+    fun aLegacyUnboundTeamCannotBeRestoredAsAnAccountVerifiedOfflineSelection() {
+        assertFalse(
+            ActiveWorkspaceSessionPolicy.canKeepCachedWorkspace(
+                workspaceId = "team-a",
+                sessionUserId = "user-a",
+                storedOwnerUserId = null
+            )
+        )
+    }
 }
