@@ -235,7 +235,8 @@ class SupabaseGateway(
         if (cleanUserId.isEmpty()) return
         if (verifiedPlanUserId != cleanUserId) {
             verifiedPlanUserId = cleanUserId
-            _verifiedPlan.value = null
+            // Seed the UI from this account's last server-verified cache while the RPC refreshes.
+            _verifiedPlan.value = BeeKeepEntitlements.currentPlan(appContext)
         }
         val supabase = client ?: return
         try {
