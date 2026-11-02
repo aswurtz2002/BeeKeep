@@ -2475,6 +2475,9 @@ fun BeeKeepApp(
                 },
                 fastTagAssignmentMode = fastTagAssignmentMode,
                 nfcEntitled = isCommercialPlan,
+                hiveLimit = effectiveHiveLimit,
+                apiaryLimit = BeeKeepEntitlements.apiaryLimit(purchasePlan),
+                planName = purchasePlan.displayName,
                 onFastTagAssignmentModeChange = { enabled ->
                     if (enabled && !isCommercialPlan) {
                         purchaseBackScreen = Screen.SETTINGS
