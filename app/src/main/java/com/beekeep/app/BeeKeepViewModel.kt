@@ -254,7 +254,7 @@ class BeeKeepViewModel(
             }
                 .onSuccess { createdHiveIds ->
                     requestCloudSync()
-                    if (planAtCreation.isProSubscription) {
+                    if (planAtCreation.isPaidSubscription) {
                         BeeKeepEntitlements.rememberProCreatedHives(appContext, createdHiveIds)
                     }
                     onResult(true, null)
@@ -288,7 +288,7 @@ class BeeKeepViewModel(
                 repo.saveHive(Hive(hiveId, clean, cleanApiary, queen, "", "", null, 3, strength.coerceIn(0, 10), 0.0, null))
                 hiveId
             }.onSuccess { hiveId ->
-                if (planAtCreation.isProSubscription) {
+                if (planAtCreation.isPaidSubscription) {
                     BeeKeepEntitlements.rememberProCreatedHives(appContext, listOf(hiveId))
                 }
                 val tagError = tagUid?.takeIf { it.isNotBlank() }?.let { tag ->
