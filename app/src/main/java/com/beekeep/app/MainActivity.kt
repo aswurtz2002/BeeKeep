@@ -344,7 +344,8 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
     }
 
     private fun handleNfcIntent(intent: Intent?) {
-        if (!BeeKeepEntitlements.canUseNfc(this)) return
+        // Entitlement resolution can still be in progress on a cold start. Queue the
+        // NDEF read here; BeeKeepApp handles it only after the account plan is verified.
         // While fast tagging is enabled, never interpret an Android NFC launch intent
         // as a request to navigate to Inspection. ReaderMode owns the physical tag;
         // this preference guard also survives a newly-created NfcController instance.
@@ -431,6 +432,8 @@ fun BeeKeepApp(
     val context = LocalContext.current
     val cloudHiveLimitOverride by cloud.hiveLimitOverride.collectAsStateWithLifecycle()
     val serverVerifiedPlan by cloud.verifiedPlan.collectAsStateWithLifecycle()
+    val cloudAccountInitialized by cloud.accountInitialized.collectAsStateWithLifecycle()
+    val commercialEntitlementResolved = BuildConfig.DEBUG || cloudAccountInitialized
     val autoVoicePrefs = remember(context) {
         context.getSharedPreferences(PREFS, android.content.Context.MODE_PRIVATE)
     }
@@ -655,16 +658,22 @@ fun BeeKeepApp(
         }
     }
 
-    androidx.compose.runtime.LaunchedEffect(screen, isCommercialPlan) {
-        if (!isCommercialPlan && (screen == Screen.TAG_MANAGER || screen == Screen.SCAN)) {
+    androidx.compose.runtime.LaunchedEffect(screen, isCommercialPlan, commercialEntitlementResolved) {
+        if (commercialEntitlementResolved && !isCommercialPlan &&
+            (screen == Screen.TAG_MANAGER || screen == Screen.SCAN)
+        ) {
             purchaseBackScreen = Screen.MORE
             purchaseSuccessScreen = Screen.MORE
             screen = Screen.PURCHASES
         }
     }
 
-    androidx.compose.runtime.LaunchedEffect(isCommercialPlan) {
-        if (!isCommercialPlan) {
+    androidx.compose.runtime.LaunchedEffect(isCommercialPlan, commercialEntitlementResolved) {
+        if (!commercialEntitlementResolved) return@LaunchedEffect
+        if (isCommercialPlan) {
+            // The passive reader may have been held off while the account was restoring.
+            nfc.setPassiveReadingEnabled(activity, true)
+        } else {
             nfc.stop(activity)
             nfc.finishFastAssignmentFlow(activity, preserveLastUid = false)
             fastTagAssignmentMode = false
@@ -1295,6 +1304,10 @@ fun BeeKeepApp(
     }
 
     fun startManualNfcScan() {
+        if (!commercialEntitlementResolved) {
+            scope.launch { snackbarHostState.showSnackbar("Checking your BeeKeep plan…") }
+            return
+        }
         if (!isCommercialPlan) {
             purchaseBackScreen = screen
             purchaseSuccessScreen = screen
@@ -1318,9 +1331,11 @@ fun BeeKeepApp(
         fastAssignmentSessionActive,
         fastAssignmentScreenActive,
         fastAssignmentStateHydrated,
-        isCommercialPlan
+        isCommercialPlan,
+        commercialEntitlementResolved
     ) {
         val result = incomingNfc ?: return@LaunchedEffect
+        if (!commercialEntitlementResolved) return@LaunchedEffect
         if (!isCommercialPlan) {
             (activity as? MainActivity)?.pendingNfcResult?.value = null
             return@LaunchedEffect
@@ -2049,11 +2064,15 @@ fun BeeKeepApp(
             hive = hiveForDetail,
             viewModel = vm,
             fastTagAssignmentMode = fastTagAssignmentActive,
-            nfcEntitled = isCommercialPlan,
+            nfcEntitled = isCommercialPlan && commercialEntitlementResolved,
             onUpgradeNfc = {
-                purchaseBackScreen = Screen.HOME
-                purchaseSuccessScreen = Screen.HOME
-                screen = Screen.PURCHASES
+                if (!commercialEntitlementResolved) {
+                    scope.launch { snackbarHostState.showSnackbar("Checking your BeeKeep plan…") }
+                } else {
+                    purchaseBackScreen = Screen.HOME
+                    purchaseSuccessScreen = Screen.HOME
+                    screen = Screen.PURCHASES
+                }
             },
             autoStartTagWriting = pendingAutoTagWriteHiveId == hiveForDetail.id,
             autoStartTagWritingIgnoreUid = if (pendingAutoTagWriteHiveId == hiveForDetail.id) pendingAutoTagWriteIgnoredUid else null,
@@ -2180,7 +2199,9 @@ fun BeeKeepApp(
             confirmBeforeTagRemoval = autoVoicePrefs.getBoolean("confirm_tag_removal", true),
             tagAssignmentSuccessUid = if (lastHiveTagSuccessHiveId == hiveForDetail.id) lastHiveTagSuccessUid else null,
             onVerifyTag = {
-                if (!isCommercialPlan) {
+                if (!commercialEntitlementResolved) {
+                    scope.launch { snackbarHostState.showSnackbar("Checking your BeeKeep plan…") }
+                } else if (!isCommercialPlan) {
                     purchaseBackScreen = Screen.HOME
                     purchaseSuccessScreen = Screen.HOME
                     screen = Screen.PURCHASES
@@ -2434,7 +2455,9 @@ fun BeeKeepApp(
                     scope.launch { snackbarHostState.showSnackbar(joinedMessage) }
                 },
                 onTagManager = {
-                    if (isCommercialPlan) {
+                    if (!commercialEntitlementResolved) {
+                        scope.launch { snackbarHostState.showSnackbar("Checking your BeeKeep plan…") }
+                    } else if (isCommercialPlan) {
                         tagManagerReturnScreen = Screen.MORE
                         screen = Screen.TAG_MANAGER
                     } else {
@@ -2474,12 +2497,14 @@ fun BeeKeepApp(
                     autoVoicePrefs.edit { putBoolean("auto_voice_on_nfc", enabled) }
                 },
                 fastTagAssignmentMode = fastTagAssignmentMode,
-                nfcEntitled = isCommercialPlan,
+                nfcEntitled = isCommercialPlan && commercialEntitlementResolved,
                 hiveLimit = effectiveHiveLimit,
                 apiaryLimit = BeeKeepEntitlements.apiaryLimit(purchasePlan),
                 planName = purchasePlan.displayName,
                 onFastTagAssignmentModeChange = { enabled ->
-                    if (enabled && !isCommercialPlan) {
+                    if (enabled && !commercialEntitlementResolved) {
+                        scope.launch { snackbarHostState.showSnackbar("Checking your BeeKeep plan…") }
+                    } else if (enabled && !isCommercialPlan) {
                         purchaseBackScreen = Screen.SETTINGS
                         purchaseSuccessScreen = Screen.SETTINGS
                         screen = Screen.PURCHASES
@@ -2511,9 +2536,13 @@ fun BeeKeepApp(
                 onBack = { screen = Screen.HOME },
                 onOpenMore = { screen = Screen.MORE },
                 onOpenPlans = {
-                    purchaseBackScreen = Screen.SETTINGS
-                    purchaseSuccessScreen = Screen.SETTINGS
-                    screen = Screen.PURCHASES
+                    if (!commercialEntitlementResolved) {
+                        scope.launch { snackbarHostState.showSnackbar("Checking your BeeKeep plan…") }
+                    } else {
+                        purchaseBackScreen = Screen.SETTINGS
+                        purchaseSuccessScreen = Screen.SETTINGS
+                        screen = Screen.PURCHASES
+                    }
                 },
                 onResetApiaries = { warning ->
                     vm.clearHive()
