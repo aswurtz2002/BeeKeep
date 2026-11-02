@@ -86,6 +86,7 @@ import com.beekeep.app.cloud.CloudResult
 import com.beekeep.app.cloud.SupabaseGateway
 import com.beekeep.app.data.DataBackupPreview
 import com.beekeep.app.data.LocalHiveRepository
+import com.beekeep.app.data.canRestoreBackupToWorkspace
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -106,6 +107,11 @@ internal fun SettingsScreen(
     autoVoiceEnabled: Boolean,
     onAutoVoiceEnabledChange: (Boolean) -> Unit,
     fastTagAssignmentMode: Boolean,
+    nfcEntitled: Boolean,
+    hiveLimit: Int,
+    apiaryLimit: Int,
+    planName: String,
+    quotaEnforcementReady: Boolean,
     onFastTagAssignmentModeChange: (Boolean) -> Unit,
     largeFieldText: Boolean,
     onLargeFieldTextChange: (Boolean) -> Unit,
@@ -114,6 +120,7 @@ internal fun SettingsScreen(
     cloud: SupabaseGateway,
     onBack: () -> Unit,
     onOpenMore: () -> Unit,
+    onOpenPlans: () -> Unit,
     onResetApiaries: (String?) -> Unit
 ) {
     val context = LocalContext.current
@@ -123,6 +130,31 @@ internal fun SettingsScreen(
     // Use MainActivity's live repository: it follows the selected personal/team database.
     val activeWorkspaceId by repository.activeWorkspaceId.collectAsState()
     val activeWorkspaceReadOnly by repository.activeWorkspaceReadOnly.collectAsState()
+    var restoreWorkspaceOwnerVerified by remember { mutableStateOf(activeWorkspaceId.isNullOrBlank()) }
+    var restoreWorkspaceRoleCheckComplete by remember { mutableStateOf(activeWorkspaceId.isNullOrBlank()) }
+
+    LaunchedEffect(activeWorkspaceId, account.signedIn, account.userId) {
+        if (activeWorkspaceId.isNullOrBlank()) {
+            restoreWorkspaceOwnerVerified = true
+            restoreWorkspaceRoleCheckComplete = true
+        } else {
+            restoreWorkspaceOwnerVerified = false
+            restoreWorkspaceRoleCheckComplete = false
+            if (account.signedIn) {
+                val workspaces = cloud.listWorkspaces()
+                restoreWorkspaceOwnerVerified = workspaces.isSuccess &&
+                    workspaces.value.orEmpty().any {
+                        it.id == activeWorkspaceId && !it.is_personal &&
+                            canRestoreBackupToWorkspace(isPersonalWorkspace = false, memberRole = it.member_role)
+                    }
+            }
+            restoreWorkspaceRoleCheckComplete = true
+        }
+    }
+    val canRestoreBackup = quotaEnforcementReady &&
+        !activeWorkspaceReadOnly &&
+        restoreWorkspaceRoleCheckComplete &&
+        restoreWorkspaceOwnerVerified
 
     var readyBeep by remember(preferences) { mutableStateOf(preferences.getBoolean("voice_ready_beep", true)) }
     var speakHiveNumber by remember(preferences) { mutableStateOf(preferences.getBoolean("speak_hive_number_on_scan", true)) }
@@ -272,12 +304,25 @@ internal fun SettingsScreen(
 
             SettingsSection("NFC & Voice behaviour", Icons.Rounded.Nfc) {
                 // Tag-management controls come first.
-                SettingsSwitchRow(
-                    title = "Fast tag assignment mode",
-                    checked = fastTagAssignmentMode,
-                    onCheckedChange = onFastTagAssignmentModeChange
-                )
-                if (fastTagAssignmentMode) {
+                if (nfcEntitled) {
+                    SettingsSwitchRow(
+                        title = "Fast tag assignment mode",
+                        checked = fastTagAssignmentMode,
+                        onCheckedChange = onFastTagAssignmentModeChange
+                    )
+                } else {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(
+                            "NFC scanning, tag assignment and fast assignment are Commercial features. Your existing tag assignments remain saved.",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                        OutlinedButton(onClick = onOpenPlans, modifier = Modifier.fillMaxWidth()) {
+                            Text("VIEW COMMERCIAL PLAN")
+                        }
+                    }
+                }
+                if (nfcEntitled && fastTagAssignmentMode) {
                     Text(
                         "TURN THIS SETTING OFF TO CONTINUE NORMAL OPERATION",
                         style = MaterialTheme.typography.bodySmall,
@@ -423,7 +468,9 @@ internal fun SettingsScreen(
                     when {
                         activeWorkspaceReadOnly -> "This workspace is view-only. You can export it, but restore and reset are disabled."
                         activeWorkspaceId.isNullOrBlank() -> "Export and restore apply only to your personal data on this device."
-                        else -> "Export and restore apply only to the selected team's data. Personal records remain separate."
+                        !restoreWorkspaceRoleCheckComplete -> "Checking workspace owner permissions for backup restore…"
+                        !restoreWorkspaceOwnerVerified -> "You can export this team workspace. Only its owner can restore a backup, using the owner's plan limits."
+                        else -> "Export and restore apply to this team workspace using the owner's plan limits. Personal records remain separate."
                     },
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     style = MaterialTheme.typography.bodySmall
@@ -485,14 +532,23 @@ internal fun SettingsScreen(
                     OutlinedButton(
                         onClick = { openBackupLauncher.launch(arrayOf("application/json", "text/*", "*/*")) },
                         modifier = Modifier.weight(1f),
-                        enabled = !busy && !activeWorkspaceReadOnly
+                        enabled = !busy && canRestoreBackup
                     ) {
                         Icon(Icons.Rounded.Restore, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(Modifier.width(6.dp))
                         Text("RESTORE")
                     }
                 }
-if (backupMessage.isNotBlank()) Text(backupMessage, color = if (backupMessage.startsWith("Backup failed") || backupMessage.startsWith("Could not")) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
+if (!canRestoreBackup && !activeWorkspaceReadOnly && backupMessage.isBlank()) {
+                    Text(
+                        if (!quotaEnforcementReady) "Checking your BeeKeep plan before restoring a backup…"
+                        else if (!restoreWorkspaceRoleCheckComplete) "Checking workspace owner permissions…"
+                        else "Only the workspace owner can restore a backup into team data.",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+                if (backupMessage.isNotBlank()) Text(backupMessage, color = if (backupMessage.startsWith("Backup failed") || backupMessage.startsWith("Could not")) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
             }
 
             SettingsSection("Permissions & troubleshooting", Icons.Rounded.Security) {
@@ -702,7 +758,7 @@ if (backupMessage.isNotBlank()) Text(backupMessage, color = if (backupMessage.st
             },
             confirmButton = {
                 Button(
-                    enabled = !busy,
+                    enabled = !busy && canRestoreBackup,
                     onClick = {
                         pendingBackupPreview = null
                         pendingBackupJson = null
@@ -710,7 +766,12 @@ if (backupMessage.isNotBlank()) Text(backupMessage, color = if (backupMessage.st
                             busy = true
                             backupMessage = "Restoring backup…"
                             try {
-                                val result = repository.restoreDataBackupJson(restoreJson)
+                                val result = repository.restoreDataBackupJson(
+                                    raw = restoreJson,
+                                    hiveLimit = hiveLimit,
+                                    apiaryLimit = apiaryLimit,
+                                    planName = planName
+                                )
                                 backupMessage = "Processed ${result.processedRecords} backup records. Newer local records were preserved."
                                 when (val syncResult = cloud.syncNow()) {
                                     CloudResult.Success -> {

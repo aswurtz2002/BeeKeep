@@ -82,6 +82,9 @@ class SupabaseGateway(
         CloudAccountState(configured = configured, signedIn = false)
     )
     val account: StateFlow<CloudAccountState> = _account.asStateFlow()
+    private val _accountInitialized = MutableStateFlow(false)
+    /** True after Supabase has restored the stored session and the account identity is known. */
+    val accountInitialized: StateFlow<Boolean> = _accountInitialized.asStateFlow()
 
     private val _hiveLimitOverride = MutableStateFlow<Int?>(null)
     /** A verified override for the signed-in account, or null when none is granted. */
@@ -105,6 +108,7 @@ class SupabaseGateway(
      * on private/local data until the identity can be verified.
      */
     private suspend fun refreshAccountUnlocked() {
+        _accountInitialized.value = false
         val supabase = client
         if (!configured || supabase == null) {
             stopRealtime()
@@ -114,6 +118,7 @@ class SupabaseGateway(
             _verifiedPlan.value = null
             verifiedPlanUserId = null
             _account.value = CloudAccountState(configured = false, signedIn = false)
+            _accountInitialized.value = true
             return
         }
         try {
@@ -142,6 +147,7 @@ class SupabaseGateway(
                 email = session?.user?.email ?: "",
                 userId = userId
             )
+            _accountInitialized.value = true
             if (enableRealtime && userId != null) startRealtime() else stopRealtime()
         } catch (cancelled: CancellationException) {
             throw cancelled
@@ -154,6 +160,26 @@ class SupabaseGateway(
             _verifiedPlan.value = null
             verifiedPlanUserId = null
             _account.value = CloudAccountState(configured = true, signedIn = false, error = error.message)
+            _accountInitialized.value = true
+        }
+    }
+
+    /**
+     * The owner of a shared workspace must have an active Commercial entitlement.
+     * The decision comes from the trusted SECURITY DEFINER RPC. Offline, keep only
+     * the signed-in account's last server-verified plan as a temporary fallback.
+     */
+    private suspend fun hasActiveCommercialEntitlementForWorkspaceOwner(
+        supabase: SupabaseClient
+    ): Boolean {
+        return try {
+            supabase.postgrest.rpc("beekeep_my_active_ultimate_entitlement")
+                .decodeList<BeeKeepUltimateEntitlement>()
+                .firstOrNull()?.active == true
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Throwable) {
+            BeeKeepEntitlements.currentPlan(appContext) == BeeKeepPlan.COMMERCIAL
         }
     }
 
@@ -213,9 +239,17 @@ class SupabaseGateway(
             }
         }
 
-        val readOnly = if (membershipLookupCompleted) {
-            memberWorkspace?.member_role == "viewer"
+        val memberRole = memberWorkspace?.member_role
+        val ownerCommercialActive = if (membershipLookupCompleted && memberRole == "owner") {
+            hasActiveCommercialEntitlementForWorkspaceOwner(supabase)
         } else {
+            true
+        }
+        val readOnly = if (membershipLookupCompleted) {
+            WorkspaceAccessPolicy.isReadOnly(memberRole, ownerCommercialActive)
+        } else {
+            // During an outage preserve the role-based read-only state already recorded
+            // for this account; the owner entitlement is rechecked as soon as online.
             prefs.getBoolean("active_team_workspace_read_only", false)
         }
         repository.switchWorkspace(
@@ -1131,9 +1165,17 @@ class SupabaseGateway(
                         .firstOrNull { it.id == cleanId && !it.is_personal }
                         ?: error("You no longer have access to that team workspace.")
                 }
+                val ownerCommercialActive = if (workspace?.member_role == "owner") {
+                    hasActiveCommercialEntitlementForWorkspaceOwner(supabase)
+                } else {
+                    true
+                }
                 repository.switchWorkspace(
                     workspaceId = cleanId,
-                    readOnly = workspace?.member_role == "viewer",
+                    readOnly = WorkspaceAccessPolicy.isReadOnly(
+                        memberRole = workspace?.member_role,
+                        ownerCommercialEntitlementActive = ownerCommercialActive
+                    ),
                     ownerUserId = userId
                 )
                 val syncResult = syncNowUnlocked()
@@ -1178,21 +1220,29 @@ class SupabaseGateway(
                 return CloudResult.Failure(message)
             }
 
-            val isWritable = workspace.member_role in setOf("owner", "admin", "member")
-            // Reconcile both workspace identity and access mode. Comparing only the
-            // read-only flag can leave this gateway writing Team B records into Team A's
-            // local Room database when both memberships have the same role.
+            val ownerCommercialActive = if (workspace.member_role == "owner") {
+                hasActiveCommercialEntitlementForWorkspaceOwner(supabase)
+            } else {
+                true
+            }
+            val readOnly = WorkspaceAccessPolicy.isReadOnly(
+                memberRole = workspace.member_role,
+                ownerCommercialEntitlementActive = ownerCommercialActive
+            )
+            val isWritable = !readOnly
+            // Reconcile both workspace identity and access mode. A downgraded owner must
+            // not become writable again when a later sync refreshes only the member role.
             repository.switchWorkspace(
                 workspaceId = workspaceId,
-                readOnly = !isWritable,
+                readOnly = readOnly,
                 ownerUserId = userId
             )
             if (isWritable) {
-                // Remove legacy NFC-only hive snapshots before they can overwrite team profiles.
+                // Do not queue new local drafts or upload pending edits for a read-only team.
                 repository.discardLegacyNfcProfileSnapshots()
                 repository.queuePendingInspectionNoteDrafts()
+                repository.queuePendingInspectionFormDrafts()
             }
-            repository.queuePendingInspectionFormDrafts()
             val cursorKey = workspaceSyncCursorKey(userId, workspaceId)
             val previousCursor = readSyncCursor(cursorKey)
             if (isWritable) {

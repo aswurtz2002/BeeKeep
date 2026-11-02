@@ -212,6 +212,8 @@ internal fun HiveDetailScreen(
     nextHiveNumber: String? = null,
     onNextHive: () -> Unit = {},
     fastTagAssignmentMode: Boolean = false,
+    nfcEntitled: Boolean = true,
+    onUpgradeNfc: () -> Unit = {},
     autoStartTagWriting: Boolean = false,
     autoStartTagWritingIgnoreUid: String? = null,
     onAutoTagWritingStarted: () -> Unit = {},
@@ -251,6 +253,11 @@ internal fun HiveDetailScreen(
     }
 
     fun startTagWriting(ignoredUid: String? = null) {
+        if (!nfcEntitled) {
+            writeStatusType = "error"
+            writeStatus = "NFC scanning and tag assignment require BeeKeep Commercial."
+            return
+        }
         if (writeStatusType == "saving" || writeStatusType == "removing") return
         if (fastTagAssignmentMode && hive.isDead) {
             skipHiveInFastAssignment("the colony is marked dead")
@@ -546,157 +553,177 @@ internal fun HiveDetailScreen(
             }
         }
 
-        Card(
-            shape = RoundedCornerShape(16.dp),
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
-        ) {
-            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                val tagAssignmentSucceeded = writeStatusType == "success" || !tagAssignmentSuccessUid.isNullOrBlank()
-                Row(
-                    Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    Text(
-                        "NFC hive tag",
-                        modifier = Modifier.weight(1f),
-                        fontWeight = FontWeight.Bold,
-                        style = MaterialTheme.typography.titleSmall
-                    )
-                    if (!fastTagAssignmentMode && tagAssignmentSucceeded && nextHiveNumber != null) {
-                        OutlinedButton(
-                            onClick = onNextHive,
-                            modifier = Modifier.height(32.dp).widthIn(max = 170.dp),
-                            shape = RoundedCornerShape(10.dp),
-                            contentPadding = PaddingValues(horizontal = 7.dp, vertical = 0.dp)
-                        ) {
+        if (nfcEntitled) {
+            Card(
+                shape = RoundedCornerShape(16.dp),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+            ) {
+                Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    val tagAssignmentSucceeded = writeStatusType == "success" || !tagAssignmentSuccessUid.isNullOrBlank()
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Text(
+                            "NFC hive tag",
+                            modifier = Modifier.weight(1f),
+                            fontWeight = FontWeight.Bold,
+                            style = MaterialTheme.typography.titleSmall
+                        )
+                        if (!fastTagAssignmentMode && tagAssignmentSucceeded && nextHiveNumber != null) {
+                            OutlinedButton(
+                                onClick = onNextHive,
+                                modifier = Modifier.height(32.dp).widthIn(max = 170.dp),
+                                shape = RoundedCornerShape(10.dp),
+                                contentPadding = PaddingValues(horizontal = 7.dp, vertical = 0.dp)
+                            ) {
+                                Text(
+                                    "NEXT ${hiveDisplayName(nextHiveNumber)}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Icon(
+                                    Icons.Rounded.ChevronRight,
+                                    contentDescription = "Open next hive in this apiary",
+                                    modifier = Modifier.size(14.dp)
+                                )
+                            }
+                        } else if (!fastTagAssignmentMode && tagAssignmentSucceeded && nextHiveNumber == null) {
                             Text(
-                                "NEXT ${hiveDisplayName(nextHiveNumber)}",
+                                "LAST HIVE",
                                 style = MaterialTheme.typography.labelSmall,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                            Icon(
-                                Icons.Rounded.ChevronRight,
-                                contentDescription = "Open next hive in this apiary",
-                                modifier = Modifier.size(14.dp)
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
-                    } else if (!fastTagAssignmentMode && tagAssignmentSucceeded && nextHiveNumber == null) {
-                        Text(
-                            "LAST HIVE",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                    }
+                    if (hive.isDead) {
+                        Text("Released", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+                        Text("The physical tag was released when the colony died.", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+                    } else {
+                        Text(hive.tagUid ?: "Not assigned", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedButton(
+                                onClick = onVerifyTag,
+                                enabled = hive.tagUid != null,
+                                modifier = Modifier.weight(1f).height(42.dp),
+                                shape = RoundedCornerShape(16.dp)
+                            ) {
+                                Icon(Icons.Rounded.Nfc, null, modifier = Modifier.size(16.dp)); Spacer(Modifier.width(5.dp)); Text("VERIFY", style = MaterialTheme.typography.labelMedium)
+                            }
+                            OutlinedButton(
+                                onClick = {
+                                    if (writeStatusType == "waiting") {
+                                        nfc.stop(activity)
+                                        writeStatus = ""
+                                        writeStatusType = "idle"
+                                    } else {
+                                        startTagWriting()
+                                    }
+                                },
+                                enabled = writeStatusType != "saving" && writeStatusType != "removing",
+                                modifier = Modifier.weight(1f).height(42.dp),
+                                shape = RoundedCornerShape(16.dp)
+                            ) {
+                                Text(
+                                    when (writeStatusType) {
+                                        "waiting" -> "CANCEL SCAN"
+                                        "saving" -> "SAVING…"
+                                        else -> if (hive.tagUid == null) "WRITE TAG" else "REPLACE"
+                                    },
+                                    style = MaterialTheme.typography.labelMedium
+                                )
+                            }
+                        }
+                        if (hive.tagUid != null) {
+                            TextButton(
+                                onClick = {
+                                    if (confirmBeforeTagRemoval) confirmRemoveTag = true else removeHiveTag()
+                                },
+                                enabled = !removingTag,
+                                modifier = Modifier.fillMaxWidth().height(36.dp)
+                            ) {
+                                Text(if (removingTag) "REMOVING…" else "REMOVE TAG", style = MaterialTheme.typography.labelSmall)
+                            }
+                        }
+                        if (!tagAssignmentSuccessUid.isNullOrBlank()) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth()
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(Color(0xFFDCFCE7))
+                                    .padding(10.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Icon(
+                                    Icons.Rounded.TaskAlt,
+                                    contentDescription = "NFC tag successfully assigned",
+                                    tint = Color(0xFF166534),
+                                    modifier = Modifier.size(22.dp)
+                                )
+                                Text(
+                                    "NFC tag successfully assigned • $tagAssignmentSuccessUid",
+                                    modifier = Modifier.weight(1f),
+                                    color = Color(0xFF166534),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    fontWeight = FontWeight.ExtraBold
+                                )
+                            }
+                        }
+                        if (writeStatus.isNotBlank()) {
+                            val statusTextColor = when (writeStatusType) {
+                                "success" -> Color(0xFF166534)
+                                "error" -> MaterialTheme.colorScheme.onErrorContainer
+                                else -> MaterialTheme.colorScheme.onTertiaryContainer
+                            }
+                            val statusBackground = when (writeStatusType) {
+                                "success" -> Color(0xFFDCFCE7)
+                                "error" -> MaterialTheme.colorScheme.errorContainer
+                                else -> MaterialTheme.colorScheme.tertiaryContainer
+                            }
+                            Row(
+                                modifier = Modifier.fillMaxWidth()
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(statusBackground)
+                                    .padding(10.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Icon(
+                                    if (writeStatusType == "success") Icons.Rounded.TaskAlt else Icons.Rounded.Nfc,
+                                    contentDescription = if (writeStatusType == "success") "NFC tag successfully assigned" else "NFC status",
+                                    tint = statusTextColor,
+                                    modifier = Modifier.size(22.dp)
+                                )
+                                Text(
+                                    writeStatus,
+                                    modifier = Modifier.weight(1f),
+                                    color = statusTextColor,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    fontWeight = if (writeStatusType == "success") FontWeight.ExtraBold else FontWeight.Medium
+                                )
+                            }
+                        }
                     }
                 }
-                if (hive.isDead) {
-                    Text("Released", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
-                    Text("The physical tag was released when the colony died.", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
-                } else {
-                    Text(hive.tagUid ?: "Not assigned", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedButton(
-                            onClick = onVerifyTag,
-                            enabled = hive.tagUid != null,
-                            modifier = Modifier.weight(1f).height(42.dp),
-                            shape = RoundedCornerShape(16.dp)
-                        ) {
-                            Icon(Icons.Rounded.Nfc, null, modifier = Modifier.size(16.dp)); Spacer(Modifier.width(5.dp)); Text("VERIFY", style = MaterialTheme.typography.labelMedium)
-                        }
-                        OutlinedButton(
-                            onClick = {
-                                if (writeStatusType == "waiting") {
-                                    nfc.stop(activity)
-                                    writeStatus = ""
-                                    writeStatusType = "idle"
-                                } else {
-                                    startTagWriting()
-                                }
-                            },
-                            enabled = writeStatusType != "saving" && writeStatusType != "removing",
-                            modifier = Modifier.weight(1f).height(42.dp),
-                            shape = RoundedCornerShape(16.dp)
-                        ) {
-                            Text(
-                                when (writeStatusType) {
-                                    "waiting" -> "CANCEL SCAN"
-                                    "saving" -> "SAVING…"
-                                    else -> if (hive.tagUid == null) "WRITE TAG" else "REPLACE"
-                                },
-                                style = MaterialTheme.typography.labelMedium
-                            )
-                        }
-                    }
-                    if (hive.tagUid != null) {
-                        TextButton(
-                            onClick = {
-                                if (confirmBeforeTagRemoval) confirmRemoveTag = true else removeHiveTag()
-                            },
-                            enabled = !removingTag,
-                            modifier = Modifier.fillMaxWidth().height(36.dp)
-                        ) {
-                            Text(if (removingTag) "REMOVING…" else "REMOVE TAG", style = MaterialTheme.typography.labelSmall)
-                        }
-                    }
-                    if (!tagAssignmentSuccessUid.isNullOrBlank()) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth()
-                                .clip(RoundedCornerShape(12.dp))
-                                .background(Color(0xFFDCFCE7))
-                                .padding(10.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            Icon(
-                                Icons.Rounded.TaskAlt,
-                                contentDescription = "NFC tag successfully assigned",
-                                tint = Color(0xFF166534),
-                                modifier = Modifier.size(22.dp)
-                            )
-                            Text(
-                                "NFC tag successfully assigned • $tagAssignmentSuccessUid",
-                                modifier = Modifier.weight(1f),
-                                color = Color(0xFF166534),
-                                style = MaterialTheme.typography.bodySmall,
-                                fontWeight = FontWeight.ExtraBold
-                            )
-                        }
-                    }
-                    if (writeStatus.isNotBlank()) {
-                        val statusTextColor = when (writeStatusType) {
-                            "success" -> Color(0xFF166534)
-                            "error" -> MaterialTheme.colorScheme.onErrorContainer
-                            else -> MaterialTheme.colorScheme.onTertiaryContainer
-                        }
-                        val statusBackground = when (writeStatusType) {
-                            "success" -> Color(0xFFDCFCE7)
-                            "error" -> MaterialTheme.colorScheme.errorContainer
-                            else -> MaterialTheme.colorScheme.tertiaryContainer
-                        }
-                        Row(
-                            modifier = Modifier.fillMaxWidth()
-                                .clip(RoundedCornerShape(12.dp))
-                                .background(statusBackground)
-                                .padding(10.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            Icon(
-                                if (writeStatusType == "success") Icons.Rounded.TaskAlt else Icons.Rounded.Nfc,
-                                contentDescription = if (writeStatusType == "success") "NFC tag successfully assigned" else "NFC status",
-                                tint = statusTextColor,
-                                modifier = Modifier.size(22.dp)
-                            )
-                            Text(
-                                writeStatus,
-                                modifier = Modifier.weight(1f),
-                                color = statusTextColor,
-                                style = MaterialTheme.typography.bodySmall,
-                                fontWeight = if (writeStatusType == "success") FontWeight.ExtraBold else FontWeight.Medium
-                            )
-                        }
+            }
+        } else {
+            Card(
+                shape = RoundedCornerShape(16.dp),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+            ) {
+                Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("NFC hive tag", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleSmall)
+                    Text(
+                        "NFC scanning and tag management are Commercial features. Existing tag assignments remain saved and will be available again when Commercial is active.",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    OutlinedButton(onClick = onUpgradeNfc, modifier = Modifier.fillMaxWidth()) {
+                        Text("VIEW COMMERCIAL PLAN")
                     }
                 }
             }

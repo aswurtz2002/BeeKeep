@@ -1537,7 +1537,12 @@ class LocalHiveRepository(context: Context) {
      * before ID collisions are remapped, so importing the same backup twice won't duplicate
      * ordinary records. Newer local records win and no local-only row is deleted.
      */
-    suspend fun restoreDataBackupJson(raw: String): DataBackupRestoreResult = withContext(Dispatchers.IO) {
+    suspend fun restoreDataBackupJson(
+        raw: String,
+        hiveLimit: Int,
+        apiaryLimit: Int,
+        planName: String
+    ): DataBackupRestoreResult = withContext(Dispatchers.IO) {
         checkWritable()
         previewDataBackup(raw)
         val root = JSONObject(raw)
@@ -1545,6 +1550,27 @@ class LocalHiveRepository(context: Context) {
         val rows = (0 until records.length()).map { records.getJSONObject(it) }
         val currentApiaries = db.apiaries().allForBackup()
         val currentHives = db.hives().allForBackup()
+
+        // Validate the merged result before the first row is applied. This counts logical
+        // apiary names and (hive number + apiary) pairs, so restoring an existing record
+        // does not consume another slot. The restore is rejected as a whole when it adds
+        // records beyond the current plan's limits.
+        assessBackupRestoreQuotas(
+            currentApiaryNames = currentApiaries.filterNot { it.deleted }.map { it.name },
+            importedApiaryNames = rows.filter { it.optString("type") == "apiary" }
+                .map { it.getJSONObject("payload") }
+                .filterNot { it.optBoolean("deleted", false) }
+                .map { it.optString("name") },
+            currentHiveKeys = currentHives.filterNot { it.deleted }
+                .map { it.number to it.apiaryName },
+            importedHiveKeys = rows.filter { it.optString("type") == "hive" }
+                .map { it.getJSONObject("payload") }
+                .filterNot { it.optBoolean("deleted", false) }
+                .map { it.optString("number") to it.optString("apiary") },
+            hiveLimit = hiveLimit,
+            apiaryLimit = apiaryLimit,
+            planName = planName
+        )
         val currentAssignments = db.nfcTagAssignments().allForBackup()
         val currentInspections = db.inspections().allForBackup()
         val currentFeedings = db.feedings().allForBackup()

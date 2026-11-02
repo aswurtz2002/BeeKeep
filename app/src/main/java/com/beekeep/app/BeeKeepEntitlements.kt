@@ -230,6 +230,11 @@ object BeeKeepEntitlements {
     }
     fun apiaryLimit(context: Context): Int = apiaryLimit(currentPlan(context))
 
+    /** NFC scanning, tag assignment and fast assignment are Commercial-only features. */
+    fun canUseNfc(plan: BeeKeepPlan): Boolean = plan == BeeKeepPlan.COMMERCIAL
+
+    fun canUseNfc(context: Context): Boolean = canUseNfc(currentPlan(context))
+
     fun hiveLimitMessage(plan: BeeKeepPlan): String = hiveLimitMessage(plan, activeCloudHiveLimitOverride)
 
     internal fun hiveLimitMessage(plan: BeeKeepPlan, customLimit: Int?): String {

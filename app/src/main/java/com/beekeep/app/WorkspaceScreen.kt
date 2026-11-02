@@ -34,6 +34,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -65,6 +66,9 @@ fun WorkspaceScreen(
     val account by cloud.account.collectAsState()
     val scope = rememberCoroutineScope()
     var hasOwnedTeamWorkspace by rememberSaveable { mutableStateOf(false) }
+    var ownedWorkspaceIds by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var activeWorkspaceIsOwnedByUser by rememberSaveable { mutableStateOf(false) }
+    var ownerAccessAccountId by rememberSaveable { mutableStateOf<String?>(null) }
     var ownerCommercialEntitlementActive by rememberSaveable { mutableStateOf<Boolean?>(null) }
     var ownerAccessCheckComplete by rememberSaveable { mutableStateOf(false) }
     var ownerAccessCheckMessage by rememberSaveable { mutableStateOf("") }
@@ -75,6 +79,8 @@ fun WorkspaceScreen(
     suspend fun refreshOwnerWorkspaceAccess() {
         if (!account.signedIn) {
             hasOwnedTeamWorkspace = false
+            ownedWorkspaceIds = emptySet()
+            activeWorkspaceIsOwnedByUser = false
             ownerCommercialEntitlementActive = null
             ownerAccessCheckMessage = ""
             ownerAccessCheckComplete = true
@@ -85,14 +91,20 @@ fun WorkspaceScreen(
         if (!workspaceResult.isSuccess) {
             ownerAccessCheckMessage = workspaceResult.error
                 ?: "Couldn't verify workspace ownership. Check your connection and retry."
-            ownerCommercialEntitlementActive = null
+            // Never drop a previously read-only decision because a refresh failed.
+            // On a first load, use only the account's cached trusted plan as fallback.
+            if (ownerCommercialEntitlementActive == null) {
+                ownerCommercialEntitlementActive = currentPlan == BeeKeepPlan.COMMERCIAL
+            }
             ownerAccessCheckComplete = true
             return
         }
 
-        hasOwnedTeamWorkspace = workspaceResult.value.orEmpty().any {
-            !it.is_personal && it.member_role == "owner"
-        }
+        val workspaces = workspaceResult.value.orEmpty()
+        ownedWorkspaceIds = workspaces.filter { !it.is_personal && it.member_role == "owner" }
+            .map { it.id }.toSet()
+        hasOwnedTeamWorkspace = ownedWorkspaceIds.isNotEmpty()
+        activeWorkspaceIsOwnedByUser = activeWorkspaceId?.let { it in ownedWorkspaceIds } == true
         if (!hasOwnedTeamWorkspace) {
             ownerCommercialEntitlementActive = null
             ownerAccessCheckMessage = ""
@@ -100,22 +112,33 @@ fun WorkspaceScreen(
             return
         }
 
+        // The owner entitlement applies to every workspace this account owns, even
+        // when the currently active workspace belongs to someone else.
         val entitlement = cloud.myActiveCommercialEntitlement()
         if (entitlement.isSuccess) {
             ownerCommercialEntitlementActive = entitlement.value == true
             ownerAccessCheckMessage = if (entitlement.value == true) "" else
                 "The server reports that this account has no active Commercial entitlement."
         } else {
-            // A network error is not proof that a plan expired. Keep the page available
-            // on verification errors; server-side row-level security still protects writes.
-            ownerCommercialEntitlementActive = null
+            // Use only the signed-in account's cached server-verified plan while offline.
+            // If no verified Commercial plan is cached, fail closed to read-only.
+            ownerCommercialEntitlementActive = currentPlan == BeeKeepPlan.COMMERCIAL
             ownerAccessCheckMessage = entitlement.error
                 ?: "Couldn't verify Commercial access. Check your connection and retry."
         }
         ownerAccessCheckComplete = true
     }
 
-    androidx.compose.runtime.LaunchedEffect(account.signedIn, currentPlan) {
+    androidx.compose.runtime.LaunchedEffect(account.signedIn, account.userId, currentPlan, activeWorkspaceId) {
+        if (ownerAccessAccountId != account.userId) {
+            // Do not carry a previous account's owner/entitlement decision across sign-in.
+            ownerAccessAccountId = account.userId
+            hasOwnedTeamWorkspace = false
+            ownedWorkspaceIds = emptySet()
+            activeWorkspaceIsOwnedByUser = false
+            ownerCommercialEntitlementActive = null
+            ownerAccessCheckMessage = ""
+        }
         ownerAccessCheckComplete = false
         refreshOwnerWorkspaceAccess()
     }
@@ -134,9 +157,12 @@ fun WorkspaceScreen(
             }
         }
     }
+    val readOnlyOwnedWorkspaceIds: Set<String> = if (ownerCommercialEntitlementActive == false) ownedWorkspaceIds.toSet() else emptySet()
+
     val workspaceAccessPaused = account.signedIn &&
+        ownerAccessAccountId == account.userId &&
         ownerAccessCheckComplete &&
-        hasOwnedTeamWorkspace &&
+        activeWorkspaceIsOwnedByUser &&
         ownerCommercialEntitlementActive == false
 
     Column(
@@ -187,7 +213,7 @@ fun WorkspaceScreen(
                         }
                     }
                     Text(
-                        "Your team's databases, hives, apiaries, inspection history, and queued local edits are retained. BeeKeep will not delete or reset records because a plan expired. Team cloud writes may remain blocked until Commercial is active again.",
+                        "Your team's hives, apiaries and history remain saved and available to view and export. BeeKeep will not delete or reset records because a plan expired. New edits and workspace management are paused, and queued edits stay on this device until Commercial is active again.",
                         style = MaterialTheme.typography.bodyMedium
                     )
                     Button(
@@ -226,6 +252,18 @@ fun WorkspaceScreen(
                     }
                 }
             }
+            // The owned team remains selectable and browsable. Mutating controls are
+            // disabled by WorkspaceManagementSection and the active Room database is
+            // separately marked read-only by SupabaseGateway.
+            WorkspaceCloudSyncSection(cloud = cloud)
+            WorkspaceManagementSection(
+                cloud = cloud,
+                activity = activity,
+                currentPlan = currentPlan,
+                readOnlyWorkspaceIds = readOnlyOwnedWorkspaceIds,
+                onUpgrade = onUpgrade,
+                onWorkspaceMembershipChanged = onWorkspaceMembershipChanged
+            )
         } else {
             Card(
                 modifier = Modifier.fillMaxWidth(),
@@ -364,6 +402,7 @@ fun WorkspaceScreen(
                 cloud = cloud,
                 activity = activity,
                 currentPlan = currentPlan,
+                readOnlyWorkspaceIds = readOnlyOwnedWorkspaceIds,
                 onUpgrade = onUpgrade,
                 onWorkspaceMembershipChanged = onWorkspaceMembershipChanged
             )
