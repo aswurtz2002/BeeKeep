@@ -519,6 +519,7 @@ fun BeeKeepApp(
     val purchasePlan = if (BuildConfig.DEBUG) localPurchasePlan else serverVerifiedPlan ?: BeeKeepPlan.HOBBYIST
     var lockedHivePromptVisible by rememberSaveable { mutableStateOf(false) }
     var lockedHivePromptName by rememberSaveable { mutableStateOf<String?>(null) }
+    var lockedHivePromptHiveId by rememberSaveable { mutableStateOf<Long?>(null) }
     var purchaseBackScreen by rememberSaveable { mutableStateOf(Screen.MORE) }
     var purchaseSuccessScreen by rememberSaveable { mutableStateOf(Screen.HOME) }
     var selectedHiveOpen by rememberSaveable { mutableStateOf(false) }
@@ -875,6 +876,7 @@ fun BeeKeepApp(
         }
         if (hive.id !in latestLockedHiveIds) return true
         lockedHivePromptName = hiveDisplayName(hive.number)
+        lockedHivePromptHiveId = hive.id
         lockedHivePromptVisible = true
         return false
     }
@@ -887,6 +889,7 @@ fun BeeKeepApp(
     fun openLockedHiveUpgrade() {
         lockedHivePromptVisible = false
         lockedHivePromptName = null
+        lockedHivePromptHiveId = null
         purchaseBackScreen = screen
         purchaseSuccessScreen = screen
         screen = Screen.PURCHASES
@@ -920,6 +923,17 @@ fun BeeKeepApp(
         inspecting = false
         selectedHiveOpen = false
         vm.clearHive()
+    }
+
+    // If a plan renewal unlocks the hive behind an already-open alert, dismiss that
+    // stale prompt immediately. The currently displayed hive/list can continue in place.
+    androidx.compose.runtime.LaunchedEffect(lockedHiveIds, lockedHivePromptVisible, lockedHivePromptHiveId) {
+        val promptHiveId = lockedHivePromptHiveId
+        if (lockedHivePromptVisible && promptHiveId != null && promptHiveId !in lockedHiveIds) {
+            lockedHivePromptVisible = false
+            lockedHivePromptName = null
+            lockedHivePromptHiveId = null
+        }
     }
 
     // Stop any in-flight hardware operation as soon as the currently open hive
@@ -1757,6 +1771,7 @@ fun BeeKeepApp(
             onDismissRequest = {
                 lockedHivePromptVisible = false
                 lockedHivePromptName = null
+                lockedHivePromptHiveId = null
             },
             shape = RoundedCornerShape(26.dp),
             containerColor = Color(0xFFFFFBEB),
@@ -1782,6 +1797,7 @@ fun BeeKeepApp(
                     TextButton(onClick = {
                         lockedHivePromptVisible = false
                         lockedHivePromptName = null
+                        lockedHivePromptHiveId = null
                     }) { Text("OK") }
                 }
             },
@@ -1789,6 +1805,7 @@ fun BeeKeepApp(
                 TextButton(onClick = {
                     lockedHivePromptVisible = false
                     lockedHivePromptName = null
+                    lockedHivePromptHiveId = null
                 }) {
                     Text("NOT NOW", color = Color(0xFF78350F))
                 }
