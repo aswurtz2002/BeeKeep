@@ -524,6 +524,23 @@ fun WorkspaceManagementSection(
             }
         }
 
+            if (accountWorkspaceDataReady && selectedWorkspaceReadOnly) {
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(16.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant
+                ) {
+                    Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text("Workspace read-only", fontWeight = FontWeight.Bold)
+                        Text(
+                            "Commercial is inactive for this workspace owner. Existing team records remain available to view and export; invitations, member changes, copying and deletion are paused until Commercial is active again.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+
             if (accountWorkspaceDataReady && selectedWorkspace != null) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
