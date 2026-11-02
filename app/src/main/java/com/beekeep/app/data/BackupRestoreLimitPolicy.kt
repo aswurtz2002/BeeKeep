@@ -64,3 +64,10 @@ internal fun assessBackupRestoreQuotas(
         newApiaryCount = newApiaryCount
     )
 }
+
+
+/** Team backups use the workspace owner's entitlement, never an invited member's personal plan. */
+internal fun canRestoreBackupToWorkspace(
+    isPersonalWorkspace: Boolean,
+    memberRole: String?
+): Boolean = isPersonalWorkspace || memberRole == "owner"
