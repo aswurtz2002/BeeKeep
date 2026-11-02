@@ -101,7 +101,7 @@ object BeeKeepEntitlements {
             .takeIf { it in COMMERCIAL_HIVE_LIMIT..MAX_CUSTOM_HIVE_LIMIT }
         activeCloudPlanUserId = cleanUserId
         activeCloudPlan = prefs.getString(CLOUD_PLAN_PREFIX + cleanUserId, null)
-            ?.let(BeeKeepPlan::fromStoredValue)
+            ?.let { BeeKeepPlan.fromStoredValue(it) }
     }
 
     /** Persists a plan returned by the signed-in account's trusted entitlement RPC. */
