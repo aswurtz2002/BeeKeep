@@ -89,7 +89,8 @@ data class BeeKeepUltimateEntitlement(val active: Boolean)
 data class BeeKeepWorkspaceOwnerQuotaEntitlement(
     val active: Boolean = false,
     @SerialName("effective_hive_limit") val effectiveHiveLimit: Int = 15,
-    @SerialName("effective_apiary_limit") val effectiveApiaryLimit: Int = 3
+    @SerialName("effective_apiary_limit") val effectiveApiaryLimit: Int = 3,
+    @SerialName("member_role") val memberRole: String = "viewer"
 )
 
 @Serializable
