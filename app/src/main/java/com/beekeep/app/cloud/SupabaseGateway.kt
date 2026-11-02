@@ -1220,21 +1220,29 @@ class SupabaseGateway(
                 return CloudResult.Failure(message)
             }
 
-            val isWritable = workspace.member_role in setOf("owner", "admin", "member")
-            // Reconcile both workspace identity and access mode. Comparing only the
-            // read-only flag can leave this gateway writing Team B records into Team A's
-            // local Room database when both memberships have the same role.
+            val ownerCommercialActive = if (workspace.member_role == "owner") {
+                hasActiveCommercialEntitlementForWorkspaceOwner(supabase)
+            } else {
+                true
+            }
+            val readOnly = WorkspaceAccessPolicy.isReadOnly(
+                memberRole = workspace.member_role,
+                ownerCommercialEntitlementActive = ownerCommercialActive
+            )
+            val isWritable = !readOnly
+            // Reconcile both workspace identity and access mode. A downgraded owner must
+            // not become writable again when a later sync refreshes only the member role.
             repository.switchWorkspace(
                 workspaceId = workspaceId,
-                readOnly = !isWritable,
+                readOnly = readOnly,
                 ownerUserId = userId
             )
             if (isWritable) {
-                // Remove legacy NFC-only hive snapshots before they can overwrite team profiles.
+                // Do not queue new local drafts or upload pending edits for a read-only team.
                 repository.discardLegacyNfcProfileSnapshots()
                 repository.queuePendingInspectionNoteDrafts()
+                repository.queuePendingInspectionFormDrafts()
             }
-            repository.queuePendingInspectionFormDrafts()
             val cursorKey = workspaceSyncCursorKey(userId, workspaceId)
             val previousCursor = readSyncCursor(cursorKey)
             if (isWritable) {
