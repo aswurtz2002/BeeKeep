@@ -24,8 +24,8 @@ class WorkspaceAccessPolicyTest {
     }
 
     @Test
-    fun unknownRoleFailsToTheNonOwnerDefault() {
-        assertFalse(WorkspaceAccessPolicy.isReadOnly(null, ownerCommercialEntitlementActive = false))
-        assertFalse(WorkspaceAccessPolicy.isReadOnly("unknown", ownerCommercialEntitlementActive = false))
+    fun unknownRoleFailsClosedAsReadOnly() {
+        assertTrue(WorkspaceAccessPolicy.isReadOnly(null, ownerCommercialEntitlementActive = false))
+        assertTrue(WorkspaceAccessPolicy.isReadOnly("unknown", ownerCommercialEntitlementActive = false))
     }
 }
