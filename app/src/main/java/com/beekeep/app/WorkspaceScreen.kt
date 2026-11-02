@@ -65,6 +65,7 @@ fun WorkspaceScreen(
     val account by cloud.account.collectAsState()
     val scope = rememberCoroutineScope()
     var hasOwnedTeamWorkspace by rememberSaveable { mutableStateOf(false) }
+    var activeWorkspaceIsOwnedByUser by rememberSaveable { mutableStateOf(false) }
     var ownerCommercialEntitlementActive by rememberSaveable { mutableStateOf<Boolean?>(null) }
     var ownerAccessCheckComplete by rememberSaveable { mutableStateOf(false) }
     var ownerAccessCheckMessage by rememberSaveable { mutableStateOf("") }
@@ -75,6 +76,7 @@ fun WorkspaceScreen(
     suspend fun refreshOwnerWorkspaceAccess() {
         if (!account.signedIn) {
             hasOwnedTeamWorkspace = false
+            activeWorkspaceIsOwnedByUser = false
             ownerCommercialEntitlementActive = null
             ownerAccessCheckMessage = ""
             ownerAccessCheckComplete = true
@@ -90,10 +92,12 @@ fun WorkspaceScreen(
             return
         }
 
-        hasOwnedTeamWorkspace = workspaceResult.value.orEmpty().any {
-            !it.is_personal && it.member_role == "owner"
+        val workspaces = workspaceResult.value.orEmpty()
+        hasOwnedTeamWorkspace = workspaces.any { !it.is_personal && it.member_role == "owner" }
+        activeWorkspaceIsOwnedByUser = !activeWorkspaceId.isNullOrBlank() && workspaces.any {
+            it.id == activeWorkspaceId && !it.is_personal && it.member_role == "owner"
         }
-        if (!hasOwnedTeamWorkspace) {
+        if (!activeWorkspaceIsOwnedByUser) {
             ownerCommercialEntitlementActive = null
             ownerAccessCheckMessage = ""
             ownerAccessCheckComplete = true
@@ -115,12 +119,12 @@ fun WorkspaceScreen(
         ownerAccessCheckComplete = true
     }
 
-    androidx.compose.runtime.LaunchedEffect(account.signedIn, currentPlan) {
+    androidx.compose.runtime.LaunchedEffect(account.signedIn, currentPlan, activeWorkspaceId) {
         ownerAccessCheckComplete = false
         refreshOwnerWorkspaceAccess()
     }
-    androidx.compose.runtime.LaunchedEffect(account.signedIn, hasOwnedTeamWorkspace) {
-        if (account.signedIn && hasOwnedTeamWorkspace) {
+    androidx.compose.runtime.LaunchedEffect(account.signedIn, activeWorkspaceIsOwnedByUser) {
+        if (account.signedIn && activeWorkspaceIsOwnedByUser) {
             while (true) {
                 delay(60_000)
                 val entitlement = cloud.myActiveCommercialEntitlement()
@@ -136,7 +140,7 @@ fun WorkspaceScreen(
     }
     val workspaceAccessPaused = account.signedIn &&
         ownerAccessCheckComplete &&
-        hasOwnedTeamWorkspace &&
+        activeWorkspaceIsOwnedByUser &&
         ownerCommercialEntitlementActive == false
 
     Column(
@@ -226,6 +230,18 @@ fun WorkspaceScreen(
                     }
                 }
             }
+            // The owned team remains selectable and browsable. Mutating controls are
+            // disabled by WorkspaceManagementSection and the active Room database is
+            // separately marked read-only by SupabaseGateway.
+            WorkspaceCloudSyncSection(cloud = cloud)
+            WorkspaceManagementSection(
+                cloud = cloud,
+                activity = activity,
+                currentPlan = currentPlan,
+                readOnly = true,
+                onUpgrade = onUpgrade,
+                onWorkspaceMembershipChanged = onWorkspaceMembershipChanged
+            )
         } else {
             Card(
                 modifier = Modifier.fillMaxWidth(),
@@ -364,6 +380,7 @@ fun WorkspaceScreen(
                 cloud = cloud,
                 activity = activity,
                 currentPlan = currentPlan,
+                readOnly = false,
                 onUpgrade = onUpgrade,
                 onWorkspaceMembershipChanged = onWorkspaceMembershipChanged
             )
