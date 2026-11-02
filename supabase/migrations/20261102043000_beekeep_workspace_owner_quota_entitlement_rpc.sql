@@ -9,7 +9,8 @@ create or replace function public.beekeep_workspace_owner_quota_entitlement(
 returns table (
     active boolean,
     effective_hive_limit integer,
-    effective_apiary_limit integer
+    effective_apiary_limit integer,
+    member_role text
 )
 language sql
 stable
@@ -19,16 +20,14 @@ as $function$
     select
         public.beekeep_user_has_active_commercial(w.owner_user_id) as active,
         public.beekeep_resolved_hive_limit(w.owner_user_id) as effective_hive_limit,
-        public.beekeep_resolved_apiary_limit(w.owner_user_id) as effective_apiary_limit
+        public.beekeep_resolved_apiary_limit(w.owner_user_id) as effective_apiary_limit,
+        m.role as member_role
     from public.beekeep_workspaces w
+    join public.beekeep_workspace_members m
+      on m.workspace_id = w.id
+     and m.user_id = auth.uid()
     where w.id = target_workspace_id
-      and w.is_personal = false
-      and exists (
-          select 1
-          from public.beekeep_workspace_members m
-          where m.workspace_id = w.id
-            and m.user_id = auth.uid()
-      );
+      and w.is_personal = false;
 $function$;
 
 revoke all on function public.beekeep_workspace_owner_quota_entitlement(uuid)
