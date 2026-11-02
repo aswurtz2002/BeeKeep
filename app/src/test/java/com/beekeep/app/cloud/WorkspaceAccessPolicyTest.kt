@@ -26,6 +26,54 @@ class WorkspaceAccessPolicyTest {
     }
 
     @Test
+    fun ownerWorkspacePageLocksWhenTheirSubscriptionExpiresEvenWithoutAnActiveSelection() {
+        assertTrue(
+            WorkspaceAccessPolicy.shouldLockWorkspacePage(
+                hasActiveTeam = false,
+                activeTeamOwnerCommercialEntitlementActive = null,
+                hasOwnedTeamWorkspace = true,
+                ownCommercialEntitlementActive = false
+            )
+        )
+    }
+
+    @Test
+    fun invitedMemberCanStillUseAnotherOwnersActiveWorkspaceWhenTheirOwnPlanIsHobbyist() {
+        assertFalse(
+            WorkspaceAccessPolicy.shouldLockWorkspacePage(
+                hasActiveTeam = true,
+                activeTeamOwnerCommercialEntitlementActive = true,
+                hasOwnedTeamWorkspace = true,
+                ownCommercialEntitlementActive = false
+            )
+        )
+    }
+
+    @Test
+    fun workspacePageFailsClosedWhenSelectedOwnersEntitlementCannotBeVerified() {
+        assertTrue(
+            WorkspaceAccessPolicy.cannotVerifyWorkspacePageAccess(
+                hasActiveTeam = true,
+                activeTeamOwnerCommercialEntitlementActive = null,
+                hasOwnedTeamWorkspace = false,
+                ownCommercialEntitlementActive = null
+            )
+        )
+    }
+
+    @Test
+    fun ownWorkspacePageFailsClosedWhenOwnerEntitlementCannotBeVerified() {
+        assertTrue(
+            WorkspaceAccessPolicy.cannotVerifyWorkspacePageAccess(
+                hasActiveTeam = false,
+                activeTeamOwnerCommercialEntitlementActive = null,
+                hasOwnedTeamWorkspace = true,
+                ownCommercialEntitlementActive = null
+            )
+        )
+    }
+
+    @Test
     fun unknownRoleFailsClosedAsReadOnly() {
         assertTrue(WorkspaceAccessPolicy.isReadOnly(null, ownerCommercialEntitlementActive = false))
         assertTrue(WorkspaceAccessPolicy.isReadOnly("unknown", ownerCommercialEntitlementActive = false))

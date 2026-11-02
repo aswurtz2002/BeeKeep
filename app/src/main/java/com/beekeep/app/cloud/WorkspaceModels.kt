@@ -135,6 +135,28 @@ data class WorkspaceOperationResult<T>(
 }
 /** A team can be edited only while its owner has active Commercial access. */
 internal object WorkspaceAccessPolicy {
+    fun shouldLockWorkspacePage(
+        hasActiveTeam: Boolean,
+        activeTeamOwnerCommercialEntitlementActive: Boolean?,
+        hasOwnedTeamWorkspace: Boolean,
+        ownCommercialEntitlementActive: Boolean?
+    ): Boolean = if (hasActiveTeam) {
+        activeTeamOwnerCommercialEntitlementActive == false
+    } else {
+        hasOwnedTeamWorkspace && ownCommercialEntitlementActive == false
+    }
+
+    fun cannotVerifyWorkspacePageAccess(
+        hasActiveTeam: Boolean,
+        activeTeamOwnerCommercialEntitlementActive: Boolean?,
+        hasOwnedTeamWorkspace: Boolean,
+        ownCommercialEntitlementActive: Boolean?
+    ): Boolean = if (hasActiveTeam) {
+        activeTeamOwnerCommercialEntitlementActive == null
+    } else {
+        hasOwnedTeamWorkspace && ownCommercialEntitlementActive == null
+    }
+
     fun isReadOnly(memberRole: String?, ownerCommercialEntitlementActive: Boolean): Boolean =
         when (memberRole) {
             "owner", "admin", "member" -> !ownerCommercialEntitlementActive
