@@ -41,6 +41,43 @@ class BeeKeepEntitlementsTest {
     }
 
     @Test
+    fun personalQuotaSnapshotsMatchEachPlan() {
+        assertEquals(BeeKeepQuotaLimits(BeeKeepPlan.HOBBYIST, 15, 3),
+            BeeKeepQuotaLimits.forPlan(BeeKeepPlan.HOBBYIST))
+        assertEquals(BeeKeepQuotaLimits(BeeKeepPlan.COMMERCIAL, 10_000, 1_000),
+            BeeKeepQuotaLimits.forPlan(BeeKeepPlan.COMMERCIAL))
+        assertEquals(BeeKeepQuotaLimits(BeeKeepPlan.COMMERCIAL, 12_500, 1_000),
+            BeeKeepQuotaLimits.forPlan(BeeKeepPlan.COMMERCIAL, customHiveLimit = 12_500))
+    }
+
+    @Test
+    fun invitedHobbyistUsesTheWorkspaceOwnersCommercialQuota() {
+        val quota = BeeKeepQuotaLimits.forWorkspaceOwner(true, 10_000, 1_000)
+        assertEquals(BeeKeepPlan.COMMERCIAL, quota.plan)
+        assertEquals(10_000, quota.hiveLimit)
+        assertEquals(1_000, quota.apiaryLimit)
+    }
+
+    @Test
+    fun workspaceQuotaPreservesApprovedOwnerHiveOverride() {
+        val quota = BeeKeepQuotaLimits.forWorkspaceOwner(true, 12_500, 1_000)
+        assertEquals(12_500, quota.hiveLimit)
+    }
+
+    @Test
+    fun inactiveWorkspaceNeverRetainsCommercialOrCustomLimits() {
+        val quota = BeeKeepQuotaLimits.forWorkspaceOwner(false, 12_500, 1_000)
+        assertEquals(BeeKeepQuotaLimits.forPlan(BeeKeepPlan.HOBBYIST), quota)
+    }
+
+    @Test
+    fun invalidWorkspaceQuotaFallsBackToCommercialBaseLimits() {
+        val quota = BeeKeepQuotaLimits.forWorkspaceOwner(true, 15, 3)
+        assertEquals(BeeKeepEntitlements.COMMERCIAL_HIVE_LIMIT, quota.hiveLimit)
+        assertEquals(BeeKeepEntitlements.COMMERCIAL_APIARY_LIMIT, quota.apiaryLimit)
+    }
+
+    @Test
     fun nfcFeaturesAreCommercialOnly() {
         assertFalse(BeeKeepEntitlements.canUseNfc(BeeKeepPlan.HOBBYIST))
         assertTrue(BeeKeepEntitlements.canUseNfc(BeeKeepPlan.COMMERCIAL))
