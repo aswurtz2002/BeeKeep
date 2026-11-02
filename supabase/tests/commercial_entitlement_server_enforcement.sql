@@ -85,6 +85,14 @@ insert into public.beekeep_workspace_documents (
     'commercial-entitlement-test', auth.uid()
 );
 
+-- The active Commercial owner may sync an NFC assignment to personal cloud storage.
+insert into public.beekeep_documents (
+    user_id, entity_type, entity_id, payload, updated_at, deleted, device_id
+) values (
+    auth.uid(), 'nfc_assignment', 97001, '{"id":97001,"hiveId":98001,"tag":"test"}',
+    1000, false, 'commercial-entitlement-test'
+);
+
 select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-000000000082', false);
 insert into public.beekeep_workspace_documents (
     workspace_id, entity_type, entity_id, payload, updated_at, deleted, device_id, updated_by
@@ -162,6 +170,52 @@ begin
     end if;
 end;
 $pending_invite_downgrade_assertion$;
+
+-- A Hobbyist can still read an existing NFC assignment but cannot insert or edit one.
+select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-000000000081', false);
+do $personal_nfc_downgrade_assertion$
+declare visible_count integer; denied boolean := false;
+begin
+    select count(*) into visible_count
+      from public.beekeep_documents
+     where user_id = auth.uid()
+       and entity_type = 'nfc_assignment'
+       and entity_id = 97001
+       and not deleted;
+    if visible_count <> 1 then
+        raise exception 'Existing NFC assignments must remain readable after downgrade';
+    end if;
+
+    begin
+        insert into public.beekeep_documents (
+            user_id, entity_type, entity_id, payload, updated_at, deleted, device_id
+        ) values (
+            auth.uid(), 'nfc_assignment', 97002, '{"id":97002,"hiveId":98001}',
+            2000, false, 'commercial-entitlement-test'
+        );
+    exception when insufficient_privilege then
+        denied := true;
+    end;
+    if not denied then
+        raise exception 'Hobbyist unexpectedly created a new NFC assignment';
+    end if;
+
+    denied := false;
+    begin
+        update public.beekeep_documents
+           set payload = '{"id":97001,"hiveId":98001,"tag":"changed"}',
+               updated_at = 3000
+         where user_id = auth.uid()
+           and entity_type = 'nfc_assignment'
+           and entity_id = 97001;
+    exception when insufficient_privilege then
+        denied := true;
+    end;
+    if not denied then
+        raise exception 'Hobbyist unexpectedly edited an existing NFC assignment';
+    end if;
+end;
+$personal_nfc_downgrade_assertion$;
 
 -- Existing members retain read access, but inserts and updates are denied.
 select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-000000000082', false);
