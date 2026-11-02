@@ -106,6 +106,7 @@ internal fun SettingsScreen(
     autoVoiceEnabled: Boolean,
     onAutoVoiceEnabledChange: (Boolean) -> Unit,
     fastTagAssignmentMode: Boolean,
+    nfcEntitled: Boolean,
     onFastTagAssignmentModeChange: (Boolean) -> Unit,
     largeFieldText: Boolean,
     onLargeFieldTextChange: (Boolean) -> Unit,
@@ -114,6 +115,7 @@ internal fun SettingsScreen(
     cloud: SupabaseGateway,
     onBack: () -> Unit,
     onOpenMore: () -> Unit,
+    onOpenPlans: () -> Unit,
     onResetApiaries: (String?) -> Unit
 ) {
     val context = LocalContext.current
@@ -272,12 +274,25 @@ internal fun SettingsScreen(
 
             SettingsSection("NFC & Voice behaviour", Icons.Rounded.Nfc) {
                 // Tag-management controls come first.
-                SettingsSwitchRow(
-                    title = "Fast tag assignment mode",
-                    checked = fastTagAssignmentMode,
-                    onCheckedChange = onFastTagAssignmentModeChange
-                )
-                if (fastTagAssignmentMode) {
+                if (nfcEntitled) {
+                    SettingsSwitchRow(
+                        title = "Fast tag assignment mode",
+                        checked = fastTagAssignmentMode,
+                        onCheckedChange = onFastTagAssignmentModeChange
+                    )
+                } else {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(
+                            "NFC scanning, tag assignment and fast assignment are Commercial features. Your existing tag assignments remain saved.",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                        OutlinedButton(onClick = onOpenPlans, modifier = Modifier.fillMaxWidth()) {
+                            Text("VIEW COMMERCIAL PLAN")
+                        }
+                    }
+                }
+                if (nfcEntitled && fastTagAssignmentMode) {
                     Text(
                         "TURN THIS SETTING OFF TO CONTINUE NORMAL OPERATION",
                         style = MaterialTheme.typography.bodySmall,
