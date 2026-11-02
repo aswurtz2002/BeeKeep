@@ -66,6 +66,7 @@ fun WorkspaceScreen(
     val scope = rememberCoroutineScope()
     var hasOwnedTeamWorkspace by rememberSaveable { mutableStateOf(false) }
     var activeWorkspaceIsOwnedByUser by rememberSaveable { mutableStateOf(false) }
+    var ownerAccessAccountId by rememberSaveable { mutableStateOf<String?>(null) }
     var ownerCommercialEntitlementActive by rememberSaveable { mutableStateOf<Boolean?>(null) }
     var ownerAccessCheckComplete by rememberSaveable { mutableStateOf(false) }
     var ownerAccessCheckMessage by rememberSaveable { mutableStateOf("") }
@@ -119,7 +120,15 @@ fun WorkspaceScreen(
         ownerAccessCheckComplete = true
     }
 
-    androidx.compose.runtime.LaunchedEffect(account.signedIn, currentPlan, activeWorkspaceId) {
+    androidx.compose.runtime.LaunchedEffect(account.signedIn, account.userId, currentPlan, activeWorkspaceId) {
+        if (ownerAccessAccountId != account.userId) {
+            // Do not carry a previous account's owner/entitlement decision across sign-in.
+            ownerAccessAccountId = account.userId
+            hasOwnedTeamWorkspace = false
+            activeWorkspaceIsOwnedByUser = false
+            ownerCommercialEntitlementActive = null
+            ownerAccessCheckMessage = ""
+        }
         ownerAccessCheckComplete = false
         refreshOwnerWorkspaceAccess()
     }
@@ -139,6 +148,7 @@ fun WorkspaceScreen(
         }
     }
     val workspaceAccessPaused = account.signedIn &&
+        ownerAccessAccountId == account.userId &&
         ownerAccessCheckComplete &&
         activeWorkspaceIsOwnedByUser &&
         ownerCommercialEntitlementActive == false
