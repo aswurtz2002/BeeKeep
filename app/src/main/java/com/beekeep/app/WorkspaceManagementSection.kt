@@ -536,7 +536,7 @@ fun WorkspaceManagementSection(
                         selected = selectedWorkspaceSection == "people",
                         modifier = Modifier.weight(1f)
                     ) { selectedWorkspaceSection = "people" }
-                    if (selectedWorkspace?.member_role == "owner" || selectedWorkspace?.member_role == "admin") {
+                    if (!readOnly && (selectedWorkspace?.member_role == "owner" || selectedWorkspace?.member_role == "admin")) {
                         WorkspaceSectionTab(
                             label = "Settings",
                             selected = selectedWorkspaceSection == "settings",
@@ -1028,20 +1028,22 @@ fun WorkspaceManagementSection(
                                             color = MaterialTheme.colorScheme.onSurfaceVariant
                                         )
                                     }
-                                    TextButton(
-                                        enabled = !loading,
-                                        onClick = {
-                                            scope.launch {
-                                                val result = cloud.cancelWorkspaceInvitation(invitation.id)
-                                                if (result.isSuccess) {
-                                                    refreshWorkspaceInvitations(workspace)
-                                                    message = "Invitation cancelled."
-                                                } else {
-                                                    message = result.error ?: "Couldn't cancel the invitation."
+                                    if (!readOnly) {
+                                        TextButton(
+                                            enabled = !loading,
+                                            onClick = {
+                                                scope.launch {
+                                                    val result = cloud.cancelWorkspaceInvitation(invitation.id)
+                                                    if (result.isSuccess) {
+                                                        refreshWorkspaceInvitations(workspace)
+                                                        message = "Invitation cancelled."
+                                                    } else {
+                                                        message = result.error ?: "Couldn't cancel the invitation."
+                                                    }
                                                 }
                                             }
-                                        }
-                                    ) { Text("CANCEL") }
+                                        ) { Text("CANCEL") }
+                                    }
                                 }
                                 if (index < invitations.lastIndex) {
                                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
