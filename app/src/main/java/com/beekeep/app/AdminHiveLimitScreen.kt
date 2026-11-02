@@ -145,11 +145,11 @@ internal fun AdminHiveLimitScreen(
     }
 
     val current = accountResult
-    val minimumAllowed = current?.let { maxOf(BeeKeepEntitlements.PRO_HIVE_LIMIT, it.baseHiveLimit) }
-        ?: BeeKeepEntitlements.PRO_HIVE_LIMIT
+    val minimumAllowed = current?.let { maxOf(BeeKeepEntitlements.COMMERCIAL_HIVE_LIMIT, it.baseHiveLimit) }
+        ?: BeeKeepEntitlements.COMMERCIAL_HIVE_LIMIT
     val proposedLimit = limitText.toIntOrNull()
     val canSave = !busy &&
-        current?.isActivePaidPlan == true &&
+        current?.isActiveUltimate == true &&
         proposedLimit != null &&
         proposedLimit in minimumAllowed..ADMIN_MAX_CUSTOM_HIVE_LIMIT &&
         reasonText.trim().length in 3..500
@@ -257,11 +257,11 @@ internal fun AdminHiveLimitScreen(
             current?.let { result ->
                 val tierName = adminTierName(result)
                 val status = when {
-                    result.isActiveUltimate -> "Active Ultimate"
-                    result.isActivePaidPlan -> "Active Pro"
+                    result.isActiveUltimate -> "Active Commercial"
+                    result.isActivePaidPlan -> "Hobbyist (legacy Pro)"
                     result.planCode?.contains("pro", ignoreCase = true) == true ||
-                        result.planCode?.contains("ultimate", ignoreCase = true) == true -> "Paid plan inactive or expired"
-                    else -> "Free plan"
+                        result.planCode?.contains("ultimate", ignoreCase = true) == true -> "Commercial inactive or expired"
+                    else -> "Hobbyist plan"
                 }
                 val effectiveLimit = result.customHiveLimit?.coerceAtLeast(result.baseHiveLimit)
                     ?: result.baseHiveLimit
@@ -307,7 +307,7 @@ internal fun AdminHiveLimitScreen(
                                 shape = RoundedCornerShape(12.dp)
                             ) {
                                 Text(
-                                    "Custom limits are available only while the trusted server entitlement is active for Pro or Ultimate. This account currently resolves to its standard plan limit; changing a hive allowance does not activate or extend a subscription.",
+                                    "Custom limits are available only while the trusted server entitlement is active Commercial entitlement. This account currently resolves to its standard plan limit; changing a hive allowance does not activate or extend a subscription.",
                                     modifier = Modifier.padding(12.dp),
                                     color = MaterialTheme.colorScheme.onErrorContainer
                                 )
@@ -323,7 +323,7 @@ internal fun AdminHiveLimitScreen(
                     Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         Text("Hive allowance controls", fontWeight = FontWeight.ExtraBold, style = MaterialTheme.typography.titleMedium)
                         Text(
-                            "Choose a custom ceiling for an active Pro or Ultimate account. The server enforces the same ceiling during cloud sync.",
+                            "Choose a custom ceiling for an active Commercial account. The server enforces the same ceiling during cloud sync.",
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         OutlinedTextField(
@@ -478,9 +478,8 @@ private fun formatLimit(value: Int): String = String.format(Locale.CANADA, "%,d"
 private fun adminTierName(result: SupportAdminHiveLimitResponse?): String {
     val plan = result?.planCode.orEmpty().lowercase(Locale.ROOT).replace("_", "").replace("-", "")
     return when {
-        plan.contains("ultimate") -> "Ultimate"
-        plan.contains("pro") -> "Pro"
-        else -> "Free"
+        plan.contains("ultimate") || plan.contains("commercial") -> "Commercial"
+        else -> "Hobbyist"
     }
 }
 
