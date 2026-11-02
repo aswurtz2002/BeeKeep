@@ -129,6 +129,9 @@ class SupabaseGateway(
                 _verifiedPlan.value = null
                 verifiedPlanUserId = null
             } else {
+                // Load only this account's previously server-verified plan before trying the network.
+                // Release ViewModel creation checks use the same cached entitlement as the plan UI.
+                BeeKeepEntitlements.activateCloudHiveLimitOverride(appContext, userId)
                 refreshVerifiedPlanForUser(userId)
                 refreshHiveLimitOverrideForUser(userId)
                 restoreWorkspaceForAccount(supabase, userId)
@@ -146,6 +149,10 @@ class SupabaseGateway(
             // If session identity cannot be established, fail closed to private/local data.
             stopRealtime()
             repository.switchWorkspace(null)
+            BeeKeepEntitlements.activateCloudHiveLimitOverride(appContext, null)
+            _hiveLimitOverride.value = null
+            _verifiedPlan.value = null
+            verifiedPlanUserId = null
             _account.value = CloudAccountState(configured = true, signedIn = false, error = error.message)
         }
     }
@@ -235,13 +242,15 @@ class SupabaseGateway(
             val response = supabase.postgrest.rpc("beekeep_my_hive_entitlement")
                 .decodeList<BeeKeepServerEntitlement>()
                 .firstOrNull()
-            _verifiedPlan.value = response?.let {
+            val verifiedPlan = response?.let {
                 BeeKeepEntitlements.planFromServerEntitlement(
                     planCode = it.planCode,
                     baseHiveLimit = it.baseHiveLimit,
                     isActivePaidPlan = it.isActivePaidPlan
                 )
             } ?: BeeKeepPlan.HOBBYIST
+            _verifiedPlan.value = verifiedPlan
+            BeeKeepEntitlements.updateCloudVerifiedPlan(appContext, cleanUserId, verifiedPlan)
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (_: Throwable) {
