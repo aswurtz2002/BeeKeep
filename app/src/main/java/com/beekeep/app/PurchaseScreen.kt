@@ -80,11 +80,11 @@ internal fun PurchaseScreen(
             billing = "always",
             description = "The default plan for every BeeKeep account.",
             features = listOf("15 hive limit", "3 apiary limit", "Cloud sync"),
-            current = currentPlan == BeeKeepPlan.HOBBYIST,
+            current = false,
             highlighted = false,
-            actionLabel = if (currentPlan == BeeKeepPlan.HOBBYIST) "CURRENT PLAN" else "SWITCH TO HOBBYIST",
-            actionEnabled = debugBuild && currentPlan != BeeKeepPlan.HOBBYIST,
-            onAction = { onChoosePlan(BeeKeepPlan.HOBBYIST) }
+            actionLabel = null,
+            actionEnabled = false,
+            statusLabel = "ALWAYS ACTIVE"
         )
 
         PlanCard(
@@ -102,7 +102,7 @@ internal fun PurchaseScreen(
             description = when (selectedBillingCycle) {
                 CommercialBillingCycle.MONTHLY -> "For larger operations. Billed monthly."
                 CommercialBillingCycle.YEARLY ->
-                    "Billed yearly. Save ${BeeKeepPricing.formatCad(BeeKeepPricing.commercialYearlySavingsCad)} compared with monthly billing."
+                    BeeKeepPricing.commercialYearlyDiscountDescription()
             },
             features = listOf(
                 "10,000 hive limit",
@@ -169,11 +169,12 @@ private fun PlanCard(
     current: Boolean,
     highlighted: Boolean,
     badgeText: String? = null,
-    actionLabel: String,
+    statusLabel: String? = null,
+    actionLabel: String?,
     actionEnabled: Boolean,
     billingCycle: CommercialBillingCycle? = null,
     onBillingCycleChange: ((CommercialBillingCycle) -> Unit)? = null,
-    onAction: () -> Unit
+    onAction: (() -> Unit)? = null
 ) {
     val borderColor = if (highlighted) Color(0xFFD97706) else MaterialTheme.colorScheme.outlineVariant
     Card(
@@ -221,8 +222,20 @@ private fun PlanCard(
                     Text(feature, modifier = Modifier.weight(1f), fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
                 }
             }
-            Button(onClick = onAction, modifier = Modifier.fillMaxWidth().height(52.dp), enabled = actionEnabled, shape = RoundedCornerShape(15.dp)) {
-                Text(actionLabel, fontWeight = FontWeight.ExtraBold)
+            if (actionLabel != null && onAction != null) {
+                Button(onClick = onAction, modifier = Modifier.fillMaxWidth().height(52.dp), enabled = actionEnabled, shape = RoundedCornerShape(15.dp)) {
+                    Text(actionLabel, fontWeight = FontWeight.ExtraBold)
+                }
+            }
+            if (statusLabel != null) {
+                Row(
+                    Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(Icons.Rounded.CheckCircle, contentDescription = null, tint = Color(0xFF15803D), modifier = Modifier.size(18.dp))
+                    Text(statusLabel, color = Color(0xFF15803D), style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.ExtraBold)
+                }
             }
             if (current) {
                 Text("This is your active plan.", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
