@@ -180,13 +180,13 @@ internal fun LockedHiveScreen(hiveName: String, onBack: () -> Unit, onUpgrade: (
                     tint = Color(0xFFB45309),
                     modifier = Modifier.size(42.dp)
                 )
-                Text("Hive Locked", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.ExtraBold)
+                Text("Upgrade BeeKeep", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.ExtraBold)
                 Text(
-                    "$hiveName was added while a BeeKeep subscription was active. Renew a paid plan to unlock this hive and its records.",
+                    "$hiveName is above the current 15-hive Hobbyist limit. Your hive and its records are safe. Upgrade to Commercial to unlock and edit it.",
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Button(onClick = onUpgrade, modifier = Modifier.fillMaxWidth()) {
-                    Text("RENEW / VIEW PLANS")
+                    Text("UPGRADE TO COMMERCIAL")
                 }
                 TextButton(onClick = onBack) { Text("BACK TO HIVES") }
             }
