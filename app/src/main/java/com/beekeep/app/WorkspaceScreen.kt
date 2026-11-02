@@ -192,17 +192,31 @@ fun WorkspaceScreen(
     }
     val readOnlyOwnedWorkspaceIds: Set<String> = if (ownerCommercialEntitlementActive == false) ownedWorkspaceIds.toSet() else emptySet()
 
+    // If the owner has no active team selected, their own expired workspace still
+    // locks the Workspace page. An invited member's personal plan never overrides the
+    // entitlement of a different workspace owner.
     val workspaceAccessLocked = account.signedIn &&
-        hasActiveTeam &&
         ownerAccessAccountId == account.userId &&
         ownerAccessCheckComplete &&
-        activeWorkspaceOwnerCommercialEntitlementActive == false
+        WorkspaceAccessPolicy.shouldLockWorkspacePage(
+            hasActiveTeam = hasActiveTeam,
+            activeTeamOwnerCommercialEntitlementActive = activeWorkspaceOwnerCommercialEntitlementActive,
+            hasOwnedTeamWorkspace = hasOwnedTeamWorkspace,
+            ownCommercialEntitlementActive = ownerCommercialEntitlementActive
+        )
 
     val workspaceAccessCouldNotBeVerified = account.signedIn &&
-        hasActiveTeam &&
         ownerAccessAccountId == account.userId &&
         ownerAccessCheckComplete &&
-        activeWorkspaceOwnerCommercialEntitlementActive == null
+        WorkspaceAccessPolicy.cannotVerifyWorkspacePageAccess(
+            hasActiveTeam = hasActiveTeam,
+            activeTeamOwnerCommercialEntitlementActive = activeWorkspaceOwnerCommercialEntitlementActive,
+            hasOwnedTeamWorkspace = hasOwnedTeamWorkspace,
+            ownCommercialEntitlementActive = ownerCommercialEntitlementActive
+        )
+
+    val currentUserOwnsLockedWorkspace =
+        activeWorkspaceIsOwnedByUser || (!hasActiveTeam && hasOwnedTeamWorkspace)
 
     Column(
         modifier = Modifier
@@ -258,7 +272,7 @@ fun WorkspaceScreen(
                                 fontWeight = FontWeight.ExtraBold
                             )
                             Text(
-                                if (workspaceAccessLocked && activeWorkspaceIsOwnedByUser) {
+                                if (workspaceAccessLocked && currentUserOwnsLockedWorkspace) {
                                     "Your Commercial subscription has expired."
                                 } else if (workspaceAccessLocked) {
                                     "The workspace owner's Commercial subscription is inactive."
@@ -274,7 +288,7 @@ fun WorkspaceScreen(
                         when {
                             workspaceAccessCouldNotBeVerified ->
                                 "This workspace stays locked until BeeKeep can verify its access. Check your connection and try again. Your team records have not been deleted."
-                            activeWorkspaceIsOwnedByUser ->
+                            currentUserOwnsLockedWorkspace ->
                                 "Renew Commercial to unlock this workspace. Your hives, apiaries and history are preserved, and queued edits stay on this device until access is restored."
                             else ->
                                 "Ask the workspace owner to renew Commercial. Team access will return when the owner's subscription is active again. Your team records remain saved."
@@ -300,19 +314,21 @@ fun WorkspaceScreen(
                         modifier = Modifier.fillMaxWidth(),
                         enabled = !ownerAccessActionBusy
                     ) { Text(if (ownerAccessActionBusy) "CHECKING…" else "CHECK ACCESS AGAIN") }
-                    OutlinedButton(
-                        onClick = {
-                            scope.launch {
-                                ownerAccessActionBusy = true
-                                val result = cloud.activateWorkspace(null)
-                                ownerAccessCheckMessage = result.error
-                                    ?: "Switched to your personal data. Your team data remains saved."
-                                ownerAccessActionBusy = false
-                            }
-                        },
-                        modifier = Modifier.fillMaxWidth(),
-                        enabled = !ownerAccessActionBusy
-                    ) { Text("SWITCH TO PERSONAL DATA") }
+                    if (hasActiveTeam) {
+                        OutlinedButton(
+                            onClick = {
+                                scope.launch {
+                                    ownerAccessActionBusy = true
+                                    val result = cloud.activateWorkspace(null)
+                                    ownerAccessCheckMessage = result.error
+                                        ?: "Switched to your personal data. Your team data remains saved."
+                                    ownerAccessActionBusy = false
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            enabled = !ownerAccessActionBusy
+                        ) { Text("SWITCH TO PERSONAL DATA") }
+                    }
                     if (ownerAccessCheckMessage.isNotBlank() && workspaceAccessCouldNotBeVerified) {
                         Text(
                             ownerAccessCheckMessage,
