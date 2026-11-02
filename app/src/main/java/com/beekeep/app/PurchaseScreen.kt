@@ -203,7 +203,7 @@ private fun PlanCard(
                         onClick = { onBillingCycleChange(CommercialBillingCycle.MONTHLY) }
                     )
                     BillingCycleTab(
-                        label = "Yearly · Save ${BeeKeepPricing.commercialYearlyDiscountPercent}%",
+                        label = "Yearly",
                         selected = billingCycle == CommercialBillingCycle.YEARLY,
                         modifier = Modifier.weight(1f),
                         onClick = { onBillingCycleChange(CommercialBillingCycle.YEARLY) }
