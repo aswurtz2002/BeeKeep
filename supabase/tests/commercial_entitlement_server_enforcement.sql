@@ -128,7 +128,7 @@ begin
     if quota_row.active is distinct from true
        or quota_row.effective_hive_limit <> 11000
        or quota_row.effective_apiary_limit <> 1000 then
-        raise exception 'An invited Hobbyist must receive the active owner's exact 11,000 / 1,000 workspace quota.';
+        raise exception 'An invited Hobbyist must receive the workspace quota of 11,000 hives and 1,000 apiaries.';
     end if;
 end;
 $invited_member_workspace_quota_assertion$;
@@ -241,7 +241,7 @@ begin
     if quota_row.active is distinct from false
        or quota_row.effective_hive_limit <> 15
        or quota_row.effective_apiary_limit <> 3 then
-        raise exception 'A downgraded workspace must expose the Hobbyist quota and no longer retain the owner's Commercial override.';
+        raise exception 'A downgraded workspace must expose Hobbyist limits and ignore the previous Commercial override.';
     end if;
 end;
 $downgraded_workspace_quota_assertion$;
