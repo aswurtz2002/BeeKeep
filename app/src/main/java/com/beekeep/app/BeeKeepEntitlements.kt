@@ -246,6 +246,16 @@ object BeeKeepEntitlements {
     fun proCreatedHiveIds(context: Context): Set<Long> = emptySet()
     @Suppress("UNUSED_PARAMETER")
     fun lockedHiveIds(context: Context): Set<Long> = emptySet()
+
+    /**
+     * Returns IDs beyond the current plan allowance, preserving the supplied priority order.
+     * Callers provide a stable order (active colonies first, then colony history). Existing
+     * records are never deleted; this only controls which hives can be edited over the plan cap.
+     */
+    internal fun hiveIdsBeyondLimit(orderedHiveIds: Collection<Long>, hiveLimit: Int): Set<Long> {
+        if (hiveLimit == Int.MAX_VALUE) return emptySet()
+        return orderedHiveIds.distinct().drop(hiveLimit.coerceAtLeast(0)).toSet()
+    }
     @Suppress("UNUSED_PARAMETER")
     internal fun countHivesSubjectToFreeLimit(hiveIds: Collection<Long>, lockedIds: Set<Long>): Int = hiveIds.size
 
