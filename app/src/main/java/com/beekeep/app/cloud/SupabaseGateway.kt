@@ -204,9 +204,17 @@ class SupabaseGateway(
                         ownerUserId = storedOwnerId
                     )
                 }
+            } else if (storedOwnerId != null && cachedUserId != null &&
+                !ActiveWorkspaceSessionPolicy.ownerMatches(cachedUserId, storedOwnerId)
+            ) {
+                // The new account identity is known and does not own the saved local cache.
+                // Clear the selected team in this case; transient/offline failures above retain it.
+                repository.switchWorkspace(null)
+            }
+            if (cachedUserId != null) {
                 BeeKeepEntitlements.activateCloudHiveLimitOverride(appContext, cachedUserId)
                 _hiveLimitOverride.value =
-                    BeeKeepEntitlements.cachedCloudHiveLimitOverride(appContext, cachedUserId!!)
+                    BeeKeepEntitlements.cachedCloudHiveLimitOverride(appContext, cachedUserId)
                 if (verifiedPlanUserId != cachedUserId || _verifiedPlan.value == null) {
                     _verifiedPlan.value = BeeKeepEntitlements.currentPlan(appContext)
                     verifiedPlanUserId = cachedUserId
