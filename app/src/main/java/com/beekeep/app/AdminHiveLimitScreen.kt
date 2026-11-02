@@ -307,7 +307,7 @@ internal fun AdminHiveLimitScreen(
                                 shape = RoundedCornerShape(12.dp)
                             ) {
                                 Text(
-                                    "Custom limits are available only while the trusted server entitlement is active Commercial entitlement. This account currently resolves to its standard plan limit; changing a hive allowance does not activate or extend a subscription.",
+                                    "Custom limits are available only while the account has an active Commercial entitlement. This account currently resolves to its standard plan limit; changing a hive allowance does not activate or extend a subscription.",
                                     modifier = Modifier.padding(12.dp),
                                     color = MaterialTheme.colorScheme.onErrorContainer
                                 )
