@@ -75,6 +75,7 @@ internal fun AddHiveScreen(
     defaultStrength: Int = 3,
     hiveLimitPromptVisible: Boolean = false,
     currentPlan: BeeKeepPlan = BeeKeepPlan.HOBBYIST,
+    hiveLimit: Int = BeeKeepEntitlements.hiveLimit(currentPlan),
     onDismissHiveLimitPrompt: () -> Unit = {},
     onOpenUpgrade: () -> Unit = {},
     onBack: () -> Unit,
@@ -178,7 +179,7 @@ internal fun AddHiveScreen(
             },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(BeeKeepEntitlements.hiveLimitMessage(currentPlan))
+                    Text(BeeKeepEntitlements.hiveLimitMessage(currentPlan, hiveLimit))
                     // Commercial's primary limit message already contains the safety reassurance and support guidance.
                     // Keep the extra explanation for lower plans only, so Commercial doesn't repeat itself.
                     if (currentPlan != BeeKeepPlan.COMMERCIAL) {

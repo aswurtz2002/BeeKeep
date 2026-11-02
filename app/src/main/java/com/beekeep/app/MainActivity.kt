@@ -154,6 +154,7 @@ import com.beekeep.app.data.Treatment
 import com.beekeep.app.cloud.CloudResult
 import com.beekeep.app.cloud.CloudSyncScheduler
 import com.beekeep.app.cloud.SupabaseGateway
+import com.beekeep.app.cloud.BeeKeepWorkspaceOwnerQuotaEntitlement
 import com.beekeep.app.location.LocationController
 import com.beekeep.app.nfc.NfcController
 import com.beekeep.app.nfc.BeeKeepNfcPayload
@@ -502,7 +503,6 @@ fun BeeKeepApp(
     // Release quotas follow the authenticated server entitlement rather than defaulting every
     // paid customer to Free. Debug builds retain the local purchase simulator.
     val purchasePlan = if (BuildConfig.DEBUG) localPurchasePlan else serverVerifiedPlan ?: BeeKeepPlan.HOBBYIST
-    val effectiveHiveLimit = BeeKeepEntitlements.hiveLimit(purchasePlan, cloudHiveLimitOverride)
     var lockedHiveIds by remember { mutableStateOf(BeeKeepEntitlements.lockedHiveIds(context)) }
     var lockedHivePromptVisible by rememberSaveable { mutableStateOf(false) }
     var lockedHivePromptName by rememberSaveable { mutableStateOf<String?>(null) }
@@ -563,6 +563,110 @@ fun BeeKeepApp(
     val activeWorkspaceId by vm.activeWorkspaceId.collectAsStateWithLifecycle()
     val activeWorkspaceReadOnly by vm.activeWorkspaceReadOnly.collectAsStateWithLifecycle()
     val readOnlyWriteAttempt by vm.readOnlyWriteAttempt.collectAsStateWithLifecycle()
+    var teamQuotaSnapshot by remember {
+        mutableStateOf<Pair<String, BeeKeepWorkspaceOwnerQuotaEntitlement>?>(null)
+    }
+    var teamQuotaError by remember { mutableStateOf<String?>(null) }
+    val personalQuotaLimits = remember(purchasePlan, cloudHiveLimitOverride) {
+        BeeKeepQuotaLimits.forPlan(purchasePlan, cloudHiveLimitOverride)
+    }
+    val selectedTeamQuota = teamQuotaSnapshot?.takeIf { it.first == activeWorkspaceId }?.second
+    val isPersonalDataset = activeWorkspaceId.isNullOrBlank()
+    val quotaContextKey = if (isPersonalDataset) {
+        "personal:${purchasePlan.name}:${personalQuotaLimits.hiveLimit}:${personalQuotaLimits.apiaryLimit}"
+    } else {
+        "team:${activeWorkspaceId}:${selectedTeamQuota?.active}:${selectedTeamQuota?.effectiveHiveLimit}:" +
+            "${selectedTeamQuota?.effectiveApiaryLimit}:${selectedTeamQuota?.memberRole}:$activeWorkspaceReadOnly"
+    }
+    var appliedQuotaContextKey by remember { mutableStateOf<String?>(null) }
+    val quotaEnforcementReady = BeeKeepQuotaAccessPolicy.canWrite(
+        isPersonalDataset = isPersonalDataset,
+        quotaContextApplied = appliedQuotaContextKey == quotaContextKey,
+        ownerCommercialActive = selectedTeamQuota?.active,
+        memberRole = selectedTeamQuota?.memberRole,
+        workspaceReadOnly = activeWorkspaceReadOnly
+    )
+    val activeQuotaLimits = if (isPersonalDataset) {
+        personalQuotaLimits
+    } else {
+        selectedTeamQuota?.let {
+            BeeKeepQuotaLimits.forWorkspaceOwner(it.active, it.effectiveHiveLimit, it.effectiveApiaryLimit)
+        } ?: BeeKeepQuotaLimits.forPlan(BeeKeepPlan.HOBBYIST)
+    }
+    val effectiveHiveLimit = activeQuotaLimits.hiveLimit
+
+    // A selected team uses the owner's server-resolved limits, never the invitee's personal plan.
+    // Until that lookup succeeds, use a restrictive fallback and block quota-dependent writes.
+    androidx.compose.runtime.LaunchedEffect(activeWorkspaceId, account.signedIn, account.userId) {
+        val workspaceId = activeWorkspaceId?.trim()?.takeIf { it.isNotEmpty() }
+        if (workspaceId == null) {
+            teamQuotaSnapshot = null
+            teamQuotaError = null
+            return@LaunchedEffect
+        }
+
+        teamQuotaSnapshot = null
+        teamQuotaError = null
+        if (!account.signedIn) {
+            teamQuotaError = "Sign in to verify this workspace's subscription limits."
+            return@LaunchedEffect
+        }
+
+        while (true) {
+            val result = cloud.workspaceOwnerQuotaEntitlement(workspaceId)
+            if (result.isSuccess && result.value != null) {
+                teamQuotaSnapshot = workspaceId to result.value!!
+                teamQuotaError = null
+            } else {
+                teamQuotaSnapshot = null
+                teamQuotaError = result.error
+                    ?: "Couldn't verify the workspace owner's subscription limits. Check your connection and retry."
+            }
+            delay(60_000)
+        }
+    }
+    // Keep the selected Room dataset's write gate aligned with the live owner entitlement,
+    // even when the beekeeper is on another screen and WorkspaceScreen is not mounted.
+    androidx.compose.runtime.LaunchedEffect(
+        activeWorkspaceId,
+        selectedTeamQuota?.active,
+        selectedTeamQuota?.memberRole,
+        activeWorkspaceReadOnly
+    ) {
+        val workspaceId = activeWorkspaceId?.trim()?.takeIf { it.isNotEmpty() } ?: return@LaunchedEffect
+        val quota = selectedTeamQuota ?: return@LaunchedEffect
+        val expectedReadOnly = !quota.active || quota.memberRole !in setOf("owner", "admin", "member")
+        if (activeWorkspaceReadOnly != expectedReadOnly) {
+            val result = cloud.activateWorkspace(workspaceId)
+            if (!result.isSuccess) {
+                teamQuotaSnapshot = null
+                teamQuotaError = result.error
+                    ?: "Workspace access could not be refreshed. Check your connection and retry."
+            }
+        }
+    }
+
+    androidx.compose.runtime.LaunchedEffect(quotaContextKey) {
+        // Install the quota before marking this data context writable. This also covers
+        // personal<->team switching, where the same Room repository changes databases.
+        vm.updateQuotaLimits(activeQuotaLimits)
+        appliedQuotaContextKey = quotaContextKey
+    }
+
+    fun showQuotaVerificationMessage() {
+        val message = when {
+            activeWorkspaceId.isNullOrBlank() ->
+                "BeeKeep could not verify the active plan limits. Try again."
+            selectedTeamQuota == null ->
+                teamQuotaError ?: "Checking the workspace owner's subscription limits…"
+            !selectedTeamQuota.active ->
+                "This workspace is locked because the owner's Commercial subscription is inactive."
+            selectedTeamQuota.memberRole == "viewer" || activeWorkspaceReadOnly ->
+                "This workspace is view-only. Ask the owner to check your access."
+            else -> "Workspace access could not be verified. Check your connection and try again."
+        }
+        scope.launch { snackbarHostState.showSnackbar(message) }
+    }
     var hasJoinedTeamWorkspace by rememberSaveable {
         mutableStateOf(autoVoicePrefs.getString("selected_team_workspace_id", "").orEmpty().isNotBlank())
     }
@@ -775,13 +879,14 @@ fun BeeKeepApp(
         deadHives.size,
         lockedHiveIds,
         purchasePlan,
-        effectiveHiveLimit
+        effectiveHiveLimit,
+        quotaEnforcementReady
     ) {
         val availablePlanHiveCount = BeeKeepEntitlements.countHivesSubjectToFreeLimit(
             (hives + deadHives).map { it.id },
             lockedHiveIds
         )
-        if (addHive && availablePlanHiveCount >= effectiveHiveLimit) {
+        if (quotaEnforcementReady && addHive && availablePlanHiveCount >= effectiveHiveLimit) {
             hiveLimitPromptVisible = true
         }
     }
@@ -1656,7 +1761,8 @@ fun BeeKeepApp(
         AddHiveScreen(
             apiaries = apiaries,
             initialApiary = selectedApiaryName,
-            currentPlan = purchasePlan,
+            currentPlan = activeQuotaLimits.plan,
+            hiveLimit = activeQuotaLimits.hiveLimit,
             defaultQueenStatus = autoVoicePrefs.getString("default_queen_status", "Laying")?.takeIf { it in setOf("Laying", "Queenless", "Virgin") } ?: "Laying",
             defaultStrength = autoVoicePrefs.getInt("default_starting_strength", 3).coerceIn(1, 5),
             hiveLimitPromptVisible = hiveLimitPromptVisible,
@@ -1675,7 +1781,9 @@ fun BeeKeepApp(
                 hiveLimitPromptVisible = false
             }
         ) { number, apiary, queen, strength ->
-            vm.createHive(number, apiary, queen, strength, tagUid = pendingTagUid) { success, error ->
+            if (!quotaEnforcementReady) {
+                showQuotaVerificationMessage()
+            } else vm.createHive(number, apiary, queen, strength, tagUid = pendingTagUid) { success, error ->
                 if (!success && error?.contains("Hive limit reached", ignoreCase = true) == true) {
                     // A cap rejection must open the themed prompt, not disappear into a snackbar.
                     hiveLimitPromptVisible = true
@@ -1738,7 +1846,7 @@ fun BeeKeepApp(
                 apiaryLimitPromptVisible = false
             },
             apiaryLimitPromptVisible = apiaryLimitPromptVisible,
-            currentPlan = purchasePlan,
+            currentPlan = activeQuotaLimits.plan,
             onDismissApiaryLimitPrompt = { apiaryLimitPromptVisible = false },
             onOpenUpgrade = {
                 apiaryLimitPromptVisible = false
@@ -1748,7 +1856,9 @@ fun BeeKeepApp(
                 screen = Screen.PURCHASES
             },
             onSave = { _, name, notes, lat, lon, forage, water ->
-                vm.saveApiary(name, notes, lat, lon, forage, water) { success, error ->
+                if (!quotaEnforcementReady) {
+                    showQuotaVerificationMessage()
+                } else vm.saveApiary(name, notes, lat, lon, forage, water) { success, error ->
                     if (!success && error?.contains("Apiary limit reached", ignoreCase = true) == true) {
                         apiaryLimitPromptVisible = true
                     } else {
@@ -2280,9 +2390,10 @@ fun BeeKeepApp(
                 )
             } else 0,
             addToExistingWorkspace = isAddingToExistingWorkspace,
-            hiveLimit = effectiveHiveLimit,
-            apiaryLimit = BeeKeepEntitlements.apiaryLimit(purchasePlan),
-            currentPlan = purchasePlan,
+            hiveLimit = activeQuotaLimits.hiveLimit,
+            apiaryLimit = activeQuotaLimits.apiaryLimit,
+            currentPlan = activeQuotaLimits.plan,
+            quotaEnforcementReady = quotaEnforcementReady,
             onBack = {
                 if (isAddingToExistingWorkspace) {
                     addingApiariesWithHives = false
@@ -2498,10 +2609,10 @@ fun BeeKeepApp(
                 },
                 fastTagAssignmentMode = fastTagAssignmentMode,
                 nfcEntitled = isCommercialPlan && commercialEntitlementResolved,
-                hiveLimit = effectiveHiveLimit,
-                apiaryLimit = BeeKeepEntitlements.apiaryLimit(purchasePlan),
-                planName = purchasePlan.displayName,
-                quotaEnforcementReady = commercialEntitlementResolved,
+                hiveLimit = activeQuotaLimits.hiveLimit,
+                apiaryLimit = activeQuotaLimits.apiaryLimit,
+                planName = activeQuotaLimits.plan.displayName,
+                quotaEnforcementReady = quotaEnforcementReady,
                 onFastTagAssignmentModeChange = { enabled ->
                     if (enabled && !commercialEntitlementResolved) {
                         scope.launch { snackbarHostState.showSnackbar("Checking your BeeKeep plan…") }

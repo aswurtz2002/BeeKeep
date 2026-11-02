@@ -48,6 +48,16 @@ class BeeKeepViewModel(
     val readOnlyWriteAttempt: StateFlow<Long> = repo.readOnlyWriteAttempt
     private var detailJob: Job? = null
     private var selectionRequestGeneration = 0L
+    @Volatile
+    private var activeQuotaLimits = BeeKeepQuotaLimits.forPlan(
+        BeeKeepEntitlements.currentPlan(appContext),
+        BeeKeepEntitlements.hiveLimit(appContext)
+    )
+
+    internal fun updateQuotaLimits(limits: BeeKeepQuotaLimits) {
+        activeQuotaLimits = limits
+        repo.updateQuotaLimits(limits)
+    }
 
     /**
      * Room/outbox is the durable save. Ask WorkManager to push it promptly without
@@ -61,6 +71,7 @@ class BeeKeepViewModel(
         ApiaryHiveCounts(hives.groupingBy { it.apiary.lowercase(java.util.Locale.ROOT) }.eachCount())
 
     init {
+        repo.updateQuotaLimits(activeQuotaLimits)
         viewModelScope.launch {
             repo.initialize()
             // Hydrate active and inactive UID assignments before NFC auto-write is permitted.
@@ -195,9 +206,10 @@ class BeeKeepViewModel(
             onResult(false, "Each apiary needs a unique name.")
             return
         }
-        val apiaryLimit = BeeKeepEntitlements.apiaryLimit(appContext)
+        val quotaLimits = activeQuotaLimits
+        val apiaryLimit = quotaLimits.apiaryLimit
         if (apiaryLimit != Int.MAX_VALUE && _apiaries.value.size + cleanApiaryNames.size > apiaryLimit) {
-            onResult(false, BeeKeepEntitlements.apiaryLimitMessage(appContext))
+            onResult(false, BeeKeepEntitlements.apiaryLimitMessage(quotaLimits.plan))
             return
         }
         if (startingHiveNumbers.any { it !in 1..999_999 }) {
@@ -214,9 +226,9 @@ class BeeKeepViewModel(
             lockedIds
         )
         val requestedHiveCount = hiveCounts.sum()
-        val limit = BeeKeepEntitlements.hiveLimit(appContext)
+        val limit = quotaLimits.hiveLimit
         if (requestedHiveCount > 0 && currentHiveCount + requestedHiveCount > limit) {
-            onResult(false, BeeKeepEntitlements.hiveLimitMessage(appContext))
+            onResult(false, BeeKeepEntitlements.hiveLimitMessage(quotaLimits.plan, limit))
             return
         }
         if (allowExistingWorkspace) {
@@ -244,7 +256,7 @@ class BeeKeepViewModel(
         }
 
         viewModelScope.launch {
-            val planAtCreation = BeeKeepEntitlements.currentPlan(appContext)
+            val planAtCreation = quotaLimits.plan
             runCatching {
                 repo.createStarterSetup(
                     cleanApiaryNames,
@@ -266,16 +278,17 @@ class BeeKeepViewModel(
     fun createHive(number: String, apiary: String, queen: String, strength: Int, tagUid: String? = null, onResult: (Boolean, String?) -> Unit = { _, _ -> }) {
         val clean = number.trim(); if (clean.isBlank()) { onResult(false, "Enter a hive number."); return }
         val cleanApiary = apiary.trim().ifBlank { "Unassigned Yard" }
+        val quotaLimits = activeQuotaLimits
         viewModelScope.launch {
-            val planAtCreation = BeeKeepEntitlements.currentPlan(appContext)
+            val planAtCreation = quotaLimits.plan
             val lockedIds = BeeKeepEntitlements.lockedHiveIds(appContext)
             val currentHiveCount = BeeKeepEntitlements.countHivesSubjectToFreeLimit(
                 (_hives.value + _deadHives.value).map { it.id },
                 lockedIds
             )
-            val hiveLimit = BeeKeepEntitlements.hiveLimit(planAtCreation)
+            val hiveLimit = quotaLimits.hiveLimit
             if (currentHiveCount >= hiveLimit) {
-                onResult(false, BeeKeepEntitlements.hiveLimitMessage(planAtCreation))
+                onResult(false, BeeKeepEntitlements.hiveLimitMessage(planAtCreation, hiveLimit))
                 return@launch
             }
             val duplicate = repo.findHiveByNumberAndApiary(clean, cleanApiary)
@@ -486,9 +499,10 @@ class BeeKeepViewModel(
     fun saveApiary(name: String, notes: String, lat: Double?, lon: Double?, forage: String, water: String, onResult: (Boolean, String?) -> Unit = { _, _ -> }) {
         val clean = name.trim()
         if (clean.isBlank()) { onResult(false, "Enter an apiary name."); return }
-        val apiaryLimit = BeeKeepEntitlements.apiaryLimit(appContext)
+        val quotaLimits = activeQuotaLimits
+        val apiaryLimit = quotaLimits.apiaryLimit
         if (apiaryLimit != Int.MAX_VALUE && _apiaries.value.size >= apiaryLimit) {
-            onResult(false, BeeKeepEntitlements.apiaryLimitMessage(appContext))
+            onResult(false, BeeKeepEntitlements.apiaryLimitMessage(quotaLimits.plan))
             return
         }
         viewModelScope.launch {

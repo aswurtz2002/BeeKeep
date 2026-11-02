@@ -1,5 +1,6 @@
 package com.beekeep.app.cloud
 
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
 @Serializable
@@ -83,6 +84,14 @@ data class BeeKeepUsernameAvailability(val available: Boolean)
 
 @Serializable
 data class BeeKeepUltimateEntitlement(val active: Boolean)
+
+@Serializable
+data class BeeKeepWorkspaceOwnerQuotaEntitlement(
+    val active: Boolean = false,
+    @SerialName("effective_hive_limit") val effectiveHiveLimit: Int = 15,
+    @SerialName("effective_apiary_limit") val effectiveApiaryLimit: Int = 3,
+    @SerialName("member_role") val memberRole: String = "viewer"
+)
 
 @Serializable
 data class BeeKeepHiveLimitOverride(

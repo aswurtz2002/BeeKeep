@@ -4,6 +4,7 @@ import com.beekeep.app.nfc.NfcUid
 
 import com.beekeep.app.ColonyStrength
 import com.beekeep.app.BeeKeepEntitlements
+import com.beekeep.app.BeeKeepQuotaLimits
 
 import android.content.Context
 import androidx.room.withTransaction
@@ -40,6 +41,16 @@ class LocalHiveRepository(context: Context) {
     val readOnlyWriteAttempt: StateFlow<Long> = _readOnlyWriteAttempt.asStateFlow()
     private val _database = MutableStateFlow(BeeKeepRoomDb.get(appContext))
     private val db: BeeKeepRoomDb get() = _database.value
+    @Volatile
+    private var activeQuotaLimits = BeeKeepQuotaLimits.forPlan(
+        BeeKeepEntitlements.currentPlan(appContext),
+        BeeKeepEntitlements.hiveLimit(appContext)
+    )
+
+    /** The ViewModel supplies limits for the currently selected personal or team dataset. */
+    internal fun updateQuotaLimits(limits: BeeKeepQuotaLimits) {
+        activeQuotaLimits = limits
+    }
 
     /**
      * Moves the live repository to a distinct database for a team. Personal/offline records
@@ -339,10 +350,11 @@ class LocalHiveRepository(context: Context) {
         db.withTransaction {
             val existingApiaries = db.apiaries().allForBackup()
             val existingHives = db.hives().allForBackup()
-            val apiaryLimit = BeeKeepEntitlements.apiaryLimit(appContext)
+            val quotaLimits = activeQuotaLimits
+            val apiaryLimit = quotaLimits.apiaryLimit
             val currentApiaryCount = existingApiaries.count { !it.deleted }
             require(currentApiaryCount + cleanApiaryNames.size <= apiaryLimit) {
-                BeeKeepEntitlements.apiaryLimitMessage(appContext)
+                BeeKeepEntitlements.apiaryLimitMessage(quotaLimits.plan)
             }
             if (!allowExistingWorkspace) {
                 require(existingApiaries.isEmpty() && existingHives.isEmpty()) {
@@ -383,9 +395,9 @@ class LocalHiveRepository(context: Context) {
                 existingHives.filter { !it.deleted }.map { it.id },
                 lockedIds
             )
-            val hiveLimit = BeeKeepEntitlements.hiveLimit(appContext)
+            val hiveLimit = quotaLimits.hiveLimit
             require(requestedHiveCount == 0 || currentHiveCount + requestedHiveCount <= hiveLimit) {
-                BeeKeepEntitlements.hiveLimitMessage(appContext)
+                BeeKeepEntitlements.hiveLimitMessage(quotaLimits.plan, hiveLimit)
             }
 
             val now = System.currentTimeMillis()
@@ -432,9 +444,9 @@ class LocalHiveRepository(context: Context) {
                 db.hives().allForBackup().filter { !it.deleted }.map { it.id },
                 lockedIds
             )
-            val hiveLimit = BeeKeepEntitlements.hiveLimit(appContext)
-            require(currentHiveCount < hiveLimit) {
-                BeeKeepEntitlements.hiveLimitMessage(appContext)
+            val quotaLimits = activeQuotaLimits
+            require(currentHiveCount < quotaLimits.hiveLimit) {
+                BeeKeepEntitlements.hiveLimitMessage(quotaLimits.plan, quotaLimits.hiveLimit)
             }
         }
         val cleanApiary = h.apiary.trim()
@@ -900,9 +912,9 @@ class LocalHiveRepository(context: Context) {
             val previous = db.apiaries().get(a.id)
             if (previous == null) {
                 val activeApiaryCount = db.apiaries().allForBackup().count { !it.deleted }
-                val apiaryLimit = BeeKeepEntitlements.apiaryLimit(appContext)
-                require(activeApiaryCount < apiaryLimit) {
-                    BeeKeepEntitlements.apiaryLimitMessage(appContext)
+                val quotaLimits = activeQuotaLimits
+                require(activeApiaryCount < quotaLimits.apiaryLimit) {
+                    BeeKeepEntitlements.apiaryLimitMessage(quotaLimits.plan)
                 }
             }
             val now = maxOf(System.currentTimeMillis(), (previous?.updatedAt ?: 0L) + 1L)

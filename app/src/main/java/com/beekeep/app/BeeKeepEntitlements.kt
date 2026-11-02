@@ -41,6 +41,58 @@ enum class BeeKeepPlan(
     }
 }
 
+/** Quota limits for the currently selected personal or team dataset. */
+internal data class BeeKeepQuotaLimits(
+    val plan: BeeKeepPlan,
+    val hiveLimit: Int,
+    val apiaryLimit: Int
+) {
+    companion object {
+        fun forPlan(plan: BeeKeepPlan, customHiveLimit: Int? = null): BeeKeepQuotaLimits =
+            BeeKeepQuotaLimits(
+                plan,
+                BeeKeepEntitlements.effectiveHiveLimit(plan, customHiveLimit),
+                BeeKeepEntitlements.apiaryLimit(plan)
+            )
+
+        fun forWorkspaceOwner(
+            isActiveCommercial: Boolean,
+            effectiveHiveLimit: Int,
+            effectiveApiaryLimit: Int
+        ): BeeKeepQuotaLimits {
+            if (!isActiveCommercial) return forPlan(BeeKeepPlan.HOBBYIST)
+            val safeHiveLimit = effectiveHiveLimit.takeIf {
+                it in BeeKeepEntitlements.COMMERCIAL_HIVE_LIMIT..BeeKeepEntitlements.MAX_CUSTOM_HIVE_LIMIT
+            } ?: BeeKeepEntitlements.COMMERCIAL_HIVE_LIMIT
+            val safeApiaryLimit = effectiveApiaryLimit.takeIf {
+                it >= BeeKeepEntitlements.COMMERCIAL_APIARY_LIMIT
+            } ?: BeeKeepEntitlements.COMMERCIAL_APIARY_LIMIT
+            return BeeKeepQuotaLimits(BeeKeepPlan.COMMERCIAL, safeHiveLimit, safeApiaryLimit)
+        }
+    }
+}
+
+/**
+ * Determines whether the local dataset has a verified, writable subscription context.
+ * The server remains the final quota authority; this prevents stale local caps or role
+ * state from making the UI appear writable during a dataset switch.
+ */
+internal object BeeKeepQuotaAccessPolicy {
+    fun canWrite(
+        isPersonalDataset: Boolean,
+        quotaContextApplied: Boolean,
+        ownerCommercialActive: Boolean?,
+        memberRole: String?,
+        workspaceReadOnly: Boolean
+    ): Boolean {
+        if (!quotaContextApplied) return false
+        if (isPersonalDataset) return true
+        return ownerCommercialActive == true &&
+            memberRole in setOf("owner", "admin", "member") &&
+            !workspaceReadOnly
+    }
+}
+
 /** Pricing labels are CAD; real charges remain disabled until Google Play Billing is integrated. */
 internal object BeeKeepPricing {
     const val COMMERCIAL_MONTHLY_CAD = 4.99
