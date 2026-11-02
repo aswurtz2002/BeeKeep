@@ -125,7 +125,7 @@ class SupabaseGateway(
             ) {
                 repository.switchWorkspace(
                     cachedWorkspaceId,
-                    readOnly = true,
+                    readOnly = prefs.getBoolean("active_team_workspace_read_only", false),
                     ownerUserId = cachedOwnerId
                 )
             } else {
@@ -163,7 +163,9 @@ class SupabaseGateway(
                 if (keepCachedTeam) {
                     repository.switchWorkspace(
                         workspaceId = cachedWorkspaceId,
-                        readOnly = true,
+                        // Keep the last server-verified role/plan state while offline. Any later
+                        // cloud upload revalidates the actual membership and owner entitlement.
+                        readOnly = prefs.getBoolean("active_team_workspace_read_only", false),
                         ownerUserId = storedOwnerId
                     )
                     BeeKeepEntitlements.activateCloudHiveLimitOverride(appContext, cachedUserId)
@@ -176,7 +178,7 @@ class SupabaseGateway(
                         signedIn = false,
                         email = prefs.getString("last_cloud_user_email", null).orEmpty(),
                         userId = cachedUserId,
-                        error = "Your cloud session isn't available. Your selected team remains on this device in view-only mode; sign in again to sync."
+                        error = "Your cloud session isn't available. Your selected team and offline edits remain on this device; reconnect to verify access and sync."
                     )
                 } else {
                     repository.switchWorkspace(null)
