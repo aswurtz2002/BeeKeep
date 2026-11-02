@@ -296,6 +296,18 @@ class SupabaseGateway(
             return
         }
 
+        if (savedOwnerId != null) {
+            // The restored Supabase session matches the account that selected this team.
+            // Re-select its cached Room database before waiting on any network membership lookup.
+            // Keep the last verified access mode while the server refresh is in flight.
+            repository.switchWorkspace(
+                workspaceId = workspaceId,
+                readOnly = prefs.getBoolean("active_team_workspace_read_only", true),
+                ownerUserId = userId
+            )
+            _workspaceSelectionInitialized.value = true
+        }
+
         // A known matching owner can use the cached team while offline. A pre-account-binding
         // selection must be checked against the server before it is restored.
         var membershipLookupCompleted = false
