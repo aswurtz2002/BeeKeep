@@ -2744,7 +2744,7 @@ vm.saveFeedingToApiary(
                         onDismiss = { clearApiaryBatchAction() },
                         hiveName = targetSummary,
                         showHistory = false,
-                        entryInfoMessage = "The same treatment and product-label timing will be recorded on every selected hive."
+                        entryInfoMessage = "Use removal and withdrawal timing from the product label. BeeKeep records the dates; it does not determine a safe treatment schedule or create treatment alerts. The same treatment and label-based timing will be recorded on every selected hive."
                     ) { treatmentType, product, days, withdrawalDays, notes ->
                         if (!apiaryBatchSubmitting) {
                             requestApiaryBatchConfirmation(
