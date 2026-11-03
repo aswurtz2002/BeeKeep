@@ -205,7 +205,7 @@ begin
     begin
         perform * from public.beekeep_apply_action_batch(
             (select value::uuid from action_batch_context where key='workspace_id'),
-            92000,'Batch Apiary','00000000-0000-4000-8000-000000000203'::uuid,'feed','[]'::jsonb
+            92000,'Batch Apiary','00000000-0000-4000-8000-000000000203'::uuid,'feed','[{},{}]'::jsonb
         );
     exception when insufficient_privilege then denied := true;
     end;
@@ -220,7 +220,7 @@ begin
     begin
         perform * from public.beekeep_apply_action_batch(
             (select value::uuid from action_batch_context where key='workspace_id'),
-            92000,'Batch Apiary','00000000-0000-4000-8000-000000000204'::uuid,'feed','[]'::jsonb
+            92000,'Batch Apiary','00000000-0000-4000-8000-000000000204'::uuid,'feed','[{},{}]'::jsonb
         );
     exception when insufficient_privilege then denied := true;
     end;
