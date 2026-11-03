@@ -743,10 +743,17 @@ fun BeeKeepApp(
         mutableStateOf(autoVoicePrefs.getString("selected_team_workspace_id", "").orEmpty().isNotBlank())
     }
     val isCommercialPlan = purchasePlan == BeeKeepPlan.COMMERCIAL
+    val nfcAccessScopeKey = if (isPersonalDataset) {
+        "personal:${account.userId.orEmpty()}"
+    } else {
+        "workspace:${activeWorkspaceId.orEmpty()}"
+    }
     val nfcAccessResolved = if (isPersonalDataset) {
         commercialEntitlementResolved
     } else {
-        selectedTeamQuota != null
+        // Do not trust a quota snapshot from the previously selected team while
+        // the new workspace entitlement is still being loaded.
+        quotaSnapshotVerified
     }
     val resolvedNfcAccess = BeeKeepNfcAccessPolicy.resolve(
         isPersonalDataset = isPersonalDataset,
@@ -894,6 +901,7 @@ fun BeeKeepApp(
     }
 
     androidx.compose.runtime.LaunchedEffect(
+        nfcAccessScopeKey,
         nfcAccessResolved,
         nfcCanScan,
         nfcCanManage,
@@ -905,6 +913,7 @@ fun BeeKeepApp(
         // personal/team database. It starts denied and is enabled only after a
         // trusted personal or membership-scoped workspace check succeeds.
         nfc.setEntitlementAccess(
+            accessScopeKey = nfcAccessScopeKey,
             canScan = nfcAccessResolved && nfcCanScan,
             canManageTags = nfcAccessResolved && nfcCanManage
         )
