@@ -1,7 +1,6 @@
 package com.beekeep.app.nfc
 
 import android.app.Activity
-import com.beekeep.app.BeeKeepEntitlements
 import android.content.Intent
 import android.nfc.tech.Ndef
 import android.nfc.tech.NdefFormatable
@@ -60,6 +59,9 @@ class NfcController {
     @Volatile private var passiveReaderActive = false
     @Volatile private var passiveReadsEnabled = true
     @Volatile private var passiveReadListener: ((NfcResult.Read) -> Unit)? = null
+    // Entitlement is resolved by the active data scope in BeeKeepApp. Default deny
+    // until the personal account or selected workspace has been verified.
+    @Volatile private var entitlementAllowsNfc: Boolean = false
     @Volatile private var knownHiveIdByTagUid: Map<String, Long> = emptyMap()
     @Volatile private var knownAmbiguousTagUids: Set<String> = emptySet()
     @Volatile private var knownHiveTagsReady: Boolean = false
@@ -84,6 +86,27 @@ class NfcController {
     fun attach(activity: Activity) {
         attachedActivity = activity
         adapter = activity.getSystemService(NfcManager::class.java)?.defaultAdapter
+    }
+
+    /**
+     * Applies the verified entitlement of the currently selected data scope.
+     * A team member inherits NFC access from that workspace owner's Commercial plan.
+     */
+    fun setEntitlementAllowsNfc(allowed: Boolean) {
+        entitlementAllowsNfc = allowed
+        if (!allowed) {
+            scanGeneration.incrementAndGet()
+            active.set(false)
+            passiveReadGeneration.incrementAndGet()
+            passiveReadInFlight.set(false)
+            fastAssignmentFlowActive = false
+            attachedActivity?.let { activity ->
+                runCatching { adapter?.disableReaderMode(activity) }
+                passiveReaderActive = false
+            }
+        } else {
+            attachedActivity?.takeIf { activityResumed }?.let(::enablePassiveIfNeeded)
+        }
     }
 
     /** Receives passive reads after the local UID-to-hive index is ready. */
@@ -242,7 +265,7 @@ class NfcController {
      * because Android may dispatch an intent while ReaderMode is being re-armed.
      */
     fun beginFastAssignmentFlow(activity: Activity) {
-        if (!BeeKeepEntitlements.canUseNfc(activity)) {
+        if (!entitlementAllowsNfc) {
             fastAssignmentFlowActive = false
             return
         }
@@ -305,7 +328,7 @@ class NfcController {
         // Compose screen effects may request passive reading while a fast-write
         // transaction is in progress. The transaction must retain exclusive NFC
         // ownership until it explicitly finishes or is cancelled.
-        val effectiveEnabled = enabled && !fastAssignmentFlowActive && BeeKeepEntitlements.canUseNfc(activity)
+        val effectiveEnabled = enabled && !fastAssignmentFlowActive && entitlementAllowsNfc
         if (passiveReadsEnabled == effectiveEnabled) {
             if (effectiveEnabled) enablePassiveIfNeeded(activity)
             return
@@ -440,8 +463,8 @@ class NfcController {
         onResult: (NfcResult) -> Unit,
         ignoredUid: String? = null
     ) {
-        if (!BeeKeepEntitlements.canUseNfc(activity)) {
-            onResult(NfcResult.Error("NFC scanning and tag management require BeeKeep Commercial. Your existing tag assignments are preserved and will remain saved."))
+        if (!entitlementAllowsNfc) {
+            onResult(NfcResult.Error("NFC is not available for the currently selected BeeKeep data scope. Verify the personal plan or workspace owner's Commercial access."))
             return
         }
         val nfc = adapter ?: activity.getSystemService(NfcManager::class.java)?.defaultAdapter
@@ -534,7 +557,7 @@ class NfcController {
             NfcAdapter.FLAG_READER_NO_PLATFORM_SOUNDS
 
     private fun enablePassiveIfNeeded(activity: Activity) {
-        if (!BeeKeepEntitlements.canUseNfc(activity)) {
+        if (!entitlementAllowsNfc) {
             runCatching { adapter?.disableReaderMode(activity) }
             passiveReaderActive = false
             return
