@@ -1109,11 +1109,14 @@ class LocalHiveRepository(context: Context) {
                 it.unit.trim().isNotBlank()
         }) { "Every feeding record needs a type, a positive amount, and a unit." }
 
-        val database = db
         val workspaceAtStart = _activeWorkspaceId.value
+        val database = db
+        check(_activeWorkspaceId.value == workspaceAtStart && db === database) {
+            "The active workspace changed. Reopen the apiary and try again."
+        }
         database.withTransaction {
             checkWritable()
-            check(_activeWorkspaceId.value == workspaceAtStart) {
+            check(_activeWorkspaceId.value == workspaceAtStart && db === database) {
                 "The active workspace changed. Reopen the apiary and try again."
             }
             val targets = resolveApiaryBatchTargets(database, apiaryId, apiaryName, targetHiveIds)
@@ -1151,7 +1154,7 @@ class LocalHiveRepository(context: Context) {
                 enqueueBatchDocument(database, "feeding", entity.id, feedingPayload(entity))
                 enqueueBatchDocument(database, "event", event.id, eventPayload(event))
             }
-            check(_activeWorkspaceId.value == workspaceAtStart) {
+            check(_activeWorkspaceId.value == workspaceAtStart && db === database) {
                 "The active workspace changed. Reopen the apiary and try again."
             }
             targets.size
@@ -1172,11 +1175,14 @@ class LocalHiveRepository(context: Context) {
             it.treatmentType.trim().isNotBlank() && it.product.trim().isNotBlank()
         }) { "Every treatment record needs a type and product." }
 
-        val database = db
         val workspaceAtStart = _activeWorkspaceId.value
+        val database = db
+        check(_activeWorkspaceId.value == workspaceAtStart && db === database) {
+            "The active workspace changed. Reopen the apiary and try again."
+        }
         database.withTransaction {
             checkWritable()
-            check(_activeWorkspaceId.value == workspaceAtStart) {
+            check(_activeWorkspaceId.value == workspaceAtStart && db === database) {
                 "The active workspace changed. Reopen the apiary and try again."
             }
             val targets = resolveApiaryBatchTargets(database, apiaryId, apiaryName, targetHiveIds)
@@ -1215,7 +1221,7 @@ class LocalHiveRepository(context: Context) {
                 enqueueBatchDocument(database, "treatment", entity.id, treatmentPayload(entity))
                 enqueueBatchDocument(database, "event", event.id, eventPayload(event))
             }
-            check(_activeWorkspaceId.value == workspaceAtStart) {
+            check(_activeWorkspaceId.value == workspaceAtStart && db === database) {
                 "The active workspace changed. Reopen the apiary and try again."
             }
             targets.size
@@ -1240,11 +1246,14 @@ class LocalHiveRepository(context: Context) {
                     .all { value -> value.isFinite() && value >= 0.0 }
         }) { "Every harvest record must contain valid non-negative quantities and a weight unit." }
 
-        val database = db
         val workspaceAtStart = _activeWorkspaceId.value
+        val database = db
+        check(_activeWorkspaceId.value == workspaceAtStart && db === database) {
+            "The active workspace changed. Reopen the apiary and try again."
+        }
         database.withTransaction {
             checkWritable()
-            check(_activeWorkspaceId.value == workspaceAtStart) {
+            check(_activeWorkspaceId.value == workspaceAtStart && db === database) {
                 "The active workspace changed. Reopen the apiary and try again."
             }
             val targets = resolveApiaryBatchTargets(database, apiaryId, apiaryName, targetHiveIds)
@@ -1284,7 +1293,7 @@ class LocalHiveRepository(context: Context) {
                 enqueueBatchDocument(database, "harvest", entity.id, harvestPayload(entity))
                 enqueueBatchDocument(database, "event", event.id, eventPayload(event))
             }
-            check(_activeWorkspaceId.value == workspaceAtStart) {
+            check(_activeWorkspaceId.value == workspaceAtStart && db === database) {
                 "The active workspace changed. Reopen the apiary and try again."
             }
             targets.size
