@@ -3659,6 +3659,7 @@ private fun TagManagementScreen(
     hives: List<Hive>,
     deadHives: List<Hive>,
     lockedHiveIds: Set<Long>,
+    canManageTags: Boolean = true,
     nfc: NfcController,
     activity: ComponentActivity,
     pendingUid: String?,
@@ -3686,7 +3687,27 @@ private fun TagManagementScreen(
     BackHandler { onBack() }
     val assigned = hives.count { !it.tagUid.isNullOrBlank() }
 
-    androidx.compose.runtime.LaunchedEffect(lockedHiveIds) {
+    fun startTagScan(onResult: (NfcResult) -> Unit) {
+        if (canManageTags) {
+            nfc.startReadAndPrepareForBeeKeep(activity, onResult)
+        } else {
+            // Viewers must never trigger automatic writes to unassigned physical tags.
+            nfc.startRead(activity, onResult)
+        }
+    }
+
+    androidx.compose.runtime.LaunchedEffect(lockedHiveIds, canManageTags) {
+        if (!canManageTags) {
+            nfc.stop(activity)
+            assigningHiveId = null
+            pendingRemoveHiveId = null
+            reassignPrompt = null
+            launchWriteHiveId = null
+            launchWriteUid = null
+            launchWriteStatusHandler = null
+            status = "View-only access: you can scan and verify tags, but cannot change assignments."
+            return@LaunchedEffect
+        }
         val activeLockedOperation = sequenceOf(
             assigningHiveId,
             pendingRemoveHiveId,
@@ -3911,7 +3932,14 @@ private fun TagManagementScreen(
             Card(shape = RoundedCornerShape(24.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text("Tag ready to assign", fontWeight = FontWeight.ExtraBold)
-                    Text("Tag $pendingUid is not linked to a colony. Tap ASSIGN on the hive it belongs to.", color = MaterialTheme.colorScheme.onSecondaryContainer)
+                    Text(
+                        if (canManageTags) {
+                            "Tag $pendingUid is not linked to a colony. Tap ASSIGN on the hive it belongs to."
+                        } else {
+                            "Tag $pendingUid is not linked to a colony. An Owner, Admin or Member must assign it."
+                        },
+                        color = MaterialTheme.colorScheme.onSecondaryContainer
+                    )
                     TextButton(onClick = onPendingUidConsumed) { Text("CANCEL PENDING ASSIGNMENT") }
                 }
             }
@@ -3920,7 +3948,7 @@ private fun TagManagementScreen(
         Button(
             onClick = {
                 assigningHiveId = null
-                nfc.startReadAndPrepareForBeeKeep(activity) { result ->
+                startTagScan { result ->
                     when (result) {
                         is NfcResult.Read -> scope.launch {
                             val normalizedUid = NfcUid.normalize(result.uid)
@@ -3947,7 +3975,11 @@ private fun TagManagementScreen(
                                     } else {
                                         "Unassigned tag • $normalizedUid. Choose the hive it belongs to."
                                     }
-                                    onUnassignedTag(normalizedUid)
+                                    if (canManageTags) {
+                                        onUnassignedTag(normalizedUid)
+                                    } else {
+                                        status = "This tag is not assigned in the selected workspace. Ask an Owner, Admin or Member to assign it."
+                                    }
                                 }
                             }
                         }
@@ -3989,22 +4021,27 @@ private fun TagManagementScreen(
                     }
                     Text(hive.tagUid ?: "No NFC tag assigned", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                        OutlinedButton(onClick = { onOpenHive(hive.id) }, modifier = Modifier.weight(1f)) { Text("OPEN") }
                         OutlinedButton(
-                            onClick = {
-                                assigningHiveId = hive.id
-                                assignAndWriteOnScan(
-                                    hiveId = hive.id,
-                                    expectedUid = pendingUid,
-                                    consumePending = pendingUid != null
-                                ) { message ->
-                                    verifyText = message
-                                    assigningHiveId = null
-                                }
-                            },
-                            enabled = nfc.isAvailable() && nfc.isEnabled() && hive.id !in lockedHiveIds,
+                            onClick = { onOpenHive(hive.id) },
                             modifier = Modifier.weight(1f)
-                        ) { Text(if (hive.tagUid.isNullOrBlank()) "ASSIGN" else "REPLACE") }
+                        ) { Text("OPEN") }
+                        if (canManageTags) {
+                            OutlinedButton(
+                                onClick = {
+                                    assigningHiveId = hive.id
+                                    assignAndWriteOnScan(
+                                        hiveId = hive.id,
+                                        expectedUid = pendingUid,
+                                        consumePending = pendingUid != null
+                                    ) { message ->
+                                        verifyText = message
+                                        assigningHiveId = null
+                                    }
+                                },
+                                enabled = nfc.isAvailable() && nfc.isEnabled() && hive.id !in lockedHiveIds,
+                                modifier = Modifier.weight(1f)
+                            ) { Text(if (hive.tagUid.isNullOrBlank()) "ASSIGN" else "REPLACE") }
+                        }
                     }
                     if (hive.tagUid != null) {
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
@@ -4028,23 +4065,32 @@ private fun TagManagementScreen(
                                     }
                                 }
                             }, enabled = hive.id !in lockedHiveIds, modifier = Modifier.weight(1f)) { Text("VERIFY") }
-                            TextButton(
-                                onClick = {
-                                    if (confirmBeforeTagRemoval) {
-                                        pendingRemoveHiveId = hive.id
-                                    } else {
-                                        verifyText = "Removing NFC tag…"
-                                        onClearTag(hive.id) { success, error ->
-                                            verifyText = if (success) "Tag removed • available for reuse" else (error ?: "Could not remove tag.")
+                            if (canManageTags) {
+                                TextButton(
+                                    onClick = {
+                                        if (confirmBeforeTagRemoval) {
+                                            pendingRemoveHiveId = hive.id
+                                        } else {
+                                            verifyText = "Removing NFC tag…"
+                                            onClearTag(hive.id) { success, error ->
+                                                verifyText = if (success) "Tag removed • available for reuse" else (error ?: "Could not remove tag.")
+                                            }
                                         }
-                                    }
-                                },
-                                enabled = hive.id !in lockedHiveIds,
-                                modifier = Modifier.weight(1f)
-                            ) { Text("REMOVE") }
+                                    },
+                                    enabled = hive.id !in lockedHiveIds,
+                                    modifier = Modifier.weight(1f)
+                                ) { Text("REMOVE") }
+                            }
                         }
                     }
                     verifyText.takeIf { it.isNotBlank() }?.let { Text(it, color = if (it.startsWith("⚠")) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant) }
+                    if (!canManageTags) {
+                        Text(
+                            "View-only: existing tags can be scanned and verified, but tag assignments cannot be changed.",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
                     if (assigningHiveId == hive.id) Text("Hold the physical tag to the back of the phone…", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
                 }
             }
