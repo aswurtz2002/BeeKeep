@@ -285,6 +285,9 @@ interface WorkspaceActionSettingsDao {
 
     @Upsert
     suspend fun upsert(settings: WorkspaceActionSettingsEntity)
+
+    @Query("UPDATE workspace_action_settings SET sync_state = :state, last_error = :error WHERE scope_key = :scopeKey")
+    suspend fun setSyncState(scopeKey: String, state: String, error: String? = null)
 }
 
 @Dao

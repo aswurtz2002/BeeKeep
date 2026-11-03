@@ -279,6 +279,80 @@ class LocalHiveRepository(context: Context) {
     fun observeAllTreatments(): Flow<List<Treatment>> = _database.flatMapLatest { it.treatments().observeAll() }.map { it.map(::toTreatment) }
     fun observeAllHarvests(): Flow<List<Harvest>> = _database.flatMapLatest { it.harvests().observeAll() }.map { it.map(::toHarvest) }
 
+    fun observeWorkspaceActionSettings(scopeKey: String): Flow<WorkspaceActionSettingsEntity?> =
+        _database.flatMapLatest { it.workspaceActionSettings().observe(scopeKey) }
+
+    suspend fun getWorkspaceActionSettings(scopeKey: String): WorkspaceActionSettingsEntity? =
+        withContext(Dispatchers.IO) { db.workspaceActionSettings().get(scopeKey) }
+
+    /** Save the local setting first. Signed-in changes remain pending until server sync confirms them. */
+    suspend fun saveWorkspaceActionSettings(
+        scopeKey: String,
+        workspaceId: String?,
+        ownerUserId: String?,
+        harvestQuantityMode: HarvestQuantityMode,
+        updatedBy: String?
+    ): WorkspaceActionSettingsEntity = withContext(Dispatchers.IO) {
+        checkWritable()
+        require(scopeKey == workspaceActionSettingsScopeKey(workspaceId, ownerUserId)) {
+            "The action settings scope does not match the selected workspace."
+        }
+        val cleanWorkspaceId = workspaceId?.trim()?.takeIf { it.isNotEmpty() }
+        val entity = WorkspaceActionSettingsEntity(
+            scopeKey = scopeKey,
+            workspaceId = cleanWorkspaceId,
+            ownerUserId = if (cleanWorkspaceId == null) {
+                ownerUserId?.trim()?.takeIf { it.isNotEmpty() }
+            } else null,
+            harvestQuantityMode = harvestQuantityMode.storageValue,
+            updatedAt = System.currentTimeMillis(),
+            updatedBy = updatedBy?.trim()?.takeIf { it.isNotEmpty() },
+            syncState = if (updatedBy.isNullOrBlank()) "local" else "pending",
+            lastError = null
+        )
+        db.withTransaction { db.workspaceActionSettings().upsert(entity) }
+        entity
+    }
+
+    /**
+     * Apply a server snapshot unless a newer offline edit is waiting to upload.
+     * The server timestamp is authoritative after a successful upsert.
+     */
+    suspend fun applyRemoteWorkspaceActionSettings(
+        remote: WorkspaceActionSettingsEntity,
+        preservePendingLocal: Boolean = true
+    ): Boolean = withContext(Dispatchers.IO) {
+        val activeDb = db
+        activeDb.withTransaction {
+            val current = activeDb.workspaceActionSettings().get(remote.scopeKey)
+            if (
+                preservePendingLocal &&
+                current != null &&
+                current.syncState in setOf("pending", "local") &&
+                current.updatedAt > remote.updatedAt
+            ) {
+                false
+            } else {
+                activeDb.workspaceActionSettings().upsert(
+                    remote.copy(
+                        harvestQuantityMode = HarvestQuantityMode.fromStorage(remote.harvestQuantityMode).storageValue,
+                        syncState = "synced",
+                        lastError = null
+                    )
+                )
+                true
+            }
+        }
+    }
+
+    suspend fun setWorkspaceActionSettingsSyncState(
+        scopeKey: String,
+        state: String,
+        error: String? = null
+    ) = withContext(Dispatchers.IO) {
+        db.workspaceActionSettings().setSyncState(scopeKey, state, error)
+    }
+
     suspend fun getHive(id: Long): Hive? = withContext(Dispatchers.IO) { db.hives().get(id)?.let(::toHive) }
     suspend fun getAllKnownNfcTagAssignments(): List<Pair<String?, Long>> = withContext(Dispatchers.IO) {
         NfcAssignmentResolver.currentOwners(

@@ -6,6 +6,9 @@ import com.beekeep.app.BuildConfig
 import com.beekeep.app.BeeKeepPlan
 import com.beekeep.app.BeeKeepEntitlements
 import com.beekeep.app.data.LocalHiveRepository
+import com.beekeep.app.data.HarvestQuantityMode
+import com.beekeep.app.data.WorkspaceActionSettingsEntity
+import com.beekeep.app.data.workspaceActionSettingsScopeKey
 import io.github.jan.supabase.SupabaseClient
 import io.github.jan.supabase.auth.auth
 import io.github.jan.supabase.auth.handleDeeplinks
@@ -31,6 +34,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.launch
 import io.ktor.client.call.body
 import java.util.UUID
@@ -647,6 +651,11 @@ class SupabaseGateway(
         } else {
             "workspace:$userId:$workspaceId"
         }
+        val actionSettingsScopeKey = if (workspaceId.isBlank()) {
+            "personal:$userId"
+        } else {
+            "workspace:$workspaceId"
+        }
 
         synchronized(realtimeLock) {
             if (realtimeJob?.isActive == true && realtimeScopeKey == scopeKey) return
@@ -671,7 +680,7 @@ class SupabaseGateway(
 
                         val channel = supabase.channel("beekeep-doc-sync")
                         try {
-                            val changes = if (workspaceId.isBlank()) {
+                            val documentChanges = if (workspaceId.isBlank()) {
                                 channel.postgresChangeFlow<PostgresAction>(schema = "public") {
                                     table = "beekeep_documents"
                                     filter { eq("user_id", userId) }
@@ -682,12 +691,17 @@ class SupabaseGateway(
                                     filter { eq("workspace_id", workspaceId) }
                                 }
                             }
+                            val actionSettingsChanges =
+                                channel.postgresChangeFlow<PostgresAction>(schema = "public") {
+                                    table = "beekeep_action_settings"
+                                    filter { eq("scope_key", actionSettingsScopeKey) }
+                                }
 
                             supabase.realtime.connect()
                             channel.subscribe()
                             _account.value = _account.value.copy(error = null)
                             backoffMs = 1_000L
-                            changes.debounce(500).collect {
+                            merge(documentChanges, actionSettingsChanges).debounce(500).collect {
                                 syncNow()
                             }
                         } finally {
@@ -988,6 +1002,133 @@ class SupabaseGateway(
 
     suspend fun syncNow(): CloudResult = syncMutex.withLock { syncNowUnlocked() }
 
+    /**
+     * Synchronize the scoped harvest interpretation independently from hive documents.
+     * Team writes require a currently verified Owner/Admin role; RLS repeats that check
+     * on the server. A missing additive table is tolerated until its migration is deployed.
+     */
+    private suspend fun syncWorkspaceActionSettings(
+        scopeKey: String,
+        workspaceId: String?,
+        userId: String,
+        canWrite: Boolean
+    ): String? {
+        val supabase = client ?: return "BeeKeep Cloud is not configured."
+        val local = repository.getWorkspaceActionSettings(scopeKey)
+        return try {
+            val remote = supabase.from("beekeep_action_settings")
+                .select {
+                    filter { eq("scope_key", scopeKey) }
+                }
+                .decodeList<BeeKeepActionSettingsRow>()
+                .firstOrNull()
+
+            val localPending = local?.syncState in setOf("pending", "local") &&
+                (workspaceId == null || local?.syncState == "pending")
+
+            // For this two-value preference, an explicitly pending local edit wins when
+            // it next reaches the server. The database assigns the authoritative updated_at;
+            // device clocks must not silently discard an offline Owner/Admin change.
+            if (local != null && localPending && canWrite) {
+                val outgoing = BeeKeepActionSettingsRow(
+                    scope_key = scopeKey,
+                    owner_user_id = if (workspaceId == null) userId else null,
+                    workspace_id = workspaceId,
+                    harvest_quantity_mode = HarvestQuantityMode.fromStorage(
+                        local.harvestQuantityMode
+                    ).storageValue,
+                    updated_at = local.updatedAt,
+                    updated_by = userId
+                )
+                supabase.from("beekeep_action_settings").upsert(outgoing) {
+                    onConflict = "scope_key"
+                }
+
+                // The database trigger owns the authoritative timestamp and editor ID.
+                val confirmed = supabase.from("beekeep_action_settings")
+                    .select {
+                        filter { eq("scope_key", scopeKey) }
+                    }
+                    .decodeList<BeeKeepActionSettingsRow>()
+                    .firstOrNull()
+                    ?: throw IllegalStateException(
+                        "The server did not return the saved harvest setting."
+                    )
+
+                repository.applyRemoteWorkspaceActionSettings(
+                    remote = confirmed.toLocalEntity(),
+                    preservePendingLocal = false
+                )
+                return null
+            }
+
+            if (remote != null) {
+                repository.applyRemoteWorkspaceActionSettings(
+                    remote = remote.toLocalEntity(),
+                    preservePendingLocal = canWrite
+                )
+            } else if (!canWrite && localPending) {
+                // A locally queued Owner/Admin change must not survive a verified role
+                // downgrade when the workspace has no server-side setting row yet.
+                repository.applyRemoteWorkspaceActionSettings(
+                    remote = WorkspaceActionSettingsEntity(
+                        scopeKey = scopeKey,
+                        workspaceId = workspaceId,
+                        ownerUserId = if (workspaceId == null) userId else null,
+                        harvestQuantityMode = HarvestQuantityMode.PER_HIVE.storageValue,
+                        updatedAt = 0L,
+                        updatedBy = null,
+                        syncState = "synced",
+                        lastError = null
+                    ),
+                    preservePendingLocal = false
+                )
+            }
+            null
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Throwable) {
+            if (local?.syncState == "pending") {
+                runCatching {
+                    repository.setWorkspaceActionSettingsSyncState(
+                        scopeKey = scopeKey,
+                        state = "pending",
+                        error = TeamWorkspaceSyncError.userFacing(error.message)
+                    )
+                }
+            }
+            val message = error.message.orEmpty()
+            val missingSettingsTable = listOf(
+                "beekeep_action_settings",
+                "PGRST205",
+                "42P01",
+                "does not exist",
+                "could not find the table"
+            ).any { token -> message.contains(token, ignoreCase = true) }
+
+            if (missingSettingsTable && local?.syncState != "pending") {
+                null
+            } else {
+                val detail = TeamWorkspaceSyncError.userFacing(
+                    error.message ?: "Unknown settings sync error"
+                )
+                "Harvest quantity setting wasn't confirmed in the cloud. " +
+                    "It remains saved on this device. $detail"
+            }
+        }
+    }
+
+    private fun BeeKeepActionSettingsRow.toLocalEntity() = WorkspaceActionSettingsEntity(
+        scopeKey = scope_key,
+        workspaceId = workspace_id,
+        ownerUserId = owner_user_id,
+        harvestQuantityMode = HarvestQuantityMode.fromStorage(harvest_quantity_mode).storageValue,
+        updatedAt = updated_at,
+        updatedBy = updated_by,
+        syncState = "synced",
+        lastError = null
+    )
+
     private suspend fun syncNowUnlocked(): CloudResult {
         if (!configured || client == null) return CloudResult.NotConfigured
         try {
@@ -1154,16 +1295,23 @@ class SupabaseGateway(
             // The legacy full-pull fallback intentionally leaves it untouched.
             syncHeadToCommit?.let { saveSyncCursor(cursorKey, it) }
 
+            val settingsWarning = syncWorkspaceActionSettings(
+                scopeKey = workspaceActionSettingsScopeKey(null, userId),
+                workspaceId = null,
+                userId = userId,
+                canWrite = true
+            )
+
             repository.pruneSync()
             val now = System.currentTimeMillis()
             _account.value = _account.value.copy(
                 syncing = false,
                 lastSyncAt = now,
-                error = null,
+                error = settingsWarning,
                 signedIn = true,
                 email = session.user?.email ?: ""
             )
-            CloudResult.Success
+            if (settingsWarning == null) CloudResult.Success else CloudResult.Failure(settingsWarning)
         } catch (t: CancellationException) {
             _account.value = _account.value.copy(syncing = false)
             throw t
@@ -1560,11 +1708,22 @@ class SupabaseGateway(
             // The legacy fallback has no server cursor; do not advance an incremental cursor.
             syncHeadToCommit?.let { saveSyncCursor(cursorKey, it) }
 
+            val canWriteSettings = isWritable && workspace.member_role in setOf("owner", "admin")
+            val settingsWarning = syncWorkspaceActionSettings(
+                scopeKey = workspaceActionSettingsScopeKey(workspaceId, userId),
+                workspaceId = workspaceId,
+                userId = userId,
+                canWrite = canWriteSettings
+            )
+
             repository.pruneSync()
             val now = System.currentTimeMillis()
-            val warning = if (!isWritable && repository.pendingSync(1).isNotEmpty()) {
+            val documentWarning = if (!isWritable && repository.pendingSync(1).isNotEmpty()) {
                 "This workspace is view-only. Pending local edits were not uploaded."
             } else null
+            val warning = listOfNotNull(documentWarning, settingsWarning)
+                .takeIf { it.isNotEmpty() }
+                ?.joinToString(" ")
             _account.value = _account.value.copy(
                 syncing = false,
                 lastSyncAt = now,

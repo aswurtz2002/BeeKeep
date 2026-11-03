@@ -86,6 +86,17 @@ data class BeeKeepUsernameAvailability(val available: Boolean)
 data class BeeKeepUltimateEntitlement(val active: Boolean)
 
 @Serializable
+data class BeeKeepActionSettingsRow(
+    val scope_key: String,
+    val owner_user_id: String? = null,
+    val workspace_id: String? = null,
+    val harvest_quantity_mode: String = "per_hive",
+    val updated_at: Long = 0L,
+    val updated_by: String? = null
+)
+
+
+@Serializable
 data class BeeKeepWorkspaceOwnerQuotaEntitlement(
     val active: Boolean = false,
     @SerialName("effective_hive_limit") val effectiveHiveLimit: Int = 15,

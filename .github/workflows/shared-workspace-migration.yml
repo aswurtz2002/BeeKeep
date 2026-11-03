@@ -145,3 +145,10 @@ jobs:
         run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261102043000_beekeep_workspace_owner_quota_entitlement_rpc.sql
       - name: Verify Commercial entitlements, workspace downgrade security, NFC and apiary quotas
         run: psql -v ON_ERROR_STOP=1 -f supabase/tests/commercial_entitlement_server_enforcement.sql
+
+      - name: Apply harvest quantity setting access controls
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261103131228_beekeep_harvest_quantity_settings.sql
+      - name: Restrict harvest quantity settings table grants
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261103131406_beekeep_harvest_quantity_settings_acl_fix.sql
+      - name: Verify harvest quantity setting scope and Owner/Admin restrictions
+        run: psql -v ON_ERROR_STOP=1 -f supabase/tests/harvest_quantity_settings_security.sql
