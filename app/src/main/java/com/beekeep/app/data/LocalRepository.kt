@@ -201,6 +201,8 @@ class LocalHiveRepository(context: Context) {
             db.hives().clearAll()
             db.apiaries().clearAll()
             db.outbox().clearAll()
+            // A reset must not let a queued atomic batch recreate the records being wiped.
+            db.actionBatchOutbox().clearAll()
 
             recordsToDelete.forEach { (type, id) ->
                 val draftKey = inspectionNoteDraftKey(activeDraftWorkspaceId, id)
@@ -1591,6 +1593,26 @@ class LocalHiveRepository(context: Context) {
     }
 
     suspend fun pendingSync(limit: Int = 50): List<SyncOutboxEntity> = db.outbox().pending(limit)
+    suspend fun pendingActionBatches(limit: Int = 20): List<ActionBatchOutboxEntity> =
+        withContext(Dispatchers.IO) { db.actionBatchOutbox().pending(limit) }
+
+    suspend fun completeActionBatch(batchId: String) = withContext(Dispatchers.IO) {
+        val database = db
+        database.withTransaction {
+            database.actionBatchOutbox().setState(batchId, "done")
+            database.actionBatchOutbox().deleteCompleted(batchId)
+        }
+    }
+
+    suspend fun markActionBatchError(batchId: String, message: String) = withContext(Dispatchers.IO) {
+        val database = db
+        database.actionBatchOutbox().setState(batchId, "pending", message.take(500))
+    }
+
+    suspend fun hasPendingActionBatches(): Boolean = withContext(Dispatchers.IO) {
+        db.actionBatchOutbox().pending(1).isNotEmpty()
+    }
+
     suspend fun markSyncDone(id: Long) = db.outbox().setState(id, "done")
     suspend fun markSyncDone(ids: Collection<Long>) {
         if (ids.isEmpty()) return
