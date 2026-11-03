@@ -213,6 +213,7 @@ internal fun HiveDetailScreen(
     onNextHive: () -> Unit = {},
     fastTagAssignmentMode: Boolean = false,
     nfcEntitled: Boolean = true,
+    nfcCanManage: Boolean = nfcEntitled,
     onUpgradeNfc: () -> Unit = {},
     autoStartTagWriting: Boolean = false,
     autoStartTagWritingIgnoreUid: String? = null,
@@ -256,6 +257,11 @@ internal fun HiveDetailScreen(
         if (!nfcEntitled) {
             writeStatusType = "error"
             writeStatus = "NFC scanning and tag assignment require BeeKeep Commercial."
+            return
+        }
+        if (!nfcCanManage) {
+            writeStatusType = "error"
+            writeStatus = "Your workspace role is view-only. You can scan and verify tags, but cannot assign or remove them."
             return
         }
         if (writeStatusType == "saving" || writeStatusType == "removing") return
@@ -325,6 +331,10 @@ internal fun HiveDetailScreen(
 
     LaunchedEffect(hive.id, autoStartTagWriting, autoStartTagWritingIgnoreUid, fastTagAssignmentMode) {
         if (!autoStartTagWriting) return@LaunchedEffect
+        if (!nfcEntitled || !nfcCanManage) {
+            onAutoTagWritingStarted()
+            return@LaunchedEffect
+        }
         if (!fastTagAssignmentMode) {
             onAutoTagWritingStarted()
             return@LaunchedEffect
@@ -613,31 +623,33 @@ internal fun HiveDetailScreen(
                             ) {
                                 Icon(Icons.Rounded.Nfc, null, modifier = Modifier.size(16.dp)); Spacer(Modifier.width(5.dp)); Text("VERIFY", style = MaterialTheme.typography.labelMedium)
                             }
-                            OutlinedButton(
-                                onClick = {
-                                    if (writeStatusType == "waiting") {
-                                        nfc.stop(activity)
-                                        writeStatus = ""
-                                        writeStatusType = "idle"
-                                    } else {
-                                        startTagWriting()
-                                    }
-                                },
-                                enabled = writeStatusType != "saving" && writeStatusType != "removing",
-                                modifier = Modifier.weight(1f).height(42.dp),
-                                shape = RoundedCornerShape(16.dp)
-                            ) {
-                                Text(
-                                    when (writeStatusType) {
-                                        "waiting" -> "CANCEL SCAN"
-                                        "saving" -> "SAVING…"
-                                        else -> if (hive.tagUid == null) "WRITE TAG" else "REPLACE"
+                            if (nfcCanManage) {
+                                OutlinedButton(
+                                    onClick = {
+                                        if (writeStatusType == "waiting") {
+                                            nfc.stop(activity)
+                                            writeStatus = ""
+                                            writeStatusType = "idle"
+                                        } else {
+                                            startTagWriting()
+                                        }
                                     },
-                                    style = MaterialTheme.typography.labelMedium
-                                )
+                                    enabled = writeStatusType != "saving" && writeStatusType != "removing",
+                                    modifier = Modifier.weight(1f).height(42.dp),
+                                    shape = RoundedCornerShape(16.dp)
+                                ) {
+                                    Text(
+                                        when (writeStatusType) {
+                                            "waiting" -> "CANCEL SCAN"
+                                            "saving" -> "SAVING…"
+                                            else -> if (hive.tagUid == null) "WRITE TAG" else "REPLACE"
+                                        },
+                                        style = MaterialTheme.typography.labelMedium
+                                    )
+                                }
                             }
                         }
-                        if (hive.tagUid != null) {
+                        if (nfcCanManage && hive.tagUid != null) {
                             TextButton(
                                 onClick = {
                                     if (confirmBeforeTagRemoval) confirmRemoveTag = true else removeHiveTag()
@@ -647,6 +659,13 @@ internal fun HiveDetailScreen(
                             ) {
                                 Text(if (removingTag) "REMOVING…" else "REMOVE TAG", style = MaterialTheme.typography.labelSmall)
                             }
+                        }
+                        if (!nfcCanManage) {
+                            Text(
+                                "View-only access: you can scan and verify this tag, but only an Owner, Admin or Member can assign, replace or remove tags.",
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                style = MaterialTheme.typography.bodySmall
+                            )
                         }
                         if (!tagAssignmentSuccessUid.isNullOrBlank()) {
                             Row(

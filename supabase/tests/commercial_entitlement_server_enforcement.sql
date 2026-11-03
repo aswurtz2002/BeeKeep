@@ -203,6 +203,18 @@ insert into public.beekeep_workspace_documents (
     'commercial-entitlement-test', auth.uid()
 );
 
+-- A Hobbyist invited admin inherits the workspace owner's Commercial entitlement
+-- for shared NFC assignments. This record belongs to the team, not the admin's
+-- personal cloud document collection.
+insert into public.beekeep_workspace_documents (
+    workspace_id, entity_type, entity_id, payload, updated_at, deleted, device_id, updated_by
+) values (
+    (select value::uuid from commercial_entitlement_test_context where key = 'workspace_id'),
+    'nfc_assignment', 97002,
+    '{"id":97002,"tag_uid":"A1B2C3D4","hive_id":98001,"assigned_at":2000}',
+    2000, false, 'commercial-entitlement-test', auth.uid()
+);
+
 -- The owner is Commercial, so the shared workspace may hold up to 1,000 apiaries.
 select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-000000000081', false);
 insert into public.beekeep_workspace_documents (
@@ -347,6 +359,53 @@ begin
     end if;
 end;
 $personal_nfc_downgrade_assertion$;
+
+select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-000000000082', false);
+
+-- The workspace's existing NFC assignments remain readable after owner downgrade,
+-- but Hobbyist team members can no longer create or change them.
+do $workspace_nfc_downgrade_assertion$
+declare visible_count integer; affected integer; denied boolean := false;
+begin
+    select count(*) into visible_count
+      from public.beekeep_workspace_documents
+     where workspace_id = (select value::uuid from commercial_entitlement_test_context where key = 'workspace_id')
+       and entity_type = 'nfc_assignment'
+       and entity_id = 97002
+       and not deleted;
+    if visible_count <> 1 then
+        raise exception 'Existing workspace NFC assignments must remain readable after owner downgrade';
+    end if;
+
+    update public.beekeep_workspace_documents
+       set payload = '{"id":97002,"tag_uid":"A1B2C3D4","hive_id":98001,"changed":true}',
+           updated_at = 3000,
+           updated_by = auth.uid()
+     where workspace_id = (select value::uuid from commercial_entitlement_test_context where key = 'workspace_id')
+       and entity_type = 'nfc_assignment'
+       and entity_id = 97002;
+    get diagnostics affected = row_count;
+    if affected <> 0 then
+        raise exception 'A member edited a shared NFC assignment after owner downgrade';
+    end if;
+
+    begin
+        insert into public.beekeep_workspace_documents (
+            workspace_id, entity_type, entity_id, payload, updated_at, deleted, device_id, updated_by
+        ) values (
+            (select value::uuid from commercial_entitlement_test_context where key = 'workspace_id'),
+            'nfc_assignment', 97003,
+            '{"id":97003,"tag_uid":"D4C3B2A1","hive_id":98001,"assigned_at":3000}',
+            3000, false, 'commercial-entitlement-test', auth.uid()
+        );
+    exception when insufficient_privilege then
+        denied := true;
+    end;
+    if not denied then
+        raise exception 'A member created a shared NFC assignment after owner downgrade';
+    end if;
+end;
+$workspace_nfc_downgrade_assertion$;
 
 -- Existing members retain read access, but inserts and updates are denied.
 select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-000000000082', false);
