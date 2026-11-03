@@ -41,6 +41,12 @@ import java.util.UUID
 import org.json.JSONObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.int
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 
 sealed interface CloudResult {
     data object Success : CloudResult
@@ -1265,6 +1271,10 @@ class SupabaseGateway(
                 }
             }
 
+            // Apiary batches are deliberately uploaded after the apiary/hive documents they
+            // depend on, and before the incremental pull on this same selected dataset.
+            uploadPendingActionBatches(workspaceId = null)
+
             // A fixed high-water mark makes the pull resumable. Any write that commits after
             // this read receives a higher server version and is picked up on the next sync.
             var syncHeadToCommit: Long? = null
@@ -1667,6 +1677,9 @@ class SupabaseGateway(
                         repository.markSyncDone(uploadableIds)
                     }
                 }
+                // The normal document outbox is drained first so cloud apiary/hive identity
+                // checks see the newest records before the atomic action transaction runs.
+                uploadPendingActionBatches(workspaceId)
             }
 
             // Prefer server-versioned incremental pages. Older or partially migrated
@@ -1718,7 +1731,9 @@ class SupabaseGateway(
 
             repository.pruneSync()
             val now = System.currentTimeMillis()
-            val documentWarning = if (!isWritable && repository.pendingSync(1).isNotEmpty()) {
+            val documentWarning = if (
+                !isWritable && (repository.pendingSync(1).isNotEmpty() || repository.hasPendingActionBatches())
+            ) {
                 "This workspace is view-only. Pending local edits were not uploaded."
             } else null
             val warning = listOfNotNull(documentWarning, settingsWarning)
