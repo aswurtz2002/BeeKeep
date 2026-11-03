@@ -228,6 +228,93 @@ begin
 end;
 $outsider_assertion$;
 
+-- Personal workspaces use the same atomic batch RPC but remain scoped to the signed-in user.
+select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-000000000204', false);
+insert into public.beekeep_documents (
+    user_id, entity_type, entity_id, payload, updated_at, deleted, device_id
+)
+values
+ (auth.uid(),'apiary',93000,'{"id":93000,"name":"Personal Apiary"}',1000,false,'personal-test-device'),
+ (auth.uid(),'hive',93001,'{"id":93001,"number":"P1","apiary":"Personal Apiary","apiary_id":93000,"status":"ACTIVE"}',1000,false,'personal-test-device');
+
+select * from public.beekeep_apply_action_batch(
+    null::uuid,
+    93000,
+    'Personal Apiary',
+    '00000000-0000-4000-8000-000000000205'::uuid,
+    'feed',
+    jsonb_build_array(
+        jsonb_build_object(
+            'entity_type','feeding','entity_id',93011,'updated_at',4000,'deleted',false,'device_id','personal-test-device',
+            'payload',jsonb_build_object(
+                'id',93011,'hive_id',93001,'created_at',4000,'updated_at',4000,
+                'record_uuid','personal-batch-feed','apiary_id',93000,
+                'batch_id','00000000-0000-4000-8000-000000000205',
+                'occurred_at',4000,'created_by',auth.uid(),'device_id','personal-test-device',
+                'feed_type','Sugar syrup','ratio','1:1','amount',1.0,'unit','L','notes',''
+            )::text
+        ),
+        jsonb_build_object(
+            'entity_type','event','entity_id',93011,'updated_at',4000,'deleted',false,'device_id','personal-test-device',
+            'payload',jsonb_build_object(
+                'id',93011,'hive_id',93001,'created_at',4000,'updated_at',4000,
+                'type','feeding','title','Feeding','detail','1 L • Sugar syrup 1:1',
+                'apiary_id',93000,'batch_id','00000000-0000-4000-8000-000000000205'
+            )::text
+        )
+    )
+);
+
+do $personal_assertion$
+declare saved_count integer;
+begin
+    select count(*) into saved_count
+    from public.beekeep_documents
+    where user_id = auth.uid()
+      and entity_type in ('feeding','event')
+      and entity_id = 93011;
+    if saved_count <> 2 then
+        raise exception 'Personal apiary batch did not save both the action and event documents';
+    end if;
+end;
+$personal_assertion$;
+
+-- Expiring the workspace owner's Commercial entitlement blocks even a regular member's
+-- otherwise-valid team action. Existing shared data remains readable and unchanged.
+reset role;
+update auth.users
+set raw_app_meta_data = jsonb_set(
+    coalesce(raw_app_meta_data, '{}'::jsonb),
+    '{beekeep_subscription_expires_at}',
+    '"2020-01-01T00:00:00Z"'::jsonb,
+    true
+)
+where id = '00000000-0000-0000-0000-000000000201';
+
+set role authenticated;
+select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-000000000202', false);
+do $downgrade_assertion$
+declare denied boolean := false; saved_count integer;
+begin
+    begin
+        perform * from public.beekeep_apply_action_batch(
+            (select value::uuid from action_batch_context where key='workspace_id'),
+            92000,'Batch Apiary','00000000-0000-4000-8000-000000000206'::uuid,'feed','[{},{}]'::jsonb
+        );
+    exception when insufficient_privilege then
+        denied := true;
+    end;
+
+    select count(*) into saved_count
+    from public.beekeep_workspace_documents
+    where workspace_id = (select value::uuid from action_batch_context where key='workspace_id')
+      and entity_type in ('feeding','event') and entity_id in (92031,92032);
+    if not denied or saved_count <> 0 then
+        raise exception 'A workspace action was not blocked after the owner Commercial entitlement expired';
+    end if;
+end;
+$downgrade_assertion$;
+
 reset role;
 rollback;
 
