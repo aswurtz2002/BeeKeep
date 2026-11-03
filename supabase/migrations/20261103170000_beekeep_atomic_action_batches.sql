@@ -31,6 +31,8 @@ declare
     matched_hive_count integer;
     existing_count integer;
     mismatched_existing_count integer;
+    effective_hive_limit integer;
+    locked_hive_count integer;
     apiary_name text;
 begin
     if caller_id is null then
@@ -69,6 +71,17 @@ begin
     end if;
 
     if target_workspace_id is null then
+        -- The authenticated account's effective quota is server-derived (including active
+        -- Commercial overrides); client-side locked-hive state is only a UI convenience.
+        select entitlement.effective_hive_limit
+          into effective_hive_limit
+          from public.beekeep_my_hive_entitlement() entitlement;
+
+        if not found or effective_hive_limit is null then
+            raise exception 'The account hive limit could not be verified. Sync and try again.'
+                using errcode = '42501';
+        end if;
+
         -- Personal cloud rows are always scoped to the authenticated account.
         if not exists (
             select 1 from public.beekeep_documents d
@@ -105,6 +118,16 @@ begin
             from public.beekeep_workspace_owner_commercial_entitlement(target_workspace_id) entitlement
         ), false) then
             raise exception 'The team workspace owner must have an active BeeKeep Commercial subscription to sync apiary actions.'
+                using errcode = '42501';
+        end if;
+
+        -- Use the owner's server-resolved quota, never the invited member's personal cap.
+        select entitlement.effective_hive_limit
+          into effective_hive_limit
+          from public.beekeep_workspace_owner_quota_entitlement(target_workspace_id) entitlement;
+
+        if not found or effective_hive_limit is null then
+            raise exception 'The workspace hive limit could not be verified. Sync and try again.'
                 using errcode = '42501';
         end if;
 
@@ -325,6 +348,163 @@ begin
     if matched_hive_count <> action_count then
         raise exception 'One or more selected hives are no longer active in this apiary. Refresh and try again.'
             using errcode = '40001';
+    end if;
+
+    -- Mirror the app's quota priority order exactly: active hives first, then hive number
+    -- (numeric before non-numeric), then case-insensitive number/apiary name, then ID.
+    -- Rank the entire personal/team dataset, not just the target apiary.
+    with hive_rows as (
+        select d.entity_id, d.payload
+          from public.beekeep_documents d
+         where target_workspace_id is null
+           and d.user_id = caller_id
+           and d.entity_type = 'hive'
+           and not d.deleted
+        union all
+        select d.entity_id, d.payload
+          from public.beekeep_workspace_documents d
+         where target_workspace_id is not null
+           and d.workspace_id = target_workspace_id
+           and d.entity_type = 'hive'
+           and not d.deleted
+    ),
+    ranked_hives as (
+        select
+            h.entity_id,
+            pg_catalog.row_number() over (
+                order by
+                    case when coalesce(h.payload::jsonb ->> 'status', 'ACTIVE') = 'ACTIVE'
+                         then 0 else 1 end,
+                    case
+                        when coalesce(h.payload::jsonb ->> 'number', '') ~ '^-?[0-9]+ A fully committed retry is accepted only
+    -- when every row is identical; partial or conflicting prior data is refused.
+    perform pg_catalog.pg_advisory_xact_lock(
+        pg_catalog.hashtextextended(
+            coalesce(target_workspace_id::text, 'personal:' || caller_id::text) ||
+            ':' || target_batch_id::text,
+            0
+        )
+    );
+
+    if target_workspace_id is null then
+        select pg_catalog.count(*)
+          into existing_count
+          from pg_catalog.jsonb_to_recordset(target_documents) as x(
+              entity_type text, entity_id bigint
+          )
+          join public.beekeep_documents d
+            on d.user_id = caller_id
+           and d.entity_type = x.entity_type
+           and d.entity_id = x.entity_id;
+
+        select pg_catalog.count(*)
+          into mismatched_existing_count
+          from pg_catalog.jsonb_to_recordset(target_documents) as x(
+              entity_type text, entity_id bigint, payload text,
+              updated_at bigint, deleted boolean, device_id text
+          )
+          join public.beekeep_documents d
+            on d.user_id = caller_id
+           and d.entity_type = x.entity_type
+           and d.entity_id = x.entity_id
+          where d.payload is distinct from x.payload
+             or d.updated_at is distinct from x.updated_at
+             or d.deleted is distinct from coalesce(x.deleted, false);
+    else
+        select pg_catalog.count(*)
+          into existing_count
+          from pg_catalog.jsonb_to_recordset(target_documents) as x(
+              entity_type text, entity_id bigint
+          )
+          join public.beekeep_workspace_documents d
+            on d.workspace_id = target_workspace_id
+           and d.entity_type = x.entity_type
+           and d.entity_id = x.entity_id;
+
+        select pg_catalog.count(*)
+          into mismatched_existing_count
+          from pg_catalog.jsonb_to_recordset(target_documents) as x(
+              entity_type text, entity_id bigint, payload text,
+              updated_at bigint, deleted boolean, device_id text
+          )
+          join public.beekeep_workspace_documents d
+            on d.workspace_id = target_workspace_id
+           and d.entity_type = x.entity_type
+           and d.entity_id = x.entity_id
+          where d.payload is distinct from x.payload
+             or d.updated_at is distinct from x.updated_at
+             or d.deleted is distinct from coalesce(x.deleted, false);
+    end if;
+
+    if mismatched_existing_count > 0 or
+       (existing_count > 0 and existing_count <> document_count) then
+        raise exception 'This batch ID or record ID already belongs to different cloud data. No records were changed.'
+            using errcode = '23505';
+    end if;
+
+    if existing_count = document_count then
+        return query select action_count, true;
+        return;
+    end if;
+
+    if target_workspace_id is null then
+        insert into public.beekeep_documents (
+            user_id, entity_type, entity_id, payload, updated_at, deleted, device_id
+        )
+        select
+            caller_id, x.entity_type, x.entity_id, x.payload, x.updated_at,
+            coalesce(x.deleted, false), x.device_id
+        from pg_catalog.jsonb_to_recordset(target_documents) as x(
+            entity_type text, entity_id bigint, payload text,
+            updated_at bigint, deleted boolean, device_id text
+        );
+    else
+        insert into public.beekeep_workspace_documents (
+            workspace_id, entity_type, entity_id, payload, updated_at,
+            deleted, device_id, updated_by
+        )
+        select
+            target_workspace_id, x.entity_type, x.entity_id, x.payload, x.updated_at,
+            coalesce(x.deleted, false), x.device_id, caller_id
+        from pg_catalog.jsonb_to_recordset(target_documents) as x(
+            entity_type text, entity_id bigint, payload text,
+            updated_at bigint, deleted boolean, device_id text
+        );
+    end if;
+
+    return query select action_count, false;
+end;
+$function$;
+
+revoke all on function public.beekeep_apply_action_batch(
+    uuid, bigint, text, uuid, text, jsonb
+) from public, anon;
+grant execute on function public.beekeep_apply_action_batch(
+    uuid, bigint, text, uuid, text, jsonb
+) to authenticated;
+
+commit;
+
+                         and (h.payload::jsonb ->> 'number')::numeric
+                             between -2147483648 and 2147483647
+                        then (h.payload::jsonb ->> 'number')::integer
+                        else 2147483647
+                    end,
+                    pg_catalog.lower(coalesce(h.payload::jsonb ->> 'number', '')),
+                    pg_catalog.lower(coalesce(h.payload::jsonb ->> 'apiary', '')),
+                    h.entity_id
+            ) as quota_rank
+        from hive_rows h
+    )
+    select pg_catalog.count(*)
+      into locked_hive_count
+      from ranked_hives h
+     where h.entity_id = any(target_hive_ids)
+       and h.quota_rank > effective_hive_limit;
+
+    if locked_hive_count > 0 then
+        raise exception 'One or more selected hives are locked by the current account or workspace plan.'
+            using errcode = '42501';
     end if;
 
     -- Serialize retries for this scope + batch. A fully committed retry is accepted only
