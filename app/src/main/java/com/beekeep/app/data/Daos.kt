@@ -273,6 +273,8 @@ interface ActionBatchOutboxDao {
 
     @Query("SELECT COUNT(*) FROM action_batch_outbox WHERE state = 'pending'")
     fun observePendingCount(): Flow<Int>
+    @Query("DELETE FROM action_batch_outbox")
+    suspend fun clearAll()
 }
 
 @Dao
