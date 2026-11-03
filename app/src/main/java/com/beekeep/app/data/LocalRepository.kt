@@ -1079,16 +1079,67 @@ class LocalHiveRepository(context: Context) {
         return batchIds.single()
     }
 
-    private suspend fun enqueueBatchDocument(
-        database: BeeKeepRoomDb,
-        type: String,
+    private fun actionBatchDocument(
+        entityType: String,
         entityId: Long,
-        payload: String
+        payload: String,
+        updatedAt: Long,
+        deviceId: String
+    ): JSONObject = JSONObject()
+        .put("entity_type", entityType)
+        .put("entity_id", entityId)
+        .put("payload", payload)
+        .put("updated_at", updatedAt)
+        .put("deleted", false)
+        .put("device_id", deviceId)
+
+    private fun batchEventPayload(
+        event: ActivityEventEntity,
+        batchId: String,
+        apiaryId: Long
+    ): String = JSONObject()
+        .put("id", event.id)
+        .put("hive_id", event.hiveId)
+        .put("created_at", event.createdAt)
+        .put("updated_at", event.createdAt)
+        .put("type", event.type)
+        .put("title", event.title)
+        .put("detail", event.detail)
+        .put("apiary_id", apiaryId)
+        .put("batch_id", batchId)
+        .toString()
+
+    private suspend fun enqueueActionBatch(
+        database: BeeKeepRoomDb,
+        batchId: String,
+        workspaceId: String?,
+        apiaryId: Long,
+        apiaryName: String,
+        actionType: String,
+        documents: JSONArray
     ) {
         checkWritable()
-        database.outbox().deletePendingForEntity(type, entityId)
-        database.outbox().enqueue(
-            SyncOutboxEntity(IdGenerator.nextLong(), type, entityId, "upsert", payload)
+        check(_activeWorkspaceId.value == workspaceId && db === database) {
+            "The active workspace changed. Reopen the apiary and try again."
+        }
+        val payload = JSONObject()
+            .put("schema_version", 1)
+            .put("action_type", actionType)
+            .put("apiary_id", apiaryId)
+            .put("apiary_name", apiaryName)
+            .put("batch_id", batchId)
+            .put("documents", documents)
+            .toString()
+        database.actionBatchOutbox().enqueue(
+            ActionBatchOutboxEntity(
+                batchId = batchId,
+                workspaceId = workspaceId,
+                schemaVersion = 1,
+                payload = payload,
+                createdAt = System.currentTimeMillis(),
+                state = "pending",
+                lastError = null
+            )
         )
     }
 
@@ -1127,6 +1178,7 @@ class LocalHiveRepository(context: Context) {
             val byHiveId = records.associateBy { it.hiveId }
             val accountId = currentAccountUserId()
             val deviceId = currentDeviceId()
+            val batchDocuments = JSONArray()
             targets.forEach { hive ->
                 val record = byHiveId.getValue(hive.id)
                 val entity = FeedingEntity(
@@ -1151,9 +1203,16 @@ class LocalHiveRepository(context: Context) {
                     "${entity.amount} ${entity.unit} • ${entity.feedType} ${entity.ratio}"
                 )
                 database.events().upsert(event)
-                enqueueBatchDocument(database, "feeding", entity.id, feedingPayload(entity))
-                enqueueBatchDocument(database, "event", event.id, eventPayload(event))
+                batchDocuments.put(actionBatchDocument(
+                    "feeding", entity.id, feedingPayload(entity), entity.createdAt, entity.deviceId ?: deviceId
+                ))
+                batchDocuments.put(actionBatchDocument(
+                    "event", event.id, batchEventPayload(event, batchId, apiaryId), entity.createdAt, entity.deviceId ?: deviceId
+                ))
             }
+            enqueueActionBatch(
+                database, batchId, workspaceAtStart, apiaryId, apiaryName, "feed", batchDocuments
+            )
             check(_activeWorkspaceId.value == workspaceAtStart && db === database) {
                 "The active workspace changed. Reopen the apiary and try again."
             }
@@ -1193,6 +1252,7 @@ class LocalHiveRepository(context: Context) {
             val byHiveId = records.associateBy { it.hiveId }
             val accountId = currentAccountUserId()
             val deviceId = currentDeviceId()
+            val batchDocuments = JSONArray()
             targets.forEach { hive ->
                 val record = byHiveId.getValue(hive.id)
                 val entity = TreatmentEntity(
@@ -1218,9 +1278,16 @@ class LocalHiveRepository(context: Context) {
                     "${entity.treatmentType} • ${entity.product}"
                 )
                 database.events().upsert(event)
-                enqueueBatchDocument(database, "treatment", entity.id, treatmentPayload(entity))
-                enqueueBatchDocument(database, "event", event.id, eventPayload(event))
+                batchDocuments.put(actionBatchDocument(
+                    "treatment", entity.id, treatmentPayload(entity), entity.createdAt, entity.deviceId ?: deviceId
+                ))
+                batchDocuments.put(actionBatchDocument(
+                    "event", event.id, batchEventPayload(event, batchId, apiaryId), entity.createdAt, entity.deviceId ?: deviceId
+                ))
             }
+            enqueueActionBatch(
+                database, batchId, workspaceAtStart, apiaryId, apiaryName, "treat", batchDocuments
+            )
             check(_activeWorkspaceId.value == workspaceAtStart && db === database) {
                 "The active workspace changed. Reopen the apiary and try again."
             }
@@ -1264,6 +1331,7 @@ class LocalHiveRepository(context: Context) {
             val byHiveId = records.associateBy { it.hiveId }
             val accountId = currentAccountUserId()
             val deviceId = currentDeviceId()
+            val batchDocuments = JSONArray()
             targets.forEach { hive ->
                 val record = byHiveId.getValue(hive.id)
                 val entity = HarvestEntity(
@@ -1290,9 +1358,16 @@ class LocalHiveRepository(context: Context) {
                     "${entity.dryHoneyWeight} ${entity.weightUnit} dry honey"
                 )
                 database.events().upsert(event)
-                enqueueBatchDocument(database, "harvest", entity.id, harvestPayload(entity))
-                enqueueBatchDocument(database, "event", event.id, eventPayload(event))
+                batchDocuments.put(actionBatchDocument(
+                    "harvest", entity.id, harvestPayload(entity), entity.createdAt, entity.deviceId ?: deviceId
+                ))
+                batchDocuments.put(actionBatchDocument(
+                    "event", event.id, batchEventPayload(event, batchId, apiaryId), entity.createdAt, entity.deviceId ?: deviceId
+                ))
             }
+            enqueueActionBatch(
+                database, batchId, workspaceAtStart, apiaryId, apiaryName, "harvest", batchDocuments
+            )
             check(_activeWorkspaceId.value == workspaceAtStart && db === database) {
                 "The active workspace changed. Reopen the apiary and try again."
             }
