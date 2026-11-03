@@ -15,13 +15,43 @@ internal object TeamWorkspaceSyncError {
         "Sync failed because a record was sent without its required deletion flag. Your edits " +
             "remain saved locally and queued. Update BeeKeep to the newest build, then retry Sync Now."
 
+    const val CONNECTION_UNAVAILABLE_MESSAGE =
+        "BeeKeep can't reach Cloud right now. Your local data remains available, and sync will retry " +
+            "when your connection returns."
+
     const val GENERIC_SYNC_ERROR_MESSAGE =
         "BeeKeep couldn't complete the sync because Cloud returned a technical error. Your edits " +
             "remain saved locally and queued. Retry Sync Now; if it continues, contact support."
 
+    private fun isConnectionFailure(lowerMessage: String): Boolean {
+        val networkIndicators = listOf(
+            "http request to",
+            "unknownhostexception",
+            "unable to resolve host",
+            "no address associated with hostname",
+            "failed to connect",
+            "connection timed out",
+            "sockettimeoutexception",
+            "network is unreachable",
+            "network unreachable",
+            "connection reset",
+            "connection refused",
+            "socketexception",
+            "eofexception",
+            "software caused connection abort",
+            "connection aborted",
+            "connection closed",
+            "host is down",
+            "timed out",
+            "timeout"
+        )
+        return networkIndicators.any { indicator -> lowerMessage.contains(indicator) }
+    }
+
     fun userFacing(rawMessage: String?): String {
         val message = rawMessage.orEmpty().trim()
         val lower = message.lowercase()
+        if (isConnectionFailure(lower)) return CONNECTION_UNAVAILABLE_MESSAGE
         val isSharedDocumentRlsDenial =
             lower.contains("row-level security policy") &&
                 lower.contains("beekeep_workspace_documents")

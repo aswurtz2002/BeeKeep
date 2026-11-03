@@ -32,8 +32,31 @@ class TeamWorkspaceSyncErrorTest {
     }
 
     @Test
-    fun preservesShortUnrelatedErrors() {
-        assertEquals("network timeout", TeamWorkspaceSyncError.userFacing("network timeout"))
+    fun hidesRawHttpRequestDetailsWhenCloudIsUnavailable() {
+        val raw = "HTTP request to https://project.supabase.co/rest/v1/beekeep_documents failed with message: " +
+            "java.net.UnknownHostException: No address associated with hostname"
+
+        val message = TeamWorkspaceSyncError.userFacing(raw)
+
+        assertEquals(TeamWorkspaceSyncError.CONNECTION_UNAVAILABLE_MESSAGE, message)
+        assertTrue("A project URL must never reach the UI", !message.contains("https://"))
+        assertTrue("HTTP request details must never reach the UI", !message.contains("HTTP request to"))
+    }
+
+    @Test
+    fun mapsSocketTimeoutsToTheOfflineMessage() {
+        assertEquals(
+            TeamWorkspaceSyncError.CONNECTION_UNAVAILABLE_MESSAGE,
+            TeamWorkspaceSyncError.userFacing("java.net.SocketTimeoutException: timeout")
+        )
+    }
+
+    @Test
+    fun preservesShortActionableErrors() {
+        assertEquals(
+            "That username is already taken.",
+            TeamWorkspaceSyncError.userFacing("That username is already taken.")
+        )
     }
 
     @Test
