@@ -53,7 +53,9 @@ class LocalHiveRepository(context: Context) {
         prefs.getBoolean("active_team_workspace_read_only", true)
     // The account-bound cache can be displayed immediately, but writes wait until the gateway
     // verifies the current session or confirms the account's cached offline access state.
-    private val startupWorkspaceAccessPending = MutableStateFlow(initialActiveWorkspaceId != null)
+    private val startupWorkspaceAccessPending = MutableStateFlow(
+        prefs.getString("active_team_workspace_id", "").orEmpty().isNotBlank()
+    )
     private val _activeWorkspaceId = MutableStateFlow(initialActiveWorkspaceId)
     val activeWorkspaceId: StateFlow<String?> = _activeWorkspaceId.asStateFlow()
     private val _activeWorkspaceReadOnly = MutableStateFlow(initialActiveWorkspaceReadOnly)
