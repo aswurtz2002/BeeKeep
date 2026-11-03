@@ -66,6 +66,7 @@ import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -85,7 +86,10 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.beekeep.app.cloud.CloudResult
 import com.beekeep.app.cloud.SupabaseGateway
 import com.beekeep.app.data.DataBackupPreview
+import com.beekeep.app.data.HarvestQuantityMode
 import com.beekeep.app.data.LocalHiveRepository
+import com.beekeep.app.data.canEditHarvestQuantitySetting
+import com.beekeep.app.data.workspaceActionSettingsScopeKey
 import com.beekeep.app.data.canRestoreBackupToWorkspace
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -132,21 +136,43 @@ internal fun SettingsScreen(
     val activeWorkspaceReadOnly by repository.activeWorkspaceReadOnly.collectAsState()
     var restoreWorkspaceOwnerVerified by remember { mutableStateOf(activeWorkspaceId.isNullOrBlank()) }
     var restoreWorkspaceRoleCheckComplete by remember { mutableStateOf(activeWorkspaceId.isNullOrBlank()) }
+    var actionSettingsWorkspaceRole by remember { mutableStateOf<String?>(null) }
+    var actionSettingsRoleVerified by remember { mutableStateOf(activeWorkspaceId.isNullOrBlank()) }
+    var actionSettingsOwnerCommercialVerified by remember { mutableStateOf(activeWorkspaceId.isNullOrBlank()) }
+    var actionSettingsOwnerCommercialCheckComplete by remember { mutableStateOf(activeWorkspaceId.isNullOrBlank()) }
 
     LaunchedEffect(activeWorkspaceId, account.signedIn, account.userId) {
         if (activeWorkspaceId.isNullOrBlank()) {
             restoreWorkspaceOwnerVerified = true
             restoreWorkspaceRoleCheckComplete = true
+            actionSettingsWorkspaceRole = null
+            actionSettingsRoleVerified = true
+            actionSettingsOwnerCommercialVerified = true
+            actionSettingsOwnerCommercialCheckComplete = true
         } else {
             restoreWorkspaceOwnerVerified = false
             restoreWorkspaceRoleCheckComplete = false
+            actionSettingsWorkspaceRole = null
+            actionSettingsRoleVerified = false
+            actionSettingsOwnerCommercialVerified = false
+            actionSettingsOwnerCommercialCheckComplete = false
             if (account.signedIn) {
                 val workspaces = cloud.listWorkspaces()
+                val selectedWorkspace = workspaces.value.orEmpty().firstOrNull {
+                    it.id == activeWorkspaceId && !it.is_personal
+                }
                 restoreWorkspaceOwnerVerified = workspaces.isSuccess &&
-                    workspaces.value.orEmpty().any {
-                        it.id == activeWorkspaceId && !it.is_personal &&
-                            canRestoreBackupToWorkspace(isPersonalWorkspace = false, memberRole = it.member_role)
-                    }
+                    selectedWorkspace?.let {
+                        canRestoreBackupToWorkspace(isPersonalWorkspace = false, memberRole = it.member_role)
+                    } == true
+                actionSettingsWorkspaceRole = selectedWorkspace?.member_role
+                actionSettingsRoleVerified = workspaces.isSuccess && selectedWorkspace != null
+
+                if (selectedWorkspace?.member_role in setOf("owner", "admin")) {
+                    val entitlement = cloud.workspaceOwnerCommercialEntitlement(activeWorkspaceId.orEmpty())
+                    actionSettingsOwnerCommercialVerified = entitlement.isSuccess && entitlement.value == true
+                    actionSettingsOwnerCommercialCheckComplete = entitlement.isSuccess
+                }
             }
             restoreWorkspaceRoleCheckComplete = true
         }
@@ -155,6 +181,36 @@ internal fun SettingsScreen(
         !activeWorkspaceReadOnly &&
         restoreWorkspaceRoleCheckComplete &&
         restoreWorkspaceOwnerVerified
+
+    val harvestSettingsScopeKey = remember(activeWorkspaceId, account.userId) {
+        workspaceActionSettingsScopeKey(activeWorkspaceId, account.userId)
+    }
+    val savedHarvestActionSettings by repository
+        .observeWorkspaceActionSettings(harvestSettingsScopeKey)
+        .collectAsState(initial = null)
+    var harvestQuantityMode by rememberSaveable(harvestSettingsScopeKey) {
+        mutableStateOf(HarvestQuantityMode.PER_HIVE)
+    }
+    var savingHarvestQuantityMode by remember { mutableStateOf(false) }
+    var harvestQuantitySettingMessage by remember(harvestSettingsScopeKey) { mutableStateOf("") }
+
+    LaunchedEffect(
+        harvestSettingsScopeKey,
+        savedHarvestActionSettings?.updatedAt,
+        savedHarvestActionSettings?.harvestQuantityMode
+    ) {
+        savedHarvestActionSettings?.let {
+            harvestQuantityMode = HarvestQuantityMode.fromStorage(it.harvestQuantityMode)
+        }
+    }
+
+    val canEditHarvestQuantity = canEditHarvestQuantitySetting(
+        isPersonalScope = activeWorkspaceId.isNullOrBlank(),
+        role = actionSettingsWorkspaceRole,
+        roleVerified = actionSettingsRoleVerified,
+        workspaceReadOnly = activeWorkspaceReadOnly,
+        workspaceOwnerCommercialVerified = actionSettingsOwnerCommercialVerified
+    )
 
     var readyBeep by remember(preferences) { mutableStateOf(preferences.getBoolean("voice_ready_beep", true)) }
     var speakHiveNumber by remember(preferences) { mutableStateOf(preferences.getBoolean("speak_hive_number_on_scan", true)) }
@@ -371,6 +427,159 @@ internal fun SettingsScreen(
                         preferences.edit { putBoolean("auto_move_hive_apiary", it) }
                     }
                 )
+            }
+
+            SettingsSection("Harvest quantity", Icons.Rounded.Settings) {
+                Text(
+                    if (activeWorkspaceId.isNullOrBlank()) {
+                        "Choose how quantities are interpreted when you apply a harvest to an apiary."
+                    } else {
+                        "This shared setting controls how harvest quantities are interpreted for every workspace member."
+                    },
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodySmall
+                )
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    FilterChip(
+                        selected = harvestQuantityMode == HarvestQuantityMode.PER_HIVE,
+                        onClick = {
+                            if (canEditHarvestQuantity && !savingHarvestQuantityMode &&
+                                harvestQuantityMode != HarvestQuantityMode.PER_HIVE
+                            ) {
+                                scope.launch {
+                                    savingHarvestQuantityMode = true
+                                    harvestQuantitySettingMessage = ""
+                                    try {
+                                        repository.saveWorkspaceActionSettings(
+                                            scopeKey = harvestSettingsScopeKey,
+                                            workspaceId = activeWorkspaceId,
+                                            ownerUserId = account.userId,
+                                            harvestQuantityMode = HarvestQuantityMode.PER_HIVE,
+                                            updatedBy = account.userId.takeIf { account.signedIn }
+                                        )
+                                        harvestQuantityMode = HarvestQuantityMode.PER_HIVE
+                                        when (val result = cloud.syncNow()) {
+                                            CloudResult.Success -> harvestQuantitySettingMessage =
+                                                "Per hive saved and synced."
+                                            CloudResult.NotSignedIn -> harvestQuantitySettingMessage =
+                                                "Saved on this device. Sign in to sync this setting."
+                                            CloudResult.NotConfigured -> harvestQuantitySettingMessage =
+                                                "Saved on this device. Cloud sync is not configured."
+                                            is CloudResult.Failure -> harvestQuantitySettingMessage =
+                                                "Saved locally. Cloud confirmation is pending: ${result.message}"
+                                        }
+                                    } catch (cancelled: CancellationException) {
+                                        throw cancelled
+                                    } catch (error: Exception) {
+                                        harvestQuantitySettingMessage =
+                                            error.message ?: "Could not save the harvest setting."
+                                    } finally {
+                                        savingHarvestQuantityMode = false
+                                    }
+                                }
+                            }
+                        },
+                        enabled = canEditHarvestQuantity && !savingHarvestQuantityMode,
+                        label = { Text("Per hive") },
+                        modifier = Modifier.weight(1f)
+                    )
+                    FilterChip(
+                        selected = harvestQuantityMode == HarvestQuantityMode.APIARY_TOTAL,
+                        onClick = {
+                            if (canEditHarvestQuantity && !savingHarvestQuantityMode &&
+                                harvestQuantityMode != HarvestQuantityMode.APIARY_TOTAL
+                            ) {
+                                scope.launch {
+                                    savingHarvestQuantityMode = true
+                                    harvestQuantitySettingMessage = ""
+                                    try {
+                                        repository.saveWorkspaceActionSettings(
+                                            scopeKey = harvestSettingsScopeKey,
+                                            workspaceId = activeWorkspaceId,
+                                            ownerUserId = account.userId,
+                                            harvestQuantityMode = HarvestQuantityMode.APIARY_TOTAL,
+                                            updatedBy = account.userId.takeIf { account.signedIn }
+                                        )
+                                        harvestQuantityMode = HarvestQuantityMode.APIARY_TOTAL
+                                        when (val result = cloud.syncNow()) {
+                                            CloudResult.Success -> harvestQuantitySettingMessage =
+                                                "Apiary total saved and synced."
+                                            CloudResult.NotSignedIn -> harvestQuantitySettingMessage =
+                                                "Saved on this device. Sign in to sync this setting."
+                                            CloudResult.NotConfigured -> harvestQuantitySettingMessage =
+                                                "Saved on this device. Cloud sync is not configured."
+                                            is CloudResult.Failure -> harvestQuantitySettingMessage =
+                                                "Saved locally. Cloud confirmation is pending: ${result.message}"
+                                        }
+                                    } catch (cancelled: CancellationException) {
+                                        throw cancelled
+                                    } catch (error: Exception) {
+                                        harvestQuantitySettingMessage =
+                                            error.message ?: "Could not save the harvest setting."
+                                    } finally {
+                                        savingHarvestQuantityMode = false
+                                    }
+                                }
+                            }
+                        },
+                        enabled = canEditHarvestQuantity && !savingHarvestQuantityMode,
+                        label = { Text("Apiary total") },
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+                Text(
+                    when (harvestQuantityMode) {
+                        HarvestQuantityMode.PER_HIVE ->
+                            "Amounts entered in a harvest log belong to that individual hive."
+                        HarvestQuantityMode.APIARY_TOTAL ->
+                            "When applying a harvest to an apiary, quantities are split as evenly as possible across eligible hives. Any remainder goes to the first hives in stable order."
+                    },
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodySmall
+                )
+                if (!activeWorkspaceId.isNullOrBlank() && !canEditHarvestQuantity) {
+                    Text(
+                        when {
+                            !actionSettingsRoleVerified ->
+                                "Checking workspace permissions. Only the Owner or Admin can change this setting."
+                            actionSettingsWorkspaceRole !in setOf("owner", "admin") ->
+                                "Only the workspace Owner or Admin can change this setting."
+                            !actionSettingsOwnerCommercialCheckComplete ->
+                                "The workspace Owner's Commercial entitlement could not be verified. This setting is read-only."
+                            !actionSettingsOwnerCommercialVerified ->
+                                "The workspace Owner needs an active Commercial plan to change this shared setting."
+                            else ->
+                                "Only the workspace Owner or Admin can change this setting."
+                        },
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+                if (savingHarvestQuantityMode) {
+                    Text("Saving harvest quantity setting…", color = MaterialTheme.colorScheme.primary)
+                }
+                if (savedHarvestActionSettings?.syncState == "pending" ||
+                    savedHarvestActionSettings?.syncState == "local"
+                ) {
+                    Text(
+                        savedHarvestActionSettings?.lastError
+                            ?: "Saved on this device; waiting for cloud confirmation.",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+                if (harvestQuantitySettingMessage.isNotBlank()) {
+                    Text(
+                        harvestQuantitySettingMessage,
+                        color = if (harvestQuantitySettingMessage.startsWith("Saved locally")) {
+                            MaterialTheme.colorScheme.error
+                        } else MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
             }
 
             SettingsSection("Inspection defaults", Icons.Rounded.Nfc) {
