@@ -126,10 +126,10 @@ data class FeedingEntity(
     val amount: Double,
     val unit: String,
     val notes: String = "",
-    @ColumnInfo(name = "record_uuid") val recordUuid: String = UUID.randomUUID().toString(),
+    @ColumnInfo(name = "record_uuid", defaultValue = "''") val recordUuid: String = UUID.randomUUID().toString(),
     @ColumnInfo(name = "apiary_id") val apiaryId: Long? = null,
     @ColumnInfo(name = "batch_id") val batchId: String? = null,
-    @ColumnInfo(name = "occurred_at") val occurredAt: Long = createdAt,
+    @ColumnInfo(name = "occurred_at", defaultValue = "0") val occurredAt: Long = createdAt,
     @ColumnInfo(name = "created_by") val createdBy: String? = null,
     @ColumnInfo(name = "device_id") val deviceId: String? = null
 )
@@ -157,10 +157,10 @@ data class TreatmentEntity(
     @ColumnInfo(name = "removal_at") val removalAt: Long?,
     @ColumnInfo(name = "withdrawal_until") val withdrawalUntil: Long?,
     val notes: String = "",
-    @ColumnInfo(name = "record_uuid") val recordUuid: String = UUID.randomUUID().toString(),
+    @ColumnInfo(name = "record_uuid", defaultValue = "''") val recordUuid: String = UUID.randomUUID().toString(),
     @ColumnInfo(name = "apiary_id") val apiaryId: Long? = null,
     @ColumnInfo(name = "batch_id") val batchId: String? = null,
-    @ColumnInfo(name = "occurred_at") val occurredAt: Long = createdAt,
+    @ColumnInfo(name = "occurred_at", defaultValue = "0") val occurredAt: Long = createdAt,
     @ColumnInfo(name = "created_by") val createdBy: String? = null,
     @ColumnInfo(name = "device_id") val deviceId: String? = null
 )
@@ -188,10 +188,10 @@ data class HarvestEntity(
     @ColumnInfo(name = "wax_weight") val waxWeight: Double = 0.0,
     @ColumnInfo(name = "propolis_weight") val propolisWeight: Double = 0.0,
     val notes: String = "",
-    @ColumnInfo(name = "record_uuid") val recordUuid: String = UUID.randomUUID().toString(),
+    @ColumnInfo(name = "record_uuid", defaultValue = "''") val recordUuid: String = UUID.randomUUID().toString(),
     @ColumnInfo(name = "apiary_id") val apiaryId: Long? = null,
     @ColumnInfo(name = "batch_id") val batchId: String? = null,
-    @ColumnInfo(name = "occurred_at") val occurredAt: Long = createdAt,
+    @ColumnInfo(name = "occurred_at", defaultValue = "0") val occurredAt: Long = createdAt,
     @ColumnInfo(name = "created_by") val createdBy: String? = null,
     @ColumnInfo(name = "device_id") val deviceId: String? = null
 )
@@ -240,7 +240,7 @@ data class WorkspaceActionSettingsEntity(
     @PrimaryKey @ColumnInfo(name = "scope_key") val scopeKey: String,
     @ColumnInfo(name = "workspace_id") val workspaceId: String? = null,
     @ColumnInfo(name = "owner_user_id") val ownerUserId: String? = null,
-    @ColumnInfo(name = "harvest_quantity_mode") val harvestQuantityMode: String = "per_hive",
+    @ColumnInfo(name = "harvest_quantity_mode", defaultValue = "per_hive") val harvestQuantityMode: String = "per_hive",
     @ColumnInfo(name = "updated_at") val updatedAt: Long = 0L,
     @ColumnInfo(name = "updated_by") val updatedBy: String? = null,
     @ColumnInfo(name = "sync_state") val syncState: String = "synced",
