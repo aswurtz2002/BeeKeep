@@ -788,6 +788,15 @@ fun BeeKeepApp(
         )
     }
     val selected by vm.selected.collectAsStateWithLifecycle()
+    val feedings by vm.feedings.collectAsStateWithLifecycle()
+    val feedingsLoading by vm.feedingsLoading.collectAsStateWithLifecycle()
+    val feedingsError by vm.feedingsError.collectAsStateWithLifecycle()
+    val treatments by vm.treatments.collectAsStateWithLifecycle()
+    val treatmentsLoading by vm.treatmentsLoading.collectAsStateWithLifecycle()
+    val treatmentsError by vm.treatmentsError.collectAsStateWithLifecycle()
+    val harvests by vm.harvests.collectAsStateWithLifecycle()
+    val harvestsLoading by vm.harvestsLoading.collectAsStateWithLifecycle()
+    val harvestsError by vm.harvestsError.collectAsStateWithLifecycle()
     val ready by vm.ready.collectAsStateWithLifecycle()
 
     // Keep the Commercial test subscription's expiry live while BeeKeep stays open, not only on app resume.
@@ -2219,7 +2228,10 @@ fun BeeKeepApp(
         when (currentLogType) {
             HiveLogType.FEED -> FeedDialog(
                 onDismiss = { logType = null },
-                hiveName = hiveDisplayName(currentSelected.number)
+                hiveName = hiveDisplayName(currentSelected.number),
+                records = feedings,
+                recordsLoading = feedingsLoading,
+                recordsError = feedingsError
             ) { type, ratio, amount, unit, notes ->
                 if (requestHiveAccess(currentSelected)) {
                     vm.saveFeeding(type, ratio, amount, unit, notes) { success, error ->
@@ -2232,7 +2244,10 @@ fun BeeKeepApp(
             }
             HiveLogType.TREAT -> TreatmentDialog(
                 onDismiss = { logType = null },
-                hiveName = hiveDisplayName(currentSelected.number)
+                hiveName = hiveDisplayName(currentSelected.number),
+                records = treatments,
+                recordsLoading = treatmentsLoading,
+                recordsError = treatmentsError
             ) { type, product, days, withdrawal, notes ->
                 if (requestHiveAccess(currentSelected)) {
                     vm.saveTreatment(type, product, days, withdrawal, notes) { success, error ->
@@ -2245,7 +2260,10 @@ fun BeeKeepApp(
             }
             HiveLogType.HARVEST -> HarvestDialog(
                 onDismiss = { logType = null },
-                hiveName = hiveDisplayName(currentSelected.number)
+                hiveName = hiveDisplayName(currentSelected.number),
+                records = harvests,
+                recordsLoading = harvestsLoading,
+                recordsError = harvestsError
             ) { supers, wet, dry, unit, wax, propolis, notes ->
                 if (requestHiveAccess(currentSelected)) {
                     vm.saveHarvest(supers, wet, dry, unit, wax, propolis, notes) { success, error ->
