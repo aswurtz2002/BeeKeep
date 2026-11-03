@@ -12,6 +12,7 @@ import com.beekeep.app.cloud.CloudConflictPolicy
 import com.beekeep.app.cloud.CloudDocumentRow
 import com.beekeep.app.cloud.LegacyNfcProfileSnapshotGuard
 import com.beekeep.app.cloud.NfcMutationSyncTimestamp
+import com.beekeep.app.cloud.ActiveWorkspaceSessionPolicy
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
@@ -33,20 +34,33 @@ class LocalHiveRepository(context: Context) {
     private val inspectionNoteDraftPrefs = appContext.getSharedPreferences(INSPECTION_NOTE_DRAFTS, Context.MODE_PRIVATE)
     private val inspectionFormDraftPrefs = appContext.getSharedPreferences(InspectionFormDraftStore.PREFERENCES_NAME, Context.MODE_PRIVATE)
 
-    // Restore the last account-bound team database synchronously. The cloud gateway validates
-    // the saved owner against the restored Supabase session before BeeKeep displays any records.
-    // This avoids briefly rendering personal apiaries while an already-selected team is restored.
+    // Bootstrap only a cache bound to the last known account. The saved workspace ID alone
+    // is not proof of membership, and must never make a previous account's data the active dataset.
+    // The gateway revalidates the live Supabase session and workspace role in the background.
     private val initialActiveWorkspaceId = prefs.getString("active_team_workspace_id", "")
         .orEmpty().trim().takeIf { workspaceId ->
-            workspaceId.isNotBlank() &&
-                prefs.getString("active_team_workspace_user_id", null)?.isNotBlank() == true
+            val storedOwnerId = prefs.getString("active_team_workspace_user_id", null)
+                ?.trim()?.takeIf { it.isNotEmpty() }
+            val lastKnownUserId = prefs.getString("last_cloud_user_id", null)
+                ?.trim()?.takeIf { it.isNotEmpty() } ?: storedOwnerId
+            ActiveWorkspaceSessionPolicy.canKeepCachedWorkspace(
+                workspaceId,
+                lastKnownUserId,
+                storedOwnerId
+            )
         }
     private val initialActiveWorkspaceReadOnly = initialActiveWorkspaceId != null &&
         prefs.getBoolean("active_team_workspace_read_only", true)
+    // The account-bound cache can be displayed immediately, but writes wait until the gateway
+    // verifies the current session or confirms the account's cached offline access state.
+    private val startupWorkspaceAccessPending = MutableStateFlow(initialActiveWorkspaceId != null)
     private val _activeWorkspaceId = MutableStateFlow(initialActiveWorkspaceId)
     val activeWorkspaceId: StateFlow<String?> = _activeWorkspaceId.asStateFlow()
     private val _activeWorkspaceReadOnly = MutableStateFlow(initialActiveWorkspaceReadOnly)
     val activeWorkspaceReadOnly: StateFlow<Boolean> = _activeWorkspaceReadOnly.asStateFlow()
+    internal fun completeStartupWorkspaceAccessResolution() {
+        startupWorkspaceAccessPending.value = false
+    }
     private val _readOnlyWriteAttempt = MutableStateFlow(0L)
     val readOnlyWriteAttempt: StateFlow<Long> = _readOnlyWriteAttempt.asStateFlow()
     private val _database = MutableStateFlow(
@@ -2398,6 +2412,12 @@ class LocalHiveRepository(context: Context) {
     }
 
     private fun checkWritable() {
+        if (startupWorkspaceAccessPending.value) {
+            _readOnlyWriteAttempt.value = _readOnlyWriteAttempt.value + 1L
+            throw IllegalStateException(
+                "BeeKeep is verifying access to your selected team workspace. Please try again."
+            )
+        }
         if (_activeWorkspaceReadOnly.value) {
             _readOnlyWriteAttempt.value = _readOnlyWriteAttempt.value + 1L
             throw IllegalStateException(
