@@ -152,3 +152,8 @@ jobs:
         run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261103131406_beekeep_harvest_quantity_settings_acl_fix.sql
       - name: Verify harvest quantity setting scope and Owner/Admin restrictions
         run: psql -v ON_ERROR_STOP=1 -f supabase/tests/harvest_quantity_settings_security.sql
+
+      - name: Apply atomic apiary action batch RPC
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261103170000_beekeep_atomic_action_batches.sql
+      - name: Verify atomic apiary action batches, retries and workspace permissions
+        run: psql -v ON_ERROR_STOP=1 -f supabase/tests/atomic_action_batches.sql
