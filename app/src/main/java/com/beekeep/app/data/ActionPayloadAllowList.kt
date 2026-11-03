@@ -16,6 +16,6 @@ internal object ActionPayloadAllowList {
 
     fun accepts(actionType: String, suppliedFields: Set<String>): Boolean {
         val allowed = fieldsFor(actionType)
-        return allowed.isNotEmpty() && suppliedFields.all { it in allowed }
+        return allowed.isNotEmpty() && suppliedFields.isNotEmpty() && suppliedFields.all { it in allowed }
     }
 }
