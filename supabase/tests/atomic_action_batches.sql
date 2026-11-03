@@ -279,6 +279,75 @@ begin
 end;
 $personal_assertion$;
 
+-- A Hobbyist account may retain existing records, but cannot batch-log against the
+-- 16th hive under the 15-hive limit. The quota rank is evaluated across the account,
+-- not merely the selected apiary or the selected target list.
+insert into public.beekeep_documents (
+    user_id, entity_type, entity_id, payload, updated_at, deleted, device_id
+)
+select
+    auth.uid(),
+    'hive',
+    94000 + gs,
+    jsonb_build_object(
+        'id', 94000 + gs,
+        'number', gs::text,
+        'apiary', 'Personal Apiary',
+        'apiary_id', 93000,
+        'status', 'ACTIVE'
+    )::text,
+    4100,
+    false,
+    'personal-test-device'
+from generate_series(1, 15) gs;
+
+do $locked_hive_assertion$
+declare denied boolean := false; saved_count integer;
+begin
+    begin
+        perform * from public.beekeep_apply_action_batch(
+            null::uuid,
+            93000,
+            'Personal Apiary',
+            '00000000-0000-4000-8000-000000000207'::uuid,
+            'feed',
+            jsonb_build_array(
+                jsonb_build_object(
+                    'entity_type','feeding','entity_id',93021,'updated_at',5000,'deleted',false,'device_id','personal-test-device',
+                    'payload',jsonb_build_object(
+                        'id',93021,'hive_id',93001,'created_at',5000,'updated_at',5000,
+                        'record_uuid','locked-personal-feed','apiary_id',93000,
+                        'batch_id','00000000-0000-4000-8000-000000000207',
+                        'occurred_at',5000,'created_by',auth.uid(),'device_id','personal-test-device',
+                        'feed_type','Sugar syrup','ratio','1:1','amount',1.0,'unit','L','notes',''
+                    )::text
+                ),
+                jsonb_build_object(
+                    'entity_type','event','entity_id',93021,'updated_at',5000,'deleted',false,'device_id','personal-test-device',
+                    'payload',jsonb_build_object(
+                        'id',93021,'hive_id',93001,'created_at',5000,'updated_at',5000,
+                        'type','feeding','title','Feeding','detail','1 L • Sugar syrup 1:1',
+                        'apiary_id',93000,'batch_id','00000000-0000-4000-8000-000000000207'
+                    )::text
+                )
+            )
+        );
+    exception when insufficient_privilege then
+        denied := true;
+    end;
+
+    select count(*) into saved_count
+    from public.beekeep_documents
+    where user_id = auth.uid()
+      and entity_type in ('feeding','event')
+      and entity_id = 93021;
+
+    if not denied or saved_count <> 0 then
+        raise exception 'A plan-locked personal hive accepted a batch action';
+    end if;
+end;
+$locked_hive_assertion$;
+
 -- Expiring the workspace owner's Commercial entitlement blocks even a regular member's
 -- otherwise-valid team action. Existing shared data remains readable and unchanged.
 reset role;
