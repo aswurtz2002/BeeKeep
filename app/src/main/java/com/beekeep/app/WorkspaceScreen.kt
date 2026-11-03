@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.activity.ComponentActivity
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -42,6 +43,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.beekeep.app.cloud.SupabaseGateway
@@ -219,29 +221,33 @@ fun WorkspaceScreen(
     val currentUserOwnsLockedWorkspace =
         activeWorkspaceIsOwnedByUser || (!hasActiveTeam && hasOwnedTeamWorkspace)
 
-    Column(
+    Box(
         modifier = Modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
-            .padding(padding)
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = 16.dp, vertical = 16.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
+            .padding(padding),
+        contentAlignment = Alignment.Center
     ) {
         if (account.signedIn && !ownerAccessCheckComplete) {
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(24.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+            Text(
+                "Loading Workspace",
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 24.dp),
+                textAlign = TextAlign.Center,
+                style = MaterialTheme.typography.headlineMedium,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+        } else {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 16.dp, vertical = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
-                Text(
-                    "Checking workspace access…",
-                    modifier = Modifier.padding(18.dp),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-        } else if (workspaceAccessLocked || workspaceAccessCouldNotBeVerified) {
+                if (workspaceAccessLocked || workspaceAccessCouldNotBeVerified) {
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(24.dp),
@@ -482,7 +488,9 @@ fun WorkspaceScreen(
                 onWorkspaceMembershipChanged = onWorkspaceMembershipChanged
             )
         }
-        Spacer(Modifier.height(8.dp))
+                Spacer(Modifier.height(8.dp))
+            }
+        }
     }
 }
 
