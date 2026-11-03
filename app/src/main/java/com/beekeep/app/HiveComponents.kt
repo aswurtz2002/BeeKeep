@@ -374,9 +374,9 @@ private fun ApiaryWideRecordBadge(batchId: String?) {
 }
 
 @Composable
-private fun RecordHistoryMessage(message: String) {
+private fun RecordHistoryMessage(message: String, modifier: Modifier = Modifier) {
     Surface(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = modifier.fillMaxWidth(),
         shape = RoundedCornerShape(16.dp),
         color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f)
     ) {
@@ -499,14 +499,21 @@ private fun FeedingHistoryContent(
     error: String?
 ) {
     when {
-        loading -> RecordHistoryMessage("Loading feeding records…")
-        error != null -> RecordHistoryMessage("Feeding records could not be loaded. Close and reopen this hive to try again. ($error)")
-        records.isEmpty() -> RecordHistoryMessage("No feeding records for this hive yet.")
+        loading -> RecordHistoryMessage("Loading feeding records…", modifier)
+        error != null -> RecordHistoryMessage("Feeding records could not be loaded. Close and reopen this hive to try again. ($error)", modifier)
+        records.isEmpty() -> RecordHistoryMessage("No feeding records for this hive yet.", modifier)
         else -> LazyColumn(
             modifier = modifier,
             verticalArrangement = Arrangement.spacedBy(10.dp),
             contentPadding = PaddingValues(bottom = 8.dp)
         ) {
+            item {
+                Text(
+                    "Showing records saved on this device. This history remains available offline.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
             items(records, key = { it.id }) { FeedingRecordCard(it) }
         }
     }
@@ -520,14 +527,21 @@ private fun TreatmentHistoryContent(
     error: String?
 ) {
     when {
-        loading -> RecordHistoryMessage("Loading treatment records…")
-        error != null -> RecordHistoryMessage("Treatment records could not be loaded. Close and reopen this hive to try again. ($error)")
-        records.isEmpty() -> RecordHistoryMessage("No treatment records for this hive yet.")
+        loading -> RecordHistoryMessage("Loading treatment records…", modifier)
+        error != null -> RecordHistoryMessage("Treatment records could not be loaded. Close and reopen this hive to try again. ($error)", modifier)
+        records.isEmpty() -> RecordHistoryMessage("No treatment records for this hive yet.", modifier)
         else -> LazyColumn(
             modifier = modifier,
             verticalArrangement = Arrangement.spacedBy(10.dp),
             contentPadding = PaddingValues(bottom = 8.dp)
         ) {
+            item {
+                Text(
+                    "Showing records saved on this device. This history remains available offline.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
             items(records, key = { it.id }) { TreatmentRecordCard(it) }
         }
     }
@@ -541,14 +555,21 @@ private fun HarvestHistoryContent(
     error: String?
 ) {
     when {
-        loading -> RecordHistoryMessage("Loading harvest records…")
-        error != null -> RecordHistoryMessage("Harvest records could not be loaded. Close and reopen this hive to try again. ($error)")
-        records.isEmpty() -> RecordHistoryMessage("No harvest records for this hive yet.")
+        loading -> RecordHistoryMessage("Loading harvest records…", modifier)
+        error != null -> RecordHistoryMessage("Harvest records could not be loaded. Close and reopen this hive to try again. ($error)", modifier)
+        records.isEmpty() -> RecordHistoryMessage("No harvest records for this hive yet.", modifier)
         else -> LazyColumn(
             modifier = modifier,
             verticalArrangement = Arrangement.spacedBy(10.dp),
             contentPadding = PaddingValues(bottom = 8.dp)
         ) {
+            item {
+                Text(
+                    "Showing records saved on this device. This history remains available offline.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
             items(records, key = { it.id }) { HarvestRecordCard(it) }
         }
     }
