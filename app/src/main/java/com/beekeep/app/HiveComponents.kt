@@ -582,6 +582,8 @@ internal fun FeedDialog(
     records: List<Feeding> = emptyList(),
     recordsLoading: Boolean = false,
     recordsError: String? = null,
+    showHistory: Boolean = true,
+    entryInfoMessage: String? = null,
     onSave: (String, String, Double, String, String) -> Unit
 ) {
     var selectedTab by rememberSaveable { mutableStateOf("entry") }
@@ -623,11 +625,13 @@ internal fun FeedDialog(
         },
         selectedTab = selectedTab,
         onTabSelected = { selectedTab = it },
-        historyContent = { modifier -> FeedingHistoryContent(modifier, records, recordsLoading, recordsError) }
+        historyContent = if (showHistory) {
+            { modifier -> FeedingHistoryContent(modifier, records, recordsLoading, recordsError) }
+        } else null
     ) {
         LogInfoPanel(
             title = "Feeding entry",
-            body = "The save time is recorded automatically. Amounts must be greater than zero."
+            body = entryInfoMessage ?: "The save time is recorded automatically. Amounts must be greater than zero."
         )
         LogValidationMessage(error)
 
@@ -728,6 +732,8 @@ internal fun TreatmentDialog(
     records: List<Treatment> = emptyList(),
     recordsLoading: Boolean = false,
     recordsError: String? = null,
+    showHistory: Boolean = true,
+    entryInfoMessage: String? = null,
     onSave: (String, String, Int, Int, String) -> Unit
 ) {
     var selectedTab by rememberSaveable { mutableStateOf("entry") }
@@ -769,11 +775,13 @@ internal fun TreatmentDialog(
         },
         selectedTab = selectedTab,
         onTabSelected = { selectedTab = it },
-        historyContent = { modifier -> TreatmentHistoryContent(modifier, records, recordsLoading, recordsError) }
+        historyContent = if (showHistory) {
+            { modifier -> TreatmentHistoryContent(modifier, records, recordsLoading, recordsError) }
+        } else null
     ) {
         LogInfoPanel(
             title = "Product-label timing",
-            body = "Enter the timing specified for the product you are using. BeeKeep records these dates; it does not create treatment alerts or determine a safe treatment schedule.",
+            body = entryInfoMessage ?: "Enter the timing specified for the product you are using. BeeKeep records these dates; it does not create treatment alerts or determine a safe treatment schedule.",
             warning = true
         )
         LogValidationMessage(error)
@@ -861,6 +869,8 @@ internal fun HarvestDialog(
     records: List<Harvest> = emptyList(),
     recordsLoading: Boolean = false,
     recordsError: String? = null,
+    showHistory: Boolean = true,
+    entryInfoMessage: String? = null,
     onSave: (Int, Double, Double, String, Double, Double, String) -> Unit
 ) {
     var selectedTab by rememberSaveable { mutableStateOf("entry") }
@@ -898,11 +908,13 @@ internal fun HarvestDialog(
         },
         selectedTab = selectedTab,
         onTabSelected = { selectedTab = it },
-        historyContent = { modifier -> HarvestHistoryContent(modifier, records, recordsLoading, recordsError) }
+        historyContent = if (showHistory) {
+            { modifier -> HarvestHistoryContent(modifier, records, recordsLoading, recordsError) }
+        } else null
     ) {
         LogInfoPanel(
             title = "Harvest record",
-            body = "Blank weight fields are saved as 0 in the current record format. Enter your measured amounts or a supers count before saving."
+            body = entryInfoMessage ?: "Blank weight fields are saved as 0 in the current record format. Enter your measured amounts or a supers count before saving."
         )
         LogValidationMessage(error)
 

@@ -14,6 +14,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import com.beekeep.app.nfc.NfcUid
 import java.time.ZoneId
+import java.util.UUID
 import kotlin.math.roundToInt
 
 class BeeKeepViewModel(
@@ -572,6 +573,168 @@ class BeeKeepViewModel(
             runCatching { repo.saveHarvest(Harvest(IdGenerator.nextLong(), h.id, now, supers, wet, dry, unit, wax, propolis, notes)) }
                 .onSuccess { requestCloudSync(); onResult(true, null) }
                 .onFailure { onResult(false, it.message ?: "Could not save harvest.") }
+        }
+    }
+
+
+    private fun orderedActiveHiveIdsForApiary(apiaryName: String, hiveIds: List<Long>): List<Long> {
+        require(hiveIds.isNotEmpty()) { "Select at least one hive." }
+        require(hiveIds.distinct().size == hiveIds.size) { "The selected hive list contains duplicates." }
+
+        // Re-check plan limits in the ViewModel as well as the screen. This keeps
+        // bulk writes from bypassing the same per-hive access rule used by Hive Detail.
+        val quotaOrderedHives = (_hives.value + _deadHives.value)
+            .distinctBy { it.id }
+            .sortedWith(
+                compareBy<Hive> { it.isDead }
+                    .thenBy { it.number.toIntOrNull() ?: Int.MAX_VALUE }
+                    .thenBy { it.number.lowercase(java.util.Locale.ROOT) }
+                    .thenBy { it.apiary.lowercase(java.util.Locale.ROOT) }
+                    .thenBy { it.id }
+            )
+        val lockedIds = BeeKeepEntitlements.hiveIdsBeyondLimit(
+            quotaOrderedHives.map { it.id },
+            activeQuotaLimits.hiveLimit
+        )
+        require(hiveIds.none { it in lockedIds }) {
+            "One or more selected hives are locked by the current plan. Renew or upgrade the workspace plan to manage them."
+        }
+
+        val requested = hiveIds.toSet()
+        val ordered = _hives.value
+            .filter { it.id in requested && !it.isDead && it.apiary.equals(apiaryName, ignoreCase = true) }
+            .sortedWith(
+                compareBy<Hive> { it.number.toIntOrNull() ?: Int.MAX_VALUE }
+                    .thenBy { it.number.lowercase(java.util.Locale.ROOT) }
+                    .thenBy { it.id }
+            )
+            .map { it.id }
+        require(ordered.size == hiveIds.size) {
+            "One or more selected hives are no longer active in this apiary. Refresh and try again."
+        }
+        return ordered
+    }
+
+    fun saveFeedingToApiary(
+        apiaryId: Long,
+        apiaryName: String,
+        hiveIds: List<Long>,
+        feedType: String,
+        ratio: String,
+        amount: Double,
+        unit: String,
+        notes: String,
+        onResult: (Boolean, String?) -> Unit = { _, _ -> }
+    ) {
+        viewModelScope.launch {
+            runCatching {
+                val orderedHiveIds = orderedActiveHiveIdsForApiary(apiaryName, hiveIds)
+                val now = System.currentTimeMillis()
+                val batchId = UUID.randomUUID().toString()
+                val records = orderedHiveIds.map { hiveId ->
+                    Feeding(
+                        IdGenerator.nextLong(), hiveId, now, feedType, ratio, amount, unit, notes,
+                        apiaryId = apiaryId, batchId = batchId, occurredAt = now
+                    )
+                }
+                repo.saveFeedingBatch(apiaryId, apiaryName, orderedHiveIds, records)
+            }.onSuccess { count ->
+                requestCloudSync()
+                onResult(true, "Feeding logged for $count hives.")
+            }.onFailure {
+                onResult(false, it.message ?: "Could not apply feeding to this apiary.")
+            }
+        }
+    }
+
+    fun saveTreatmentToApiary(
+        apiaryId: Long,
+        apiaryName: String,
+        hiveIds: List<Long>,
+        treatmentType: String,
+        product: String,
+        durationDays: Int,
+        withdrawalDays: Int,
+        notes: String,
+        onResult: (Boolean, String?) -> Unit = { _, _ -> }
+    ) {
+        viewModelScope.launch {
+            runCatching {
+                require(durationDays >= 0) { "Removal days cannot be negative." }
+                require(withdrawalDays >= 0) { "Withdrawal days cannot be negative." }
+                val orderedHiveIds = orderedActiveHiveIdsForApiary(apiaryName, hiveIds)
+                val now = System.currentTimeMillis()
+                val removal = if (durationDays > 0) localPlusDays(now, durationDays.toLong()) else null
+                val withdrawal = if (removal != null && withdrawalDays > 0) {
+                    localPlusDays(removal, withdrawalDays.toLong())
+                } else null
+                val batchId = UUID.randomUUID().toString()
+                val records = orderedHiveIds.map { hiveId ->
+                    Treatment(
+                        IdGenerator.nextLong(), hiveId, now, treatmentType, product, now,
+                        removal, withdrawal, notes,
+                        apiaryId = apiaryId, batchId = batchId, occurredAt = now
+                    )
+                }
+                repo.saveTreatmentBatch(apiaryId, apiaryName, orderedHiveIds, records)
+            }.onSuccess { count ->
+                requestCloudSync()
+                onResult(true, "Treatment logged for $count hives.")
+            }.onFailure {
+                onResult(false, it.message ?: "Could not apply treatment to this apiary.")
+            }
+        }
+    }
+
+    fun saveHarvestToApiary(
+        apiaryId: Long,
+        apiaryName: String,
+        hiveIds: List<Long>,
+        supers: Int,
+        wet: Double,
+        dry: Double,
+        unit: String,
+        wax: Double,
+        propolis: Double,
+        notes: String,
+        quantityMode: HarvestQuantityMode,
+        onResult: (Boolean, String?) -> Unit = { _, _ -> }
+    ) {
+        viewModelScope.launch {
+            runCatching {
+                val orderedHiveIds = orderedActiveHiveIdsForApiary(apiaryName, hiveIds)
+                val allocations = if (quantityMode == HarvestQuantityMode.APIARY_TOTAL) {
+                    allocateApiaryHarvestQuantities(supers, wet, dry, wax, propolis, orderedHiveIds.size)
+                } else {
+                    List(orderedHiveIds.size) {
+                        HarvestQuantityAllocation(supers, wet, dry, wax, propolis)
+                    }
+                }
+                val now = System.currentTimeMillis()
+                val batchId = UUID.randomUUID().toString()
+                val records = orderedHiveIds.mapIndexed { index, hiveId ->
+                    val allocation = allocations[index]
+                    Harvest(
+                        IdGenerator.nextLong(), hiveId, now,
+                        allocation.supersPulled,
+                        allocation.wetHoneyWeight,
+                        allocation.dryHoneyWeight,
+                        unit,
+                        allocation.waxWeight,
+                        allocation.propolisWeight,
+                        notes,
+                        apiaryId = apiaryId,
+                        batchId = batchId,
+                        occurredAt = now
+                    )
+                }
+                repo.saveHarvestBatch(apiaryId, apiaryName, orderedHiveIds, records)
+            }.onSuccess { count ->
+                requestCloudSync()
+                onResult(true, "Harvest logged for $count hives.")
+            }.onFailure {
+                onResult(false, it.message ?: "Could not apply harvest to this apiary.")
+            }
         }
     }
 

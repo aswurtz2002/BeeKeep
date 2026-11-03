@@ -149,6 +149,8 @@ import com.beekeep.app.data.Apiary
 import com.beekeep.app.data.Harvest
 import com.beekeep.app.data.Hive
 import com.beekeep.app.data.Inspection
+import com.beekeep.app.data.HarvestQuantityMode
+import com.beekeep.app.data.workspaceActionSettingsScopeKey
 import com.beekeep.app.data.LocalHiveRepository
 import com.beekeep.app.data.Treatment
 import com.beekeep.app.cloud.CloudResult
@@ -554,9 +556,37 @@ fun BeeKeepApp(
     var pendingResetWarning by rememberSaveable { mutableStateOf<String?>(null) }
     var pendingLocationHive by remember { mutableStateOf<Hive?>(null) }
     var pendingApiaryMove by remember { mutableStateOf<Pair<Hive, Apiary>?>(null) }
+    var apiaryBatchTargetPickerVisible by rememberSaveable { mutableStateOf(false) }
+    var apiaryBatchActionTarget by remember { mutableStateOf<ApiaryBatchActionTarget?>(null) }
+    var apiaryBatchActionType by remember { mutableStateOf<HiveLogType?>(null) }
+    var apiaryBatchConfirmationMessage by rememberSaveable { mutableStateOf("") }
+    var apiaryBatchSubmitting by remember { mutableStateOf(false) }
+    var pendingApiaryBatchCommit by remember { mutableStateOf<(() -> Unit)?>(null) }
     var locationCheckCallback by remember { mutableStateOf<(() -> Unit)?>(null) }
     val scope = rememberCoroutineScope()
     val snackbarHostState = androidx.compose.material3.SnackbarHostState()
+
+    fun clearApiaryBatchAction() {
+        apiaryBatchTargetPickerVisible = false
+        apiaryBatchActionTarget = null
+        apiaryBatchActionType = null
+        apiaryBatchConfirmationMessage = ""
+        apiaryBatchSubmitting = false
+        pendingApiaryBatchCommit = null
+    }
+
+    fun requestApiaryBatchConfirmation(message: String, save: () -> Unit) {
+        if (apiaryBatchSubmitting) return
+        apiaryBatchSubmitting = true
+        apiaryBatchConfirmationMessage = message
+        pendingApiaryBatchCommit = save
+    }
+
+    fun cancelApiaryBatchConfirmation() {
+        apiaryBatchConfirmationMessage = ""
+        pendingApiaryBatchCommit = null
+        apiaryBatchSubmitting = false
+    }
 
     fun showUnassignedTagPrompt(uid: String, origin: Screen, tag: android.nfc.Tag?) {
         // Lock NFC before updating Compose state, so queued intents and IO callbacks
@@ -760,6 +790,18 @@ fun BeeKeepApp(
         if (!activeWorkspaceId.isNullOrBlank()) hasJoinedTeamWorkspace = true
     }
     val apiaries by vm.apiaries.collectAsStateWithLifecycle()
+    val harvestSettingsScopeKey = remember(activeWorkspaceId, account.userId) {
+        workspaceActionSettingsScopeKey(activeWorkspaceId, account.userId)
+    }
+    val savedHarvestActionSettings by repository
+        .observeWorkspaceActionSettings(harvestSettingsScopeKey)
+        .collectAsStateWithLifecycle(initialValue = null)
+    val currentHarvestQuantityMode = HarvestQuantityMode.fromStorage(
+        savedHarvestActionSettings?.harvestQuantityMode
+    )
+    androidx.compose.runtime.LaunchedEffect(activeWorkspaceId) {
+        clearApiaryBatchAction()
+    }
     val apiaryHiveCounts by vm.apiaryHiveCounts.collectAsStateWithLifecycle()
     var showViewOnlyDialog by rememberSaveable { mutableStateOf(false) }
 
@@ -2571,30 +2613,252 @@ fun BeeKeepApp(
     if (screen == Screen.APIARY_HIVES) {
         val apiaryName = selectedApiaryName
         if (apiaryName == null) {
+            clearApiaryBatchAction()
             screen = Screen.APIARIES
             return
         }
-        screenSaveableStateHolder.SaveableStateProvider("apiary-hives:$apiaryName") {
-            ApiaryHivesScreen(
-            apiaryName = apiaryName,
-            hives = hives.filter { it.apiary.equals(apiaryName, ignoreCase = true) },
-            compactHiveRows = compactHiveRows,
-            lockedHiveIds = lockedHiveIds,
-            padding = androidx.compose.foundation.layout.PaddingValues(),
-            onBack = { selectedApiaryName = null; screen = Screen.APIARIES },
-            onAddHive = { addHive = true },
-            onOpenHive = { hiveId ->
-                if (requestHiveAccessById(hiveId)) {
-                    val targetHive = hives.firstOrNull { it.id == hiveId }
-                    if (fastTagAssignmentMode && targetHive != null) {
-                        startFastTagAssignmentFromHive(targetHive)
-                    } else {
-                        vm.openHive(hiveId)
-                        selectedHiveOpen = true
+        val apiaryHives = hives.filter { it.apiary.equals(apiaryName, ignoreCase = true) }
+        Box(Modifier.fillMaxSize()) {
+            screenSaveableStateHolder.SaveableStateProvider("apiary-hives:$apiaryName") {
+                ApiaryHivesScreen(
+                    apiaryName = apiaryName,
+                    hives = apiaryHives,
+                    compactHiveRows = compactHiveRows,
+                    lockedHiveIds = lockedHiveIds,
+                    padding = androidx.compose.foundation.layout.PaddingValues(),
+                    onBack = {
+                        clearApiaryBatchAction()
+                        selectedApiaryName = null
+                        screen = Screen.APIARIES
+                    },
+                    onAddHive = { addHive = true },
+                    onOpenHive = { hiveId ->
+                        if (requestHiveAccessById(hiveId)) {
+                            val targetHive = hives.firstOrNull { it.id == hiveId }
+                            if (fastTagAssignmentMode && targetHive != null) {
+                                startFastTagAssignmentFromHive(targetHive)
+                            } else {
+                                vm.openHive(hiveId)
+                                selectedHiveOpen = true
+                            }
+                        }
+                    },
+                    onApplyToApiary = {
+                        when {
+                            activeWorkspaceReadOnly -> showViewOnlyDialog = true
+                            !quotaEnforcementReady -> showQuotaVerificationMessage()
+                            else -> apiaryBatchTargetPickerVisible = true
+                        }
                     }
+                )
+            }
+
+            androidx.compose.material3.SnackbarHost(
+                hostState = snackbarHostState,
+                modifier = Modifier.align(Alignment.BottomCenter)
+            )
+
+            if (apiaryBatchTargetPickerVisible) {
+                ApiaryBatchActionTargetDialog(
+                    apiaryName = apiaryName,
+                    hives = apiaryHives,
+                    lockedHiveIds = lockedHiveIds,
+                    onDismiss = { apiaryBatchTargetPickerVisible = false },
+                    onContinue = { actionType, selectedHiveIds ->
+                        val apiary = apiaries.firstOrNull {
+                            it.name.equals(apiaryName, ignoreCase = true)
+                        }
+                        if (apiary == null) {
+                            apiaryBatchTargetPickerVisible = false
+                            scope.launch {
+                                snackbarHostState.showSnackbar(
+                                    "This apiary could not be found. Refresh and try again."
+                                )
+                            }
+                        } else if (activeWorkspaceReadOnly) {
+                            apiaryBatchTargetPickerVisible = false
+                            showViewOnlyDialog = true
+                        } else if (!quotaEnforcementReady) {
+                            apiaryBatchTargetPickerVisible = false
+                            showQuotaVerificationMessage()
+                        } else if (selectedHiveIds.any { !requestHiveAccessById(it) }) {
+                            apiaryBatchTargetPickerVisible = false
+                        } else {
+                            apiaryBatchActionTarget = ApiaryBatchActionTarget(
+                                apiaryId = apiary.id,
+                                apiaryName = apiary.name,
+                                hiveIds = selectedHiveIds
+                            )
+                            apiaryBatchActionType = actionType
+                            apiaryBatchTargetPickerVisible = false
+                        }
+                    }
+                )
+            }
+
+            val batchTarget = apiaryBatchActionTarget
+            if (batchTarget != null) {
+                val targetSummary = "${batchTarget.apiaryName} • ${batchTarget.hiveIds.size} hives"
+                when (apiaryBatchActionType) {
+                    HiveLogType.FEED -> FeedDialog(
+                        onDismiss = { clearApiaryBatchAction() },
+                        hiveName = targetSummary,
+                        showHistory = false,
+                        entryInfoMessage = "The amount entered will be recorded separately for every selected hive."
+                    ) { feedType, ratio, amount, unit, notes ->
+                        if (!apiaryBatchSubmitting) {
+                            requestApiaryBatchConfirmation(
+                                "Apply this feeding to ${batchTarget.hiveIds.size} selected hives in ${batchTarget.apiaryName}? Each hive will receive the full amount entered."
+                            ) {
+                                if (activeWorkspaceReadOnly) {
+                                    cancelApiaryBatchConfirmation()
+                                    showViewOnlyDialog = true
+                                } else if (!quotaEnforcementReady) {
+                                    cancelApiaryBatchConfirmation()
+                                    showQuotaVerificationMessage()
+                                } else if (batchTarget.hiveIds.any { !requestHiveAccessById(it) }) {
+                                    cancelApiaryBatchConfirmation()
+                                } else {
+vm.saveFeedingToApiary(
+                                    batchTarget.apiaryId,
+                                    batchTarget.apiaryName,
+                                    batchTarget.hiveIds,
+                                    feedType,
+                                    ratio,
+                                    amount,
+                                    unit,
+                                    notes
+                                ) { success, message ->
+                                    apiaryBatchSubmitting = false
+                                    if (success) clearApiaryBatchAction()
+                                    scope.launch {
+                                        snackbarHostState.showSnackbar(message ?: "Feeding saved.")
+                                    }
+                                }
+                                }
+                            }
+                        }
+                    }
+
+                    HiveLogType.TREAT -> TreatmentDialog(
+                        onDismiss = { clearApiaryBatchAction() },
+                        hiveName = targetSummary,
+                        showHistory = false,
+                        entryInfoMessage = "Use removal and withdrawal timing from the product label. BeeKeep records the dates; it does not determine a safe treatment schedule or create treatment alerts. The same treatment and label-based timing will be recorded on every selected hive."
+                    ) { treatmentType, product, days, withdrawalDays, notes ->
+                        if (!apiaryBatchSubmitting) {
+                            requestApiaryBatchConfirmation(
+                                "Apply this treatment to ${batchTarget.hiveIds.size} selected hives in ${batchTarget.apiaryName}? A separate treatment record will be created for each hive."
+                            ) {
+                                if (activeWorkspaceReadOnly) {
+                                    cancelApiaryBatchConfirmation()
+                                    showViewOnlyDialog = true
+                                } else if (!quotaEnforcementReady) {
+                                    cancelApiaryBatchConfirmation()
+                                    showQuotaVerificationMessage()
+                                } else if (batchTarget.hiveIds.any { !requestHiveAccessById(it) }) {
+                                    cancelApiaryBatchConfirmation()
+                                } else {
+vm.saveTreatmentToApiary(
+                                    batchTarget.apiaryId,
+                                    batchTarget.apiaryName,
+                                    batchTarget.hiveIds,
+                                    treatmentType,
+                                    product,
+                                    days,
+                                    withdrawalDays,
+                                    notes
+                                ) { success, message ->
+                                    apiaryBatchSubmitting = false
+                                    if (success) clearApiaryBatchAction()
+                                    scope.launch {
+                                        snackbarHostState.showSnackbar(message ?: "Treatment saved.")
+                                    }
+                                }
+                                }
+                            }
+                        }
+                    }
+
+                    HiveLogType.HARVEST -> {
+                        val quantityDescription = when (currentHarvestQuantityMode) {
+                            HarvestQuantityMode.PER_HIVE ->
+                                "The full quantities entered will be recorded on each selected hive."
+                            HarvestQuantityMode.APIARY_TOTAL ->
+                                "These are apiary totals for the selected hives. BeeKeep splits supers and each weight as evenly as possible; any remainder goes to earlier hives in hive-number order."
+                        }
+                        HarvestDialog(
+                            onDismiss = { clearApiaryBatchAction() },
+                            hiveName = targetSummary,
+                            showHistory = false,
+                            entryInfoMessage = quantityDescription
+                        ) { supers, wet, dry, unit, wax, propolis, notes ->
+                            if (!apiaryBatchSubmitting) {
+                                val confirmText = when (currentHarvestQuantityMode) {
+                                    HarvestQuantityMode.PER_HIVE ->
+                                        "Apply this harvest to ${batchTarget.hiveIds.size} selected hives in ${batchTarget.apiaryName}? Each hive will receive the full quantities entered."
+                                    HarvestQuantityMode.APIARY_TOTAL ->
+                                        "Apply these apiary-total quantities across ${batchTarget.hiveIds.size} selected hives? Supers are split as whole numbers; weight remainders go to earlier hives in hive-number order."
+                                }
+                                requestApiaryBatchConfirmation(confirmText) {
+                                    if (activeWorkspaceReadOnly) {
+                                    cancelApiaryBatchConfirmation()
+                                    showViewOnlyDialog = true
+                                } else if (!quotaEnforcementReady) {
+                                    cancelApiaryBatchConfirmation()
+                                    showQuotaVerificationMessage()
+                                } else if (batchTarget.hiveIds.any { !requestHiveAccessById(it) }) {
+                                    cancelApiaryBatchConfirmation()
+                                } else {
+vm.saveHarvestToApiary(
+                                        batchTarget.apiaryId,
+                                        batchTarget.apiaryName,
+                                        batchTarget.hiveIds,
+                                        supers,
+                                        wet,
+                                        dry,
+                                        unit,
+                                        wax,
+                                        propolis,
+                                        notes,
+                                        currentHarvestQuantityMode
+                                    ) { success, message ->
+                                        apiaryBatchSubmitting = false
+                                        if (success) clearApiaryBatchAction()
+                                        scope.launch {
+                                            snackbarHostState.showSnackbar(message ?: "Harvest saved.")
+                                        }
+                                    }
+                                }
+                                }
+                            }
+                        }
+                    }
+
+                    null -> Unit
                 }
             }
-            )
+
+            if (apiaryBatchSubmitting && pendingApiaryBatchCommit != null) {
+                AlertDialog(
+                    onDismissRequest = { cancelApiaryBatchConfirmation() },
+                    title = { Text("Apply to selected hives?", fontWeight = FontWeight.ExtraBold) },
+                    text = { Text(apiaryBatchConfirmationMessage) },
+                    confirmButton = {
+                        TextButton(
+                            onClick = {
+                                val commit = pendingApiaryBatchCommit
+                                pendingApiaryBatchCommit = null
+                                apiaryBatchConfirmationMessage = ""
+                                commit?.invoke()
+                            }
+                        ) { Text("APPLY", fontWeight = FontWeight.ExtraBold) }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { cancelApiaryBatchConfirmation() }) { Text("CANCEL") }
+                    }
+                )
+            }
         }
         return
     }
@@ -3118,7 +3382,8 @@ private fun ApiaryHivesScreen(
     padding: androidx.compose.foundation.layout.PaddingValues,
     onBack: () -> Unit,
     onAddHive: () -> Unit,
-    onOpenHive: (Long) -> Unit
+    onOpenHive: (Long) -> Unit,
+    onApplyToApiary: () -> Unit
 ) {
     BackHandler { onBack() }
     val listState = rememberLazyListState()
@@ -3141,6 +3406,10 @@ private fun ApiaryHivesScreen(
                 Text(apiaryName, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.ExtraBold)
                 Text("${hives.size} ${if (hives.size == 1) "hive" else "hives"}", color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
+            OutlinedButton(
+                onClick = onApplyToApiary,
+                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp)
+            ) { Text("Apply") }
             IconButton(onClick = onAddHive, modifier = Modifier.size(52.dp)) { Icon(Icons.Rounded.Add, "Add hive") }
         }
         OutlinedTextField(

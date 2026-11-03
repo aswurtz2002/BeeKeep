@@ -41,6 +41,11 @@ import java.util.UUID
 import org.json.JSONObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.int
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 
 sealed interface CloudResult {
     data object Success : CloudResult
@@ -1129,6 +1134,79 @@ class SupabaseGateway(
         lastError = null
     )
 
+    /**
+     * Uploads each durable apiary action as one server-side transaction. The ordinary
+     * document outbox is drained first so the server can verify the apiary and active hives.
+     * Failed requests remain pending locally and retry with the same batch identity.
+     */
+    private suspend fun uploadPendingActionBatches(workspaceId: String?) {
+        val supabase = client ?: throw IllegalStateException("BeeKeep Cloud is not configured.")
+        while (true) {
+            val pending = repository.pendingActionBatches()
+            if (pending.isEmpty()) return
+
+            for (batch in pending) {
+                if (repository.activeWorkspaceId.value != workspaceId || batch.workspaceId != workspaceId) {
+                    throw IllegalStateException(
+                        "The selected workspace changed before an apiary action could sync. Switch back to the original workspace and sync again."
+                    )
+                }
+                try {
+                    if (batch.schemaVersion != 1) {
+                        throw IllegalStateException(
+                            "This apiary action uses an unsupported batch format. Update BeeKeep before syncing it."
+                        )
+                    }
+                    val envelope = Json.parseToJsonElement(batch.payload).jsonObject
+                    val payloadSchemaVersion = envelope["schema_version"]?.jsonPrimitive?.int
+                    if (payloadSchemaVersion != batch.schemaVersion) {
+                        throw IllegalStateException("The saved apiary action batch is incomplete or has an invalid schema version.")
+                    }
+                    val documents = envelope["documents"] as? JsonArray
+                        ?: throw IllegalStateException("The saved apiary action batch has no document list.")
+                    val apiaryId = envelope["apiary_id"]?.jsonPrimitive?.content?.toLongOrNull()
+                        ?: throw IllegalStateException("The saved apiary action batch has no valid apiary ID.")
+                    val apiaryName = envelope["apiary_name"]?.jsonPrimitive?.content
+                        ?.trim()?.takeIf { it.isNotEmpty() }
+                        ?: throw IllegalStateException("The saved apiary action batch has no apiary name.")
+                    val actionType = envelope["action_type"]?.jsonPrimitive?.content
+                        ?.trim()?.lowercase()
+                        ?: throw IllegalStateException("The saved apiary action batch has no action type.")
+                    val storedBatchId = envelope["batch_id"]?.jsonPrimitive?.content
+                    if (storedBatchId != batch.batchId) {
+                        throw IllegalStateException("The saved apiary action batch ID does not match its outbox identity.")
+                    }
+
+                    val result = supabase.postgrest.rpc(
+                        "beekeep_apply_action_batch",
+                        ApplyActionBatchParams(
+                            target_workspace_id = workspaceId,
+                            target_apiary_id = apiaryId,
+                            target_apiary_name = apiaryName,
+                            target_batch_id = batch.batchId,
+                            target_action_type = actionType,
+                            target_documents = documents
+                        )
+                    ).decodeList<ApplyActionBatchResult>().singleOrNull()
+                        ?: throw IllegalStateException("The server did not confirm the apiary action batch.")
+                    if (result.saved_records < 1) {
+                        throw IllegalStateException("The server did not save any records for the apiary action batch.")
+                    }
+
+                    repository.completeActionBatch(batch.batchId)
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (error: Throwable) {
+                    repository.markActionBatchError(
+                        batch.batchId,
+                        error.message ?: "The apiary action batch could not sync."
+                    )
+                    throw error
+                }
+            }
+        }
+    }
+
     private suspend fun syncNowUnlocked(): CloudResult {
         if (!configured || client == null) return CloudResult.NotConfigured
         try {
@@ -1264,6 +1342,10 @@ class SupabaseGateway(
                     repository.markSyncDone(uploadableIds)
                 }
             }
+
+            // Apiary batches are deliberately uploaded after the apiary/hive documents they
+            // depend on, and before the incremental pull on this same selected dataset.
+            uploadPendingActionBatches(workspaceId = null)
 
             // A fixed high-water mark makes the pull resumable. Any write that commits after
             // this read receives a higher server version and is picked up on the next sync.
@@ -1667,6 +1749,9 @@ class SupabaseGateway(
                         repository.markSyncDone(uploadableIds)
                     }
                 }
+                // The normal document outbox is drained first so cloud apiary/hive identity
+                // checks see the newest records before the atomic action transaction runs.
+                uploadPendingActionBatches(workspaceId)
             }
 
             // Prefer server-versioned incremental pages. Older or partially migrated
@@ -1718,7 +1803,9 @@ class SupabaseGateway(
 
             repository.pruneSync()
             val now = System.currentTimeMillis()
-            val documentWarning = if (!isWritable && repository.pendingSync(1).isNotEmpty()) {
+            val documentWarning = if (
+                !isWritable && (repository.pendingSync(1).isNotEmpty() || repository.hasPendingActionBatches())
+            ) {
                 "This workspace is view-only. Pending local edits were not uploaded."
             } else null
             val warning = listOfNotNull(documentWarning, settingsWarning)

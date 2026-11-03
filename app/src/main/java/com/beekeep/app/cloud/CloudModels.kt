@@ -2,6 +2,7 @@ package com.beekeep.app.cloud
 
 import kotlinx.serialization.EncodeDefault
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonArray
 
 @Serializable
 data class CloudDocumentRow(
@@ -105,4 +106,22 @@ data class WorkspaceSyncChangesParams(
 @Serializable
 data class WorkspaceSyncHeadParams(
     val target_workspace_id: String
+)
+
+
+@Serializable
+data class ApplyActionBatchParams(
+    @EncodeDefault(EncodeDefault.Mode.ALWAYS)
+    val target_workspace_id: String?,
+    val target_apiary_id: Long,
+    val target_apiary_name: String,
+    val target_batch_id: String,
+    val target_action_type: String,
+    val target_documents: JsonArray
+)
+
+@Serializable
+data class ApplyActionBatchResult(
+    val saved_records: Int,
+    val already_applied: Boolean
 )
