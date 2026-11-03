@@ -350,9 +350,8 @@ begin
             using errcode = '40001';
     end if;
 
-    -- Mirror the app's quota priority order exactly: active hives first, then hive number
-    -- (numeric before non-numeric), then case-insensitive number/apiary name, then ID.
-    -- Rank the entire personal/team dataset, not just the target apiary.
+    -- Mirror the app's plan priority order across the entire personal/team dataset:
+    -- active hives first, then numeric hive number, text number, apiary name and ID.
     with hive_rows as (
         select d.entity_id, d.payload
           from public.beekeep_documents d
@@ -376,118 +375,13 @@ begin
                     case when coalesce(h.payload::jsonb ->> 'status', 'ACTIVE') = 'ACTIVE'
                          then 0 else 1 end,
                     case
-                        when coalesce(h.payload::jsonb ->> 'number', '') ~ '^-?[0-9]+ A fully committed retry is accepted only
-    -- when every row is identical; partial or conflicting prior data is refused.
-    perform pg_catalog.pg_advisory_xact_lock(
-        pg_catalog.hashtextextended(
-            coalesce(target_workspace_id::text, 'personal:' || caller_id::text) ||
-            ':' || target_batch_id::text,
-            0
-        )
-    );
-
-    if target_workspace_id is null then
-        select pg_catalog.count(*)
-          into existing_count
-          from pg_catalog.jsonb_to_recordset(target_documents) as x(
-              entity_type text, entity_id bigint
-          )
-          join public.beekeep_documents d
-            on d.user_id = caller_id
-           and d.entity_type = x.entity_type
-           and d.entity_id = x.entity_id;
-
-        select pg_catalog.count(*)
-          into mismatched_existing_count
-          from pg_catalog.jsonb_to_recordset(target_documents) as x(
-              entity_type text, entity_id bigint, payload text,
-              updated_at bigint, deleted boolean, device_id text
-          )
-          join public.beekeep_documents d
-            on d.user_id = caller_id
-           and d.entity_type = x.entity_type
-           and d.entity_id = x.entity_id
-          where d.payload is distinct from x.payload
-             or d.updated_at is distinct from x.updated_at
-             or d.deleted is distinct from coalesce(x.deleted, false);
-    else
-        select pg_catalog.count(*)
-          into existing_count
-          from pg_catalog.jsonb_to_recordset(target_documents) as x(
-              entity_type text, entity_id bigint
-          )
-          join public.beekeep_workspace_documents d
-            on d.workspace_id = target_workspace_id
-           and d.entity_type = x.entity_type
-           and d.entity_id = x.entity_id;
-
-        select pg_catalog.count(*)
-          into mismatched_existing_count
-          from pg_catalog.jsonb_to_recordset(target_documents) as x(
-              entity_type text, entity_id bigint, payload text,
-              updated_at bigint, deleted boolean, device_id text
-          )
-          join public.beekeep_workspace_documents d
-            on d.workspace_id = target_workspace_id
-           and d.entity_type = x.entity_type
-           and d.entity_id = x.entity_id
-          where d.payload is distinct from x.payload
-             or d.updated_at is distinct from x.updated_at
-             or d.deleted is distinct from coalesce(x.deleted, false);
-    end if;
-
-    if mismatched_existing_count > 0 or
-       (existing_count > 0 and existing_count <> document_count) then
-        raise exception 'This batch ID or record ID already belongs to different cloud data. No records were changed.'
-            using errcode = '23505';
-    end if;
-
-    if existing_count = document_count then
-        return query select action_count, true;
-        return;
-    end if;
-
-    if target_workspace_id is null then
-        insert into public.beekeep_documents (
-            user_id, entity_type, entity_id, payload, updated_at, deleted, device_id
-        )
-        select
-            caller_id, x.entity_type, x.entity_id, x.payload, x.updated_at,
-            coalesce(x.deleted, false), x.device_id
-        from pg_catalog.jsonb_to_recordset(target_documents) as x(
-            entity_type text, entity_id bigint, payload text,
-            updated_at bigint, deleted boolean, device_id text
-        );
-    else
-        insert into public.beekeep_workspace_documents (
-            workspace_id, entity_type, entity_id, payload, updated_at,
-            deleted, device_id, updated_by
-        )
-        select
-            target_workspace_id, x.entity_type, x.entity_id, x.payload, x.updated_at,
-            coalesce(x.deleted, false), x.device_id, caller_id
-        from pg_catalog.jsonb_to_recordset(target_documents) as x(
-            entity_type text, entity_id bigint, payload text,
-            updated_at bigint, deleted boolean, device_id text
-        );
-    end if;
-
-    return query select action_count, false;
-end;
-$function$;
-
-revoke all on function public.beekeep_apply_action_batch(
-    uuid, bigint, text, uuid, text, jsonb
-) from public, anon;
-grant execute on function public.beekeep_apply_action_batch(
-    uuid, bigint, text, uuid, text, jsonb
-) to authenticated;
-
-commit;
-
-                         and (h.payload::jsonb ->> 'number')::numeric
-                             between -2147483648 and 2147483647
-                        then (h.payload::jsonb ->> 'number')::integer
+                        when coalesce(h.payload::jsonb ->> 'number', '') ~ '^-?[0-9]+$'
+                        then case
+                            when (h.payload::jsonb ->> 'number')::numeric
+                                 between -2147483648 and 2147483647
+                            then (h.payload::jsonb ->> 'number')::integer
+                            else 2147483647
+                        end
                         else 2147483647
                     end,
                     pg_catalog.lower(coalesce(h.payload::jsonb ->> 'number', '')),
