@@ -262,8 +262,7 @@ class SupabaseGateway(
                 signedIn = lastKnownUserId != null,
                 email = prefs.getString("last_cloud_user_email", null).orEmpty(),
                 userId = lastKnownUserId,
-                error = error.message?.takeIf { it.isNotBlank() }
-                    ?: "BeeKeep couldn't refresh your cloud session. Your saved workspace remains on this device."
+                error = TeamWorkspaceSyncError.userFacing(error.message)
             )
             _accountInitialized.value = true
             _workspaceSelectionInitialized.value = true
@@ -501,8 +500,9 @@ class SupabaseGateway(
     } catch (cancelled: CancellationException) {
         throw cancelled
     } catch (t: Throwable) {
-        _account.value = _account.value.copy(syncing = false, error = t.message ?: "Sign out failed")
-        CloudResult.Failure(t.message ?: "Sign out failed")
+        val message = TeamWorkspaceSyncError.userFacing(t.message ?: "Sign out failed")
+        _account.value = _account.value.copy(syncing = false, error = message)
+        CloudResult.Failure(message)
     }
 
     /**
@@ -516,7 +516,9 @@ class SupabaseGateway(
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (error: Throwable) {
-            return@withLock CloudResult.Failure(error.message ?: "Could not restore your cloud session")
+            return@withLock CloudResult.Failure(
+                TeamWorkspaceSyncError.userFacing(error.message ?: "Could not restore your cloud session")
+            )
         }
         val session = supabase.auth.currentSessionOrNull() ?: run {
             refreshAccountUnlocked()
@@ -616,7 +618,7 @@ class SupabaseGateway(
             _account.value = _account.value.copy(syncing = false)
             throw cancelled
         } catch (error: Throwable) {
-            val message = error.message ?: "Cloud workspace reset failed"
+            val message = TeamWorkspaceSyncError.userFacing(error.message ?: "Cloud workspace reset failed")
             _account.value = _account.value.copy(syncing = false, error = message)
             CloudResult.Failure(message)
         }
@@ -694,7 +696,11 @@ class SupabaseGateway(
                     } catch (t: CancellationException) {
                         throw t
                     } catch (t: Throwable) {
-                        _account.value = _account.value.copy(error = "Live sync unavailable: ${t.message ?: "connection failed"}")
+                        val friendlyMessage = TeamWorkspaceSyncError.userFacing(t.message)
+                        val displayMessage = if (
+                            friendlyMessage == TeamWorkspaceSyncError.CONNECTION_UNAVAILABLE_MESSAGE
+                        ) friendlyMessage else "Live sync unavailable: $friendlyMessage"
+                        _account.value = _account.value.copy(error = displayMessage)
                         delay(backoffMs)
                         backoffMs = (backoffMs * 2).coerceAtMost(60_000L)
                     }
@@ -1344,8 +1350,9 @@ class SupabaseGateway(
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Throwable) {
-                WorkspaceOperationResult(error = error.message?.takeIf { it.isNotBlank() }
-                    ?: "Could not switch workspace.")
+                WorkspaceOperationResult(
+                    error = TeamWorkspaceSyncError.userFacing(error.message ?: "Could not switch workspace.")
+                )
             }
         }
 
@@ -1592,7 +1599,7 @@ class SupabaseGateway(
             scope.launch { refreshAccount() }
         } catch (t: Throwable) {
             _account.value = _account.value.copy(
-                error = t.message ?: "Could not complete email verification"
+                error = TeamWorkspaceSyncError.userFacing(t.message ?: "Could not complete email verification")
             )
         }
     }
@@ -1683,7 +1690,9 @@ class SupabaseGateway(
             throw cancelled
         } catch (error: Throwable) {
             WorkspaceOperationResult(
-                error = error.message ?: "The staging test entitlement could not be updated."
+                error = TeamWorkspaceSyncError.userFacing(
+                    error.message ?: "The staging test entitlement could not be updated."
+                )
             )
         }
     }
@@ -1713,7 +1722,7 @@ class SupabaseGateway(
             throw cancelled
         } catch (error: Throwable) {
             WorkspaceOperationResult(
-                error = error.message ?: "Could not verify support-admin access."
+                error = TeamWorkspaceSyncError.userFacing(error.message ?: "Could not verify support-admin access.")
             )
         }
     }
@@ -1757,8 +1766,10 @@ class SupabaseGateway(
             throw cancelled
         } catch (error: Throwable) {
             WorkspaceOperationResult(
-                error = error.message
-                    ?: "The support-admin request could not be completed. Verify the deployed server function and admin access."
+                error = TeamWorkspaceSyncError.userFacing(
+                    error.message
+                        ?: "The support-admin request could not be completed. Verify the deployed server function and admin access."
+                )
             )
         }
     }
@@ -1910,8 +1921,11 @@ class SupabaseGateway(
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (error: Throwable) {
-            WorkspaceOperationResult(error = error.message?.takeIf { it.isNotBlank() }
-                ?: "The workspace request failed. Please try again.")
+            WorkspaceOperationResult(
+                error = TeamWorkspaceSyncError.userFacing(
+                    error.message ?: "The workspace request failed. Please try again."
+                )
+            )
         }
     }
 
@@ -1960,7 +1974,7 @@ class SupabaseGateway(
                     "url:" in lowerMessage ||
                     rawMessage.length > 240 ->
                     "BeeKeep couldn't complete authentication. Check your connection and account details, then try again."
-                else -> rawMessage
+                else -> TeamWorkspaceSyncError.userFacing(rawMessage)
             }
             _account.value = _account.value.copy(error = message)
             CloudResult.Failure(message)
