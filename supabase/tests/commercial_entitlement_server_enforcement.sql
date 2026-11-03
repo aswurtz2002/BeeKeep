@@ -360,6 +360,8 @@ begin
 end;
 $personal_nfc_downgrade_assertion$;
 
+select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-000000000082', false);
+
 -- The workspace's existing NFC assignments remain readable after owner downgrade,
 -- but Hobbyist team members can no longer create or change them.
 do $workspace_nfc_downgrade_assertion$
