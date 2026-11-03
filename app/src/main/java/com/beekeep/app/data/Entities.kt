@@ -5,6 +5,7 @@ import androidx.room.Entity
 import androidx.room.ForeignKey
 import androidx.room.Index
 import androidx.room.PrimaryKey
+import java.util.UUID
 
 @Entity(tableName = "apiaries", indices = [Index(value = ["name"], unique = true)])
 data class ApiaryEntity(
@@ -107,7 +108,14 @@ data class InspectionEntity(
 @Entity(
     tableName = "feeding_entries",
     foreignKeys = [ForeignKey(entity = HiveEntity::class, parentColumns = ["id"], childColumns = ["hive_id"], onDelete = ForeignKey.CASCADE)],
-    indices = [Index(value = ["hive_id", "created_at"]), Index("created_at")]
+    indices = [
+        Index(value = ["hive_id", "created_at"]),
+        Index(value = ["hive_id", "occurred_at"]),
+        Index(value = ["apiary_id", "occurred_at"]),
+        Index("batch_id"),
+        Index(value = ["record_uuid"], unique = true),
+        Index("created_at")
+    ]
 )
 data class FeedingEntity(
     @PrimaryKey val id: Long,
@@ -117,13 +125,27 @@ data class FeedingEntity(
     val ratio: String,
     val amount: Double,
     val unit: String,
-    val notes: String = ""
+    val notes: String = "",
+    @ColumnInfo(name = "record_uuid") val recordUuid: String = UUID.randomUUID().toString(),
+    @ColumnInfo(name = "apiary_id") val apiaryId: Long? = null,
+    @ColumnInfo(name = "batch_id") val batchId: String? = null,
+    @ColumnInfo(name = "occurred_at") val occurredAt: Long = createdAt,
+    @ColumnInfo(name = "created_by") val createdBy: String? = null,
+    @ColumnInfo(name = "device_id") val deviceId: String? = null
 )
 
 @Entity(
     tableName = "treatment_entries",
     foreignKeys = [ForeignKey(entity = HiveEntity::class, parentColumns = ["id"], childColumns = ["hive_id"], onDelete = ForeignKey.CASCADE)],
-    indices = [Index(value = ["hive_id", "created_at"]), Index("created_at"), Index("removal_at")]
+    indices = [
+        Index(value = ["hive_id", "created_at"]),
+        Index(value = ["hive_id", "occurred_at"]),
+        Index(value = ["apiary_id", "occurred_at"]),
+        Index("batch_id"),
+        Index(value = ["record_uuid"], unique = true),
+        Index("created_at"),
+        Index("removal_at")
+    ]
 )
 data class TreatmentEntity(
     @PrimaryKey val id: Long,
@@ -134,13 +156,26 @@ data class TreatmentEntity(
     @ColumnInfo(name = "inserted_at") val insertedAt: Long?,
     @ColumnInfo(name = "removal_at") val removalAt: Long?,
     @ColumnInfo(name = "withdrawal_until") val withdrawalUntil: Long?,
-    val notes: String = ""
+    val notes: String = "",
+    @ColumnInfo(name = "record_uuid") val recordUuid: String = UUID.randomUUID().toString(),
+    @ColumnInfo(name = "apiary_id") val apiaryId: Long? = null,
+    @ColumnInfo(name = "batch_id") val batchId: String? = null,
+    @ColumnInfo(name = "occurred_at") val occurredAt: Long = createdAt,
+    @ColumnInfo(name = "created_by") val createdBy: String? = null,
+    @ColumnInfo(name = "device_id") val deviceId: String? = null
 )
 
 @Entity(
     tableName = "harvest_entries",
     foreignKeys = [ForeignKey(entity = HiveEntity::class, parentColumns = ["id"], childColumns = ["hive_id"], onDelete = ForeignKey.CASCADE)],
-    indices = [Index(value = ["hive_id", "created_at"]), Index("created_at")]
+    indices = [
+        Index(value = ["hive_id", "created_at"]),
+        Index(value = ["hive_id", "occurred_at"]),
+        Index(value = ["apiary_id", "occurred_at"]),
+        Index("batch_id"),
+        Index(value = ["record_uuid"], unique = true),
+        Index("created_at")
+    ]
 )
 data class HarvestEntity(
     @PrimaryKey val id: Long,
@@ -152,7 +187,13 @@ data class HarvestEntity(
     @ColumnInfo(name = "weight_unit") val weightUnit: String = "lb",
     @ColumnInfo(name = "wax_weight") val waxWeight: Double = 0.0,
     @ColumnInfo(name = "propolis_weight") val propolisWeight: Double = 0.0,
-    val notes: String = ""
+    val notes: String = "",
+    @ColumnInfo(name = "record_uuid") val recordUuid: String = UUID.randomUUID().toString(),
+    @ColumnInfo(name = "apiary_id") val apiaryId: Long? = null,
+    @ColumnInfo(name = "batch_id") val batchId: String? = null,
+    @ColumnInfo(name = "occurred_at") val occurredAt: Long = createdAt,
+    @ColumnInfo(name = "created_by") val createdBy: String? = null,
+    @ColumnInfo(name = "device_id") val deviceId: String? = null
 )
 
 @Entity(tableName = "activity_events", indices = [Index(value = ["hive_id", "created_at"]), Index("created_at")])
@@ -174,6 +215,35 @@ data class SyncOutboxEntity(
     val payload: String,
     @ColumnInfo(name = "created_at") val createdAt: Long = System.currentTimeMillis(),
     val state: String = "pending",
+    @ColumnInfo(name = "last_error") val lastError: String? = null
+)
+
+@Entity(
+    tableName = "action_batch_outbox",
+    indices = [Index(value = ["state", "created_at"]), Index(value = ["workspace_id", "state"])]
+)
+data class ActionBatchOutboxEntity(
+    @PrimaryKey @ColumnInfo(name = "batch_id") val batchId: String,
+    @ColumnInfo(name = "workspace_id") val workspaceId: String?,
+    @ColumnInfo(name = "schema_version") val schemaVersion: Int,
+    val payload: String,
+    @ColumnInfo(name = "created_at") val createdAt: Long = System.currentTimeMillis(),
+    val state: String = "pending",
+    @ColumnInfo(name = "last_error") val lastError: String? = null
+)
+
+@Entity(
+    tableName = "workspace_action_settings",
+    indices = [Index("workspace_id"), Index("owner_user_id")]
+)
+data class WorkspaceActionSettingsEntity(
+    @PrimaryKey @ColumnInfo(name = "scope_key") val scopeKey: String,
+    @ColumnInfo(name = "workspace_id") val workspaceId: String? = null,
+    @ColumnInfo(name = "owner_user_id") val ownerUserId: String? = null,
+    @ColumnInfo(name = "harvest_quantity_mode") val harvestQuantityMode: String = "per_hive",
+    @ColumnInfo(name = "updated_at") val updatedAt: Long = 0L,
+    @ColumnInfo(name = "updated_by") val updatedBy: String? = null,
+    @ColumnInfo(name = "sync_state") val syncState: String = "synced",
     @ColumnInfo(name = "last_error") val lastError: String? = null
 )
 
@@ -241,9 +311,38 @@ data class Inspection(
     val mitePercent: Double get() = if (sampleSize > 0) miteCount * 100.0 / sampleSize else 0.0
 }
 
-data class Feeding(val id: Long, val hiveId: Long, val createdAt: Long, val feedType: String, val ratio: String, val amount: Double, val unit: String, val notes: String)
-data class Treatment(val id: Long, val hiveId: Long, val createdAt: Long, val treatmentType: String, val product: String, val insertedAt: Long?, val removalAt: Long?, val withdrawalUntil: Long?, val notes: String)
-data class Harvest(val id: Long, val hiveId: Long, val createdAt: Long, val supersPulled: Int, val wetHoneyWeight: Double, val dryHoneyWeight: Double, val weightUnit: String, val waxWeight: Double, val propolisWeight: Double, val notes: String)
+data class Feeding(
+    val id: Long, val hiveId: Long, val createdAt: Long,
+    val feedType: String, val ratio: String, val amount: Double, val unit: String, val notes: String,
+    val recordUuid: String = UUID.randomUUID().toString(),
+    val apiaryId: Long? = null,
+    val batchId: String? = null,
+    val occurredAt: Long = createdAt,
+    val createdBy: String? = null,
+    val deviceId: String? = null
+)
+data class Treatment(
+    val id: Long, val hiveId: Long, val createdAt: Long,
+    val treatmentType: String, val product: String, val insertedAt: Long?,
+    val removalAt: Long?, val withdrawalUntil: Long?, val notes: String,
+    val recordUuid: String = UUID.randomUUID().toString(),
+    val apiaryId: Long? = null,
+    val batchId: String? = null,
+    val occurredAt: Long = createdAt,
+    val createdBy: String? = null,
+    val deviceId: String? = null
+)
+data class Harvest(
+    val id: Long, val hiveId: Long, val createdAt: Long,
+    val supersPulled: Int, val wetHoneyWeight: Double, val dryHoneyWeight: Double,
+    val weightUnit: String, val waxWeight: Double, val propolisWeight: Double, val notes: String,
+    val recordUuid: String = UUID.randomUUID().toString(),
+    val apiaryId: Long? = null,
+    val batchId: String? = null,
+    val occurredAt: Long = createdAt,
+    val createdBy: String? = null,
+    val deviceId: String? = null
+)
 data class Apiary(val id: Long, val name: String, val notes: String, val latitude: Double?, val longitude: Double?, val forageNotes: String, val waterNotes: String)
 data class ActivityEvent(val id: Long, val hiveId: Long, val createdAt: Long, val type: String, val title: String, val detail: String)
 data class Task(val id: Long, val hiveId: Long?, val title: String, val dueAt: Long, val completed: Boolean, val kind: String, val reminderEnabled: Boolean)

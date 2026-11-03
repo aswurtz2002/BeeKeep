@@ -141,9 +141,9 @@ interface InspectionDao {
 interface FeedingDao {
     @Query("SELECT * FROM feeding_entries ORDER BY id")
     suspend fun allForBackup(): List<FeedingEntity>
-    @Query("SELECT * FROM feeding_entries WHERE hive_id = :hiveId ORDER BY created_at DESC")
+    @Query("SELECT * FROM feeding_entries WHERE hive_id = :hiveId ORDER BY occurred_at DESC, id DESC")
     fun observeForHive(hiveId: Long): Flow<List<FeedingEntity>>
-    @Query("SELECT * FROM feeding_entries ORDER BY created_at DESC")
+    @Query("SELECT * FROM feeding_entries ORDER BY occurred_at DESC, id DESC")
     fun observeAll(): Flow<List<FeedingEntity>>
     @Query("SELECT * FROM feeding_entries WHERE id = :id")
     suspend fun get(id: Long): FeedingEntity?
@@ -161,9 +161,9 @@ interface FeedingDao {
 interface TreatmentDao {
     @Query("SELECT * FROM treatment_entries ORDER BY id")
     suspend fun allForBackup(): List<TreatmentEntity>
-    @Query("SELECT * FROM treatment_entries WHERE hive_id = :hiveId ORDER BY created_at DESC")
+    @Query("SELECT * FROM treatment_entries WHERE hive_id = :hiveId ORDER BY occurred_at DESC, id DESC")
     fun observeForHive(hiveId: Long): Flow<List<TreatmentEntity>>
-    @Query("SELECT * FROM treatment_entries ORDER BY created_at DESC")
+    @Query("SELECT * FROM treatment_entries ORDER BY occurred_at DESC, id DESC")
     fun observeAll(): Flow<List<TreatmentEntity>>
     @Query("SELECT * FROM treatment_entries WHERE id = :id")
     suspend fun get(id: Long): TreatmentEntity?
@@ -181,9 +181,9 @@ interface TreatmentDao {
 interface HarvestDao {
     @Query("SELECT * FROM harvest_entries ORDER BY id")
     suspend fun allForBackup(): List<HarvestEntity>
-    @Query("SELECT * FROM harvest_entries WHERE hive_id = :hiveId ORDER BY created_at DESC")
+    @Query("SELECT * FROM harvest_entries WHERE hive_id = :hiveId ORDER BY occurred_at DESC, id DESC")
     fun observeForHive(hiveId: Long): Flow<List<HarvestEntity>>
-    @Query("SELECT * FROM harvest_entries ORDER BY created_at DESC")
+    @Query("SELECT * FROM harvest_entries ORDER BY occurred_at DESC, id DESC")
     fun observeAll(): Flow<List<HarvestEntity>>
     @Query("SELECT * FROM harvest_entries WHERE id = :id")
     suspend fun get(id: Long): HarvestEntity?
@@ -253,6 +253,39 @@ interface OutboxDao {
     suspend fun pruneDone(cutoff: Long)
 }
 
+
+@Dao
+interface ActionBatchOutboxDao {
+    @Query("SELECT * FROM action_batch_outbox WHERE state = 'pending' ORDER BY created_at, batch_id LIMIT :limit")
+    suspend fun pending(limit: Int = 20): List<ActionBatchOutboxEntity>
+
+    @Query("SELECT * FROM action_batch_outbox WHERE batch_id = :batchId")
+    suspend fun get(batchId: String): ActionBatchOutboxEntity?
+
+    @Insert(onConflict = OnConflictStrategy.ABORT)
+    suspend fun enqueue(batch: ActionBatchOutboxEntity)
+
+    @Query("UPDATE action_batch_outbox SET state = :state, last_error = :error WHERE batch_id = :batchId")
+    suspend fun setState(batchId: String, state: String, error: String? = null)
+
+    @Query("DELETE FROM action_batch_outbox WHERE batch_id = :batchId AND state = 'done'")
+    suspend fun deleteCompleted(batchId: String)
+
+    @Query("SELECT COUNT(*) FROM action_batch_outbox WHERE state = 'pending'")
+    fun observePendingCount(): Flow<Int>
+}
+
+@Dao
+interface WorkspaceActionSettingsDao {
+    @Query("SELECT * FROM workspace_action_settings WHERE scope_key = :scopeKey LIMIT 1")
+    suspend fun get(scopeKey: String): WorkspaceActionSettingsEntity?
+
+    @Query("SELECT * FROM workspace_action_settings WHERE scope_key = :scopeKey LIMIT 1")
+    fun observe(scopeKey: String): Flow<WorkspaceActionSettingsEntity?>
+
+    @Upsert
+    suspend fun upsert(settings: WorkspaceActionSettingsEntity)
+}
 
 @Dao
 interface TaskDao {

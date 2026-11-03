@@ -23,6 +23,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import org.json.JSONArray
+import java.util.UUID
 import kotlin.math.roundToInt
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -874,7 +875,15 @@ class LocalHiveRepository(context: Context) {
         require(f.amount.isFinite() && f.amount >= 0.0) { "Feeding amount must be a valid non-negative number" }
         require(f.unit.trim().isNotBlank()) { "Feeding unit cannot be blank" }
         db.withTransaction {
-            val entity = FeedingEntity(f.id, f.hiveId, f.createdAt, f.feedType.trim(), f.ratio.trim(), f.amount, f.unit.trim(), f.notes.trim())
+            val hive = db.hives().get(f.hiveId) ?: throw IllegalArgumentException("Hive not found.")
+            val entity = FeedingEntity(
+                id = f.id, hiveId = f.hiveId, createdAt = f.createdAt,
+                feedType = f.feedType.trim(), ratio = f.ratio.trim(), amount = f.amount,
+                unit = f.unit.trim(), notes = f.notes.trim(), recordUuid = f.recordUuid,
+                apiaryId = f.apiaryId ?: hive.apiaryId, batchId = f.batchId,
+                occurredAt = f.occurredAt, createdBy = f.createdBy ?: currentAccountUserId(),
+                deviceId = f.deviceId ?: currentDeviceId()
+            )
             db.feedings().upsert(entity)
             val event = ActivityEventEntity(f.id, f.hiveId, f.createdAt, "feeding", "Feeding", "${entity.amount} ${entity.unit} • ${entity.feedType} ${entity.ratio}")
             db.events().upsert(event)
@@ -888,7 +897,17 @@ class LocalHiveRepository(context: Context) {
         require(t.treatmentType.trim().isNotBlank()) { "Treatment type cannot be blank" }
         require(t.product.trim().isNotBlank()) { "Product cannot be blank" }
         db.withTransaction {
-            val entity = TreatmentEntity(t.id, t.hiveId, t.createdAt, t.treatmentType.trim(), t.product.trim(), t.insertedAt, t.removalAt, t.withdrawalUntil, t.notes.trim())
+            val hive = db.hives().get(t.hiveId) ?: throw IllegalArgumentException("Hive not found.")
+            val entity = TreatmentEntity(
+                id = t.id, hiveId = t.hiveId, createdAt = t.createdAt,
+                treatmentType = t.treatmentType.trim(), product = t.product.trim(),
+                insertedAt = t.insertedAt, removalAt = t.removalAt,
+                withdrawalUntil = t.withdrawalUntil, notes = t.notes.trim(),
+                recordUuid = t.recordUuid, apiaryId = t.apiaryId ?: hive.apiaryId,
+                batchId = t.batchId, occurredAt = t.occurredAt,
+                createdBy = t.createdBy ?: currentAccountUserId(),
+                deviceId = t.deviceId ?: currentDeviceId()
+            )
             db.treatments().upsert(entity)
             val event = ActivityEventEntity(t.id, t.hiveId, t.createdAt, "treatment", "Treatment", "${entity.treatmentType} • ${entity.product}")
             db.events().upsert(event)
@@ -902,7 +921,18 @@ class LocalHiveRepository(context: Context) {
         require(h.weightUnit.trim().isNotBlank()) { "Harvest weight unit cannot be blank" }
         listOf(h.wetHoneyWeight, h.dryHoneyWeight, h.waxWeight, h.propolisWeight).forEach { value -> require(value.isFinite() && value >= 0.0) { "Harvest values must be valid non-negative numbers" } }
         db.withTransaction {
-            val entity = HarvestEntity(h.id, h.hiveId, h.createdAt, h.supersPulled.coerceAtLeast(0), h.wetHoneyWeight, h.dryHoneyWeight, h.weightUnit.trim(), h.waxWeight, h.propolisWeight, h.notes.trim())
+            val hive = db.hives().get(h.hiveId) ?: throw IllegalArgumentException("Hive not found.")
+            val entity = HarvestEntity(
+                id = h.id, hiveId = h.hiveId, createdAt = h.createdAt,
+                supersPulled = h.supersPulled.coerceAtLeast(0),
+                wetHoneyWeight = h.wetHoneyWeight, dryHoneyWeight = h.dryHoneyWeight,
+                weightUnit = h.weightUnit.trim(), waxWeight = h.waxWeight,
+                propolisWeight = h.propolisWeight, notes = h.notes.trim(),
+                recordUuid = h.recordUuid, apiaryId = h.apiaryId ?: hive.apiaryId,
+                batchId = h.batchId, occurredAt = h.occurredAt,
+                createdBy = h.createdBy ?: currentAccountUserId(),
+                deviceId = h.deviceId ?: currentDeviceId()
+            )
             db.harvests().upsert(entity)
             val event = ActivityEventEntity(h.id, h.hiveId, h.createdAt, "harvest", "Harvest", "${entity.dryHoneyWeight} ${entity.weightUnit} dry honey")
             db.events().upsert(event)
@@ -1416,13 +1446,20 @@ class LocalHiveRepository(context: Context) {
             "feeding" -> {
                 val hiveId = json.optLong("hive_id")
                 if (db.hives().exists(hiveId)) {
-                    val incoming = FeedingEntity(
-                        doc.entity_id, hiveId, json.optLong("created_at", doc.updated_at),
-                        json.optString("feed_type"), json.optString("ratio"),
-                        json.optDouble("amount").coerceAtLeast(0.0), json.optString("unit"),
-                        json.optString("notes")
-                    )
                     val existing = db.feedings().get(doc.entity_id)
+                    val incoming = FeedingEntity(
+                        id = doc.entity_id, hiveId = hiveId,
+                        createdAt = json.optLong("created_at", doc.updated_at),
+                        feedType = json.optString("feed_type"), ratio = json.optString("ratio"),
+                        amount = json.optDouble("amount").coerceAtLeast(0.0),
+                        unit = json.optString("unit"), notes = json.optString("notes"),
+                        recordUuid = json.stringOrNull("record_uuid") ?: existing?.recordUuid ?: UUID.randomUUID().toString(),
+                        apiaryId = json.longOrNull("apiary_id") ?: existing?.apiaryId,
+                        batchId = json.stringOrNull("batch_id") ?: existing?.batchId,
+                        occurredAt = json.optLong("occurred_at", json.optLong("created_at", doc.updated_at)),
+                        createdBy = json.stringOrNull("created_by") ?: existing?.createdBy,
+                        deviceId = json.stringOrNull("device_id") ?: existing?.deviceId ?: doc.device_id
+                    )
                     if (existing == null || CloudConflictPolicy.shouldApplyRemote(incoming.createdAt, existing.createdAt)) {
                         db.feedings().upsert(incoming)
                     }
@@ -1431,13 +1468,23 @@ class LocalHiveRepository(context: Context) {
             "treatment" -> {
                 val hiveId = json.optLong("hive_id")
                 if (db.hives().exists(hiveId)) {
-                    val incoming = TreatmentEntity(
-                        doc.entity_id, hiveId, json.optLong("created_at", doc.updated_at),
-                        json.optString("treatment_type"), json.optString("product"),
-                        json.longOrNull("inserted_at"), json.longOrNull("removal_at"),
-                        json.longOrNull("withdrawal_until"), json.optString("notes")
-                    )
                     val existing = db.treatments().get(doc.entity_id)
+                    val incoming = TreatmentEntity(
+                        id = doc.entity_id, hiveId = hiveId,
+                        createdAt = json.optLong("created_at", doc.updated_at),
+                        treatmentType = json.optString("treatment_type"),
+                        product = json.optString("product"),
+                        insertedAt = json.longOrNull("inserted_at"),
+                        removalAt = json.longOrNull("removal_at"),
+                        withdrawalUntil = json.longOrNull("withdrawal_until"),
+                        notes = json.optString("notes"),
+                        recordUuid = json.stringOrNull("record_uuid") ?: existing?.recordUuid ?: UUID.randomUUID().toString(),
+                        apiaryId = json.longOrNull("apiary_id") ?: existing?.apiaryId,
+                        batchId = json.stringOrNull("batch_id") ?: existing?.batchId,
+                        occurredAt = json.optLong("occurred_at", json.optLong("created_at", doc.updated_at)),
+                        createdBy = json.stringOrNull("created_by") ?: existing?.createdBy,
+                        deviceId = json.stringOrNull("device_id") ?: existing?.deviceId ?: doc.device_id
+                    )
                     if (existing == null || CloudConflictPolicy.shouldApplyRemote(incoming.createdAt, existing.createdAt)) {
                         db.treatments().upsert(incoming)
                     }
@@ -1446,17 +1493,24 @@ class LocalHiveRepository(context: Context) {
             "harvest" -> {
                 val hiveId = json.optLong("hive_id")
                 if (db.hives().exists(hiveId)) {
-                    val incoming = HarvestEntity(
-                        doc.entity_id, hiveId, json.optLong("created_at", doc.updated_at),
-                        json.optInt("supers_pulled").coerceAtLeast(0),
-                        json.optDouble("wet_honey_weight").coerceAtLeast(0.0),
-                        json.optDouble("dry_honey_weight").coerceAtLeast(0.0),
-                        json.optString("weight_unit", "lb"),
-                        json.optDouble("wax_weight").coerceAtLeast(0.0),
-                        json.optDouble("propolis_weight").coerceAtLeast(0.0),
-                        json.optString("notes")
-                    )
                     val existing = db.harvests().get(doc.entity_id)
+                    val incoming = HarvestEntity(
+                        id = doc.entity_id, hiveId = hiveId,
+                        createdAt = json.optLong("created_at", doc.updated_at),
+                        supersPulled = json.optInt("supers_pulled").coerceAtLeast(0),
+                        wetHoneyWeight = json.optDouble("wet_honey_weight").coerceAtLeast(0.0),
+                        dryHoneyWeight = json.optDouble("dry_honey_weight").coerceAtLeast(0.0),
+                        weightUnit = json.optString("weight_unit", "lb"),
+                        waxWeight = json.optDouble("wax_weight").coerceAtLeast(0.0),
+                        propolisWeight = json.optDouble("propolis_weight").coerceAtLeast(0.0),
+                        notes = json.optString("notes"),
+                        recordUuid = json.stringOrNull("record_uuid") ?: existing?.recordUuid ?: UUID.randomUUID().toString(),
+                        apiaryId = json.longOrNull("apiary_id") ?: existing?.apiaryId,
+                        batchId = json.stringOrNull("batch_id") ?: existing?.batchId,
+                        occurredAt = json.optLong("occurred_at", json.optLong("created_at", doc.updated_at)),
+                        createdBy = json.stringOrNull("created_by") ?: existing?.createdBy,
+                        deviceId = json.stringOrNull("device_id") ?: existing?.deviceId ?: doc.device_id
+                    )
                     if (existing == null || CloudConflictPolicy.shouldApplyRemote(incoming.createdAt, existing.createdAt)) {
                         db.harvests().upsert(incoming)
                     }
@@ -1896,6 +1950,18 @@ class LocalHiveRepository(context: Context) {
         }
     }
 
+    private fun currentAccountUserId(): String? =
+        prefs.getString("last_cloud_user_id", null)?.trim()?.takeIf { it.isNotEmpty() }
+
+    private fun currentDeviceId(): String {
+        prefs.getString("device_id", null)?.trim()?.takeIf { it.isNotEmpty() }?.let { return it }
+        val generated = UUID.randomUUID().toString()
+        check(prefs.edit().putString("device_id", generated).commit()) {
+            "Could not persist the device identifier for action history."
+        }
+        return generated
+    }
+
     private suspend fun enqueue(type: String, entityId: Long, operation: String, payload: String) {
         // Replacing an older pending write and inserting its replacement must be atomic.
         // Capture the current database so a workspace switch cannot split this operation
@@ -1917,9 +1983,9 @@ class LocalHiveRepository(context: Context) {
     private fun apiaryPayload(e: ApiaryEntity) = JSONObject().put("id",e.id).put("name",e.name).put("notes",e.notes).put("latitude",e.latitude).put("longitude",e.longitude).put("forage_notes",e.forageNotes).put("water_notes",e.waterNotes).put("updated_at",e.updatedAt).put("deleted",e.deleted).toString()
     private fun inspectionPayload(e: InspectionEntity) = JSONObject().put("id",e.id).put("hive_id",e.hiveId).put("created_at",e.createdAt).put("strength",e.strength).put("queen_status",e.queenStatus).put("mite_count",e.miteCount).put("sample_size",e.sampleSize).put("notes",e.notes)
         .put("latitude",e.latitude).put("longitude",e.longitude).put("emergency_cells",e.emergencyCells).put("supercedure_cells",e.supercedureCells).put("swarm_cells",e.swarmCells).put("eggs",e.eggs).put("open_brood",e.openBrood).put("capped_brood",e.cappedBrood).put("honey_stores",e.honeyStores).put("pollen",e.pollen).put("empty_drawn_comb",e.emptyDrawnComb).put("disease_flags",e.diseaseFlags).put("bee_count_frames",e.beeCountFrames).put("updated_at",e.updatedAt).toString()
-    private fun feedingPayload(e: FeedingEntity) = JSONObject().put("id",e.id).put("hive_id",e.hiveId).put("created_at",e.createdAt).put("updated_at",e.createdAt).put("feed_type",e.feedType).put("ratio",e.ratio).put("amount",e.amount).put("unit",e.unit).put("notes",e.notes).toString()
-    private fun treatmentPayload(e: TreatmentEntity) = JSONObject().put("id",e.id).put("hive_id",e.hiveId).put("created_at",e.createdAt).put("updated_at",e.createdAt).put("treatment_type",e.treatmentType).put("product",e.product).put("inserted_at",e.insertedAt).put("removal_at",e.removalAt).put("withdrawal_until",e.withdrawalUntil).put("notes",e.notes).toString()
-    private fun harvestPayload(e: HarvestEntity) = JSONObject().put("id",e.id).put("hive_id",e.hiveId).put("created_at",e.createdAt).put("updated_at",e.createdAt).put("supers_pulled",e.supersPulled).put("wet_honey_weight",e.wetHoneyWeight).put("dry_honey_weight",e.dryHoneyWeight).put("weight_unit",e.weightUnit).put("wax_weight",e.waxWeight).put("propolis_weight",e.propolisWeight).put("notes",e.notes).toString()
+    private fun feedingPayload(e: FeedingEntity) = JSONObject().put("id",e.id).put("hive_id",e.hiveId).put("created_at",e.createdAt).put("updated_at",e.createdAt).put("record_uuid",e.recordUuid).put("apiary_id",e.apiaryId).put("batch_id",e.batchId).put("occurred_at",e.occurredAt).put("created_by",e.createdBy).put("device_id",e.deviceId).put("feed_type",e.feedType).put("ratio",e.ratio).put("amount",e.amount).put("unit",e.unit).put("notes",e.notes).toString()
+    private fun treatmentPayload(e: TreatmentEntity) = JSONObject().put("id",e.id).put("hive_id",e.hiveId).put("created_at",e.createdAt).put("updated_at",e.createdAt).put("record_uuid",e.recordUuid).put("apiary_id",e.apiaryId).put("batch_id",e.batchId).put("occurred_at",e.occurredAt).put("created_by",e.createdBy).put("device_id",e.deviceId).put("treatment_type",e.treatmentType).put("product",e.product).put("inserted_at",e.insertedAt).put("removal_at",e.removalAt).put("withdrawal_until",e.withdrawalUntil).put("notes",e.notes).toString()
+    private fun harvestPayload(e: HarvestEntity) = JSONObject().put("id",e.id).put("hive_id",e.hiveId).put("created_at",e.createdAt).put("updated_at",e.createdAt).put("record_uuid",e.recordUuid).put("apiary_id",e.apiaryId).put("batch_id",e.batchId).put("occurred_at",e.occurredAt).put("created_by",e.createdBy).put("device_id",e.deviceId).put("supers_pulled",e.supersPulled).put("wet_honey_weight",e.wetHoneyWeight).put("dry_honey_weight",e.dryHoneyWeight).put("weight_unit",e.weightUnit).put("wax_weight",e.waxWeight).put("propolis_weight",e.propolisWeight).put("notes",e.notes).toString()
     private fun eventPayload(e: ActivityEventEntity) = JSONObject().put("id",e.id).put("hive_id",e.hiveId).put("created_at",e.createdAt).put("updated_at",e.createdAt).put("type",e.type).put("title",e.title).put("detail",e.detail).toString()
 
     private fun JSONObject.doubleOrNull(key: String): Double? = if (has(key) && !isNull(key)) optDouble(key) else null
@@ -1936,9 +2002,20 @@ class LocalHiveRepository(context: Context) {
 
     private fun toHive(e: HiveEntity) = Hive(e.id, e.number, e.apiaryName, e.queenStatus, e.queenMarkColor, e.queenOrigin, e.queenAgeMonths, e.queenTemperament, e.strength, e.mitePercent, e.tagUid, e.status, e.deadAt, e.latitude, e.longitude, e.beeCountFrames, e.apiaryId)
     private fun toInspection(e: InspectionEntity) = Inspection(e.id, e.hiveId, e.createdAt, e.strength, e.queenStatus, e.miteCount, e.sampleSize, e.notes, e.latitude, e.longitude, e.emergencyCells, e.supercedureCells, e.swarmCells, e.eggs, e.openBrood, e.cappedBrood, e.honeyStores, e.pollen, e.emptyDrawnComb, e.diseaseFlags, e.beeCountFrames)
-    private fun toFeeding(e: FeedingEntity) = Feeding(e.id, e.hiveId, e.createdAt, e.feedType, e.ratio, e.amount, e.unit, e.notes)
-    private fun toTreatment(e: TreatmentEntity) = Treatment(e.id, e.hiveId, e.createdAt, e.treatmentType, e.product, e.insertedAt, e.removalAt, e.withdrawalUntil, e.notes)
-    private fun toHarvest(e: HarvestEntity) = Harvest(e.id, e.hiveId, e.createdAt, e.supersPulled, e.wetHoneyWeight, e.dryHoneyWeight, e.weightUnit, e.waxWeight, e.propolisWeight, e.notes)
+    private fun toFeeding(e: FeedingEntity) = Feeding(
+        e.id, e.hiveId, e.createdAt, e.feedType, e.ratio, e.amount, e.unit, e.notes,
+        e.recordUuid, e.apiaryId, e.batchId, e.occurredAt, e.createdBy, e.deviceId
+    )
+    private fun toTreatment(e: TreatmentEntity) = Treatment(
+        e.id, e.hiveId, e.createdAt, e.treatmentType, e.product, e.insertedAt,
+        e.removalAt, e.withdrawalUntil, e.notes,
+        e.recordUuid, e.apiaryId, e.batchId, e.occurredAt, e.createdBy, e.deviceId
+    )
+    private fun toHarvest(e: HarvestEntity) = Harvest(
+        e.id, e.hiveId, e.createdAt, e.supersPulled, e.wetHoneyWeight, e.dryHoneyWeight,
+        e.weightUnit, e.waxWeight, e.propolisWeight, e.notes,
+        e.recordUuid, e.apiaryId, e.batchId, e.occurredAt, e.createdBy, e.deviceId
+    )
     private fun toApiary(e: ApiaryEntity) = Apiary(e.id, e.name, e.notes, e.latitude, e.longitude, e.forageNotes, e.waterNotes)
     private fun toEvent(e: ActivityEventEntity) = ActivityEvent(e.id, e.hiveId, e.createdAt, e.type, e.title, e.detail)
 }
