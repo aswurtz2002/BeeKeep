@@ -94,9 +94,6 @@ class SupabaseGateway(
     private val _accountInitialized = MutableStateFlow(false)
     /** True after Supabase has restored the stored session and the account identity is known. */
     val accountInitialized: StateFlow<Boolean> = _accountInitialized.asStateFlow()
-    private val _workspaceSelectionInitialized = MutableStateFlow(false)
-    /** Monotonic startup barrier set after the saved dataset is validated or safely retained. */
-    val workspaceSelectionInitialized: StateFlow<Boolean> = _workspaceSelectionInitialized.asStateFlow()
 
     private val _hiveLimitOverride = MutableStateFlow<Int?>(null)
     /** A verified override for the signed-in account, or null when none is granted. */
@@ -142,9 +139,9 @@ class SupabaseGateway(
             }
             // A build without a cloud connection can still display a previously account-bound
             // team cache, but it cannot grant writes until the owner and role are verified again.
+            repository.completeStartupWorkspaceAccessResolution()
             _account.value = CloudAccountState(configured = false, signedIn = false)
             _accountInitialized.value = true
-            _workspaceSelectionInitialized.value = true
             return
         }
         try {
@@ -213,6 +210,7 @@ class SupabaseGateway(
                 refreshHiveLimitOverrideForUser(userId)
                 restoreWorkspaceForAccount(supabase, userId)
             }
+            repository.completeStartupWorkspaceAccessResolution()
             _account.value = CloudAccountState(
                 configured = true,
                 signedIn = userId != null,
@@ -220,7 +218,6 @@ class SupabaseGateway(
                 userId = userId
             )
             _accountInitialized.value = true
-            _workspaceSelectionInitialized.value = true
             if (enableRealtime && userId != null) startRealtime() else stopRealtime()
         } catch (cancelled: CancellationException) {
             throw cancelled
@@ -265,6 +262,7 @@ class SupabaseGateway(
                     verifiedPlanUserId = cachedUserId
                 }
             }
+            repository.completeStartupWorkspaceAccessResolution()
             val lastKnownUserId = cachedUserId
             _account.value = CloudAccountState(
                 configured = true,
@@ -274,7 +272,6 @@ class SupabaseGateway(
                 error = TeamWorkspaceSyncError.userFacing(error.message)
             )
             _accountInitialized.value = true
-            _workspaceSelectionInitialized.value = true
         }
     }
 
@@ -349,7 +346,6 @@ class SupabaseGateway(
                 readOnly = prefs.getBoolean("active_team_workspace_read_only", true),
                 ownerUserId = userId
             )
-            _workspaceSelectionInitialized.value = true
         }
 
         // A known matching owner can use the cached team while offline. A pre-account-binding
