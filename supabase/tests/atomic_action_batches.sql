@@ -279,9 +279,20 @@ begin
 end;
 $personal_assertion$;
 
--- A Hobbyist account may retain existing records, but cannot batch-log against the
--- 16th hive under the 15-hive limit. The quota rank is evaluated across the account,
--- not merely the selected apiary or the selected target list.
+-- Seed 16 existing hives while the test account has Commercial, then expire it.
+-- Existing records survive downgrade; only writes to plan-locked hives are denied.
+reset role;
+update auth.users
+set raw_app_meta_data = jsonb_set(
+    jsonb_set(coalesce(raw_app_meta_data, '{}'::jsonb),
+        '{beekeep_plan}', '"commercial_monthly"'::jsonb, true),
+    '{beekeep_subscription_expires_at}', '"2099-01-01T00:00:00Z"'::jsonb, true
+)
+where id = '00000000-0000-0000-0000-000000000204';
+
+set role authenticated;
+select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-000000000204', false);
+
 insert into public.beekeep_documents (
     user_id, entity_type, entity_id, payload, updated_at, deleted, device_id
 )
@@ -300,6 +311,20 @@ select
     false,
     'personal-test-device'
 from generate_series(1, 15) gs;
+
+-- Downgrade the seeded account to Hobbyist while leaving all 16 records intact.
+reset role;
+update auth.users
+set raw_app_meta_data = jsonb_set(
+    coalesce(raw_app_meta_data, '{}'::jsonb),
+    '{beekeep_subscription_expires_at}',
+    '"2020-01-01T00:00:00Z"'::jsonb,
+    true
+)
+where id = '00000000-0000-0000-0000-000000000204';
+
+set role authenticated;
+select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-000000000204', false);
 
 do $locked_hive_assertion$
 declare denied boolean := false; saved_count integer;
