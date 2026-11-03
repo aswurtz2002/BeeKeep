@@ -432,20 +432,6 @@ fun BeeKeepApp(
     onDarkModeChange: (Boolean) -> Unit
 ) {
     val context = LocalContext.current
-    val workspaceSelectionInitialized by cloud.workspaceSelectionInitialized.collectAsStateWithLifecycle()
-    if (!workspaceSelectionInitialized) {
-        Box(
-            Modifier.fillMaxSize(),
-            contentAlignment = Alignment.Center
-        ) {
-            Text(
-                "Restoring your selected workspace…",
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-        return
-    }
     val cloudHiveLimitOverride by cloud.hiveLimitOverride.collectAsStateWithLifecycle()
     val serverVerifiedPlan by cloud.verifiedPlan.collectAsStateWithLifecycle()
     val cloudAccountInitialized by cloud.accountInitialized.collectAsStateWithLifecycle()
