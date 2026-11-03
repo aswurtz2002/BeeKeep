@@ -310,7 +310,7 @@ abstract class BeeKeepRoomDb : RoomDatabase() {
                         while (cursor.moveToNext()) {
                             db.execSQL(
                                 "UPDATE `$table` SET record_uuid = ? WHERE id = ?",
-                                arrayOf(java.util.UUID.randomUUID().toString(), cursor.getLong(0))
+                                arrayOf<Any?>(java.util.UUID.randomUUID().toString(), cursor.getLong(0))
                             )
                         }
                     }
