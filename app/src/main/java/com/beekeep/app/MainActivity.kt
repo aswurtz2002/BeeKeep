@@ -203,7 +203,6 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
         // priority over Android's normal tag dispatch, so a tag can open its hive
         // without switching to a browser or another NFC app.
         nfc.setPassiveReadListener(this) { result ->
-            if (!BeeKeepEntitlements.canUseNfc(applicationContext)) return@setPassiveReadListener
             val deliveryToken = nfc.passiveDeliveryToken()
             lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) {
                 val shouldForward = runCatching {
@@ -744,6 +743,20 @@ fun BeeKeepApp(
         mutableStateOf(autoVoicePrefs.getString("selected_team_workspace_id", "").orEmpty().isNotBlank())
     }
     val isCommercialPlan = purchasePlan == BeeKeepPlan.COMMERCIAL
+    val nfcAccessResolved = if (isPersonalDataset) {
+        commercialEntitlementResolved
+    } else {
+        selectedTeamQuota != null
+    }
+    val resolvedNfcAccess = BeeKeepNfcAccessPolicy.resolve(
+        isPersonalDataset = isPersonalDataset,
+        personalCommercialActive = commercialEntitlementResolved && isCommercialPlan,
+        workspaceOwnerCommercialActive = selectedTeamQuota?.active,
+        workspaceMemberRole = selectedTeamQuota?.memberRole,
+        workspaceWritable = !activeWorkspaceReadOnly
+    )
+    val nfcCanScan = nfcAccessResolved && resolvedNfcAccess.canScan
+    val nfcCanManage = nfcAccessResolved && resolvedNfcAccess.canManageTags
     var hasServerCommercialEntitlement by rememberSaveable { mutableStateOf(false) }
     androidx.compose.runtime.LaunchedEffect(account.signedIn, purchasePlan) {
         if (!account.signedIn) {
@@ -855,25 +868,46 @@ fun BeeKeepApp(
         }
     }
 
-    androidx.compose.runtime.LaunchedEffect(screen, isCommercialPlan, commercialEntitlementResolved) {
-        if (commercialEntitlementResolved && !isCommercialPlan &&
-            (screen == Screen.TAG_MANAGER || screen == Screen.SCAN)
-        ) {
+    androidx.compose.runtime.LaunchedEffect(
+        screen,
+        nfcAccessResolved,
+        nfcCanScan,
+        isPersonalDataset
+    ) {
+        if (!nfcAccessResolved || nfcCanScan ||
+            (screen != Screen.TAG_MANAGER && screen != Screen.SCAN)
+        ) return@LaunchedEffect
+
+        nfc.stop(activity)
+        if (isPersonalDataset) {
             purchaseBackScreen = Screen.MORE
             purchaseSuccessScreen = Screen.MORE
             screen = Screen.PURCHASES
+        } else {
+            screen = Screen.MORE
+            scope.launch {
+                snackbarHostState.showSnackbar(
+                    "NFC is locked in this workspace until its owner has active Commercial access."
+                )
+            }
         }
     }
 
-    androidx.compose.runtime.LaunchedEffect(isCommercialPlan, commercialEntitlementResolved) {
-        if (!commercialEntitlementResolved) return@LaunchedEffect
-        if (isCommercialPlan) {
-            // The passive reader may have been held off while the account was restoring.
-            // Fast-assignment mode owns NFC reads and must keep the passive reader suspended.
-            val allowPassiveReads = !fastTagAssignmentMode &&
-                !fastAssignmentSessionActive && !fastAssignmentScreenActive
-            nfc.setPassiveReadingEnabled(activity, allowPassiveReads)
-        } else {
+    androidx.compose.runtime.LaunchedEffect(
+        nfcAccessResolved,
+        nfcCanScan,
+        nfcCanManage,
+        fastTagAssignmentMode,
+        fastAssignmentSessionActive,
+        fastAssignmentScreenActive
+    ) {
+        // Keep the NFC controller aligned with the entitlement for the selected
+        // personal/team database. It starts denied and is enabled only after a
+        // trusted personal or membership-scoped workspace check succeeds.
+        nfc.setEntitlementAllowsNfc(nfcAccessResolved && nfcCanScan)
+        if (!nfcAccessResolved) return@LaunchedEffect
+
+        if (!nfcCanScan || !nfcCanManage) {
             nfc.stop(activity)
             nfc.finishFastAssignmentFlow(activity, preserveLastUid = false)
             fastTagAssignmentMode = false
@@ -887,9 +921,6 @@ fun BeeKeepApp(
             pendingAutoTagWriteIgnoredUid = null
             pendingInspectionHiveId = null
             pendingAutoStartVoiceHiveId = null
-            unassignedTagUid = null
-            pendingTagUid = null
-            (activity as? MainActivity)?.pendingNfcResult?.value = null
             autoVoicePrefs.edit {
                 putBoolean("fast_tag_assignment_mode", false)
                 remove("fast_tag_session_active")
@@ -899,11 +930,20 @@ fun BeeKeepApp(
                 remove("fast_tag_session_ignored_uid")
                 remove("fast_tag_session_assigned_ids")
             }
-            if (screen == Screen.TAG_MANAGER || screen == Screen.SCAN) {
-                purchaseBackScreen = Screen.MORE
-                purchaseSuccessScreen = Screen.MORE
-                screen = Screen.PURCHASES
-            }
+        }
+
+        if (nfcCanScan) {
+            // Viewers may still scan and verify tags. Only writable roles retain
+            // Fast Tag Assignment and other tag-changing operations.
+            val allowPassiveReads = !fastTagAssignmentMode &&
+                !fastAssignmentSessionActive && !fastAssignmentScreenActive &&
+                screen != Screen.SCAN && screen != Screen.TAG_MANAGER
+            nfc.setPassiveReadingEnabled(activity, allowPassiveReads)
+        } else {
+            nfc.setPassiveReadingEnabled(activity, false)
+            unassignedTagUid = null
+            pendingTagUid = null
+            (activity as? MainActivity)?.pendingNfcResult?.value = null
         }
     }
 
@@ -1547,8 +1587,12 @@ fun BeeKeepApp(
                             pendingInspectionHiveId = resolvedHive.id
                             snackbarHostState.showSnackbar("${hiveReferenceName(resolvedHive.number)} recognized • inspection ready")
                         }
-                    } else {
+                    } else if (nfcCanManage) {
                         showUnassignedTagPrompt(normalizedUid, Screen.HOME, result.platformTag)
+                    } else {
+                        snackbarHostState.showSnackbar(
+                            "This tag is not assigned in the selected workspace. Ask an Owner, Admin or Member to assign it."
+                        )
                     }
                 }
             }
@@ -1558,20 +1602,37 @@ fun BeeKeepApp(
     }
 
     fun startManualNfcScan() {
-        if (!commercialEntitlementResolved) {
-            scope.launch { snackbarHostState.showSnackbar("Checking your BeeKeep plan…") }
+        if (!nfcAccessResolved) {
+            scope.launch {
+                snackbarHostState.showSnackbar(
+                    if (isPersonalDataset) "Checking your BeeKeep plan…" else "Checking the workspace owner's Commercial access…"
+                )
+            }
             return
         }
-        if (!isCommercialPlan) {
-            purchaseBackScreen = screen
-            purchaseSuccessScreen = screen
-            screen = Screen.PURCHASES
+        if (!nfcCanScan) {
+            if (isPersonalDataset) {
+                purchaseBackScreen = screen
+                purchaseSuccessScreen = screen
+                screen = Screen.PURCHASES
+            } else {
+                scope.launch {
+                    snackbarHostState.showSnackbar(
+                        "NFC is locked in this workspace until its owner has active Commercial access."
+                    )
+                }
+            }
             return
         }
         // A deliberate tap on Scan is an explicit retry, even if this UID was just dismissed.
         nfc.clearUnassignedPromptSuppressionForExplicitScan()
-        nfc.startReadAndPrepareForBeeKeep(activity) { result ->
-            handleManualNfcScanResult(result)
+        val onResult: (NfcResult) -> Unit = ::handleManualNfcScanResult
+        if (nfcCanManage) {
+            nfc.startReadAndPrepareForBeeKeep(activity, onResult)
+        } else {
+            // Viewers can read existing assignments, but a scan must never write
+            // launch data to an unassigned physical tag.
+            nfc.startRead(activity, onResult)
         }
         scanning = nfc.isScanning()
     }
@@ -1585,12 +1646,13 @@ fun BeeKeepApp(
         fastAssignmentSessionActive,
         fastAssignmentScreenActive,
         fastAssignmentStateHydrated,
-        isCommercialPlan,
-        commercialEntitlementResolved
+        nfcCanScan,
+        nfcAccessResolved,
+        nfcCanManage
     ) {
         val result = incomingNfc ?: return@LaunchedEffect
-        if (!commercialEntitlementResolved) return@LaunchedEffect
-        if (!isCommercialPlan) {
+        if (!nfcAccessResolved) return@LaunchedEffect
+        if (!nfcCanScan) {
             (activity as? MainActivity)?.pendingNfcResult?.value = null
             return@LaunchedEffect
         }
@@ -1678,11 +1740,17 @@ fun BeeKeepApp(
                 }
                 if (!alreadyOpen) scope.launch { snackbarHostState.showSnackbar("${hiveReferenceName(resolvedHive.number)} recognized • inspection ready") }
             }
-        } else {
+        } else if (nfcCanManage) {
             // Even when a hive is open, an unassigned physical tag must go through
             // an explicit assignment choice. Never infer ownership from current screen.
             showUnassignedTagPrompt(normalizedUid, Screen.HOME, result.platformTag)
             screen = Screen.SCAN
+        } else {
+            scope.launch {
+                snackbarHostState.showSnackbar(
+                    "This tag is not assigned in the selected workspace. Ask an Owner, Admin or Member to assign it."
+                )
+            }
         }
         (activity as? MainActivity)?.pendingNfcResult?.value = null
     }
@@ -2360,14 +2428,21 @@ fun BeeKeepApp(
             hive = hiveForDetail,
             viewModel = vm,
             fastTagAssignmentMode = fastTagAssignmentActive,
-            nfcEntitled = isCommercialPlan && commercialEntitlementResolved,
+            nfcEntitled = nfcCanScan,
+            nfcCanManage = nfcCanManage,
             onUpgradeNfc = {
-                if (!commercialEntitlementResolved) {
-                    scope.launch { snackbarHostState.showSnackbar("Checking your BeeKeep plan…") }
-                } else {
+                if (!nfcAccessResolved) {
+                    scope.launch { snackbarHostState.showSnackbar("Checking NFC access for the selected data scope…") }
+                } else if (isPersonalDataset) {
                     purchaseBackScreen = Screen.HOME
                     purchaseSuccessScreen = Screen.HOME
                     screen = Screen.PURCHASES
+                } else {
+                    scope.launch {
+                        snackbarHostState.showSnackbar(
+                            "The workspace owner must renew Commercial to unlock NFC for this workspace."
+                        )
+                    }
                 }
             },
             autoStartTagWriting = pendingAutoTagWriteHiveId == hiveForDetail.id,
@@ -2477,7 +2552,14 @@ fun BeeKeepApp(
             onHarvest = { if (requestHiveAccess(hiveForDetail)) logType = HiveLogType.HARVEST },
             onTag = { uid, onResult ->
                 when {
-                    !isCommercialPlan -> onResult(false, "NFC tag assignment requires BeeKeep Commercial.")
+                    !nfcCanManage -> onResult(
+                        false,
+                        if (activeWorkspaceId.isNullOrBlank()) {
+                            "NFC tag assignment requires BeeKeep Commercial."
+                        } else {
+                            "Your workspace role does not allow NFC tag changes, or the workspace owner's Commercial access could not be verified."
+                        }
+                    )
                     requestHiveAccess(hiveForDetail) -> vm.assignTag(uid, onResult)
                     else -> onResult(false, "This hive is locked because its paid subscription has ended. Renew a paid plan to manage it.")
                 }
@@ -2487,7 +2569,14 @@ fun BeeKeepApp(
             },
             onClearTag = { hiveId, onResult ->
                 when {
-                    !isCommercialPlan -> onResult(false, "NFC tag management requires BeeKeep Commercial.")
+                    !nfcCanManage -> onResult(
+                        false,
+                        if (activeWorkspaceId.isNullOrBlank()) {
+                            "NFC tag management requires BeeKeep Commercial."
+                        } else {
+                            "Your workspace role does not allow NFC tag changes, or the workspace owner's Commercial access could not be verified."
+                        }
+                    )
                     requestHiveAccessById(hiveId) -> vm.clearTagForHive(hiveId, onResult)
                     else -> onResult(false, "This hive is locked because its paid subscription has ended. Renew a paid plan to manage its NFC tag.")
                 }
@@ -2495,12 +2584,20 @@ fun BeeKeepApp(
             confirmBeforeTagRemoval = autoVoicePrefs.getBoolean("confirm_tag_removal", true),
             tagAssignmentSuccessUid = if (lastHiveTagSuccessHiveId == hiveForDetail.id) lastHiveTagSuccessUid else null,
             onVerifyTag = {
-                if (!commercialEntitlementResolved) {
-                    scope.launch { snackbarHostState.showSnackbar("Checking your BeeKeep plan…") }
-                } else if (!isCommercialPlan) {
-                    purchaseBackScreen = Screen.HOME
-                    purchaseSuccessScreen = Screen.HOME
-                    screen = Screen.PURCHASES
+                if (!nfcAccessResolved) {
+                    scope.launch { snackbarHostState.showSnackbar("Checking NFC access for the selected data scope…") }
+                } else if (!nfcCanScan) {
+                    if (isPersonalDataset) {
+                        purchaseBackScreen = Screen.HOME
+                        purchaseSuccessScreen = Screen.HOME
+                        screen = Screen.PURCHASES
+                    } else {
+                        scope.launch {
+                            snackbarHostState.showSnackbar(
+                                "The workspace owner must renew Commercial to unlock NFC in this workspace."
+                            )
+                        }
+                    }
                 } else nfc.startRead(activity) { result ->
                     when (result) {
                         is NfcResult.Read -> {
@@ -2974,15 +3071,25 @@ vm.saveHarvestToApiary(
                     scope.launch { snackbarHostState.showSnackbar(joinedMessage) }
                 },
                 onTagManager = {
-                    if (!commercialEntitlementResolved) {
-                        scope.launch { snackbarHostState.showSnackbar("Checking your BeeKeep plan…") }
-                    } else if (isCommercialPlan) {
+                    if (!nfcAccessResolved) {
+                        scope.launch {
+                            snackbarHostState.showSnackbar(
+                                if (isPersonalDataset) "Checking your BeeKeep plan…" else "Checking the workspace owner's Commercial access…"
+                            )
+                        }
+                    } else if (nfcCanScan) {
                         tagManagerReturnScreen = Screen.MORE
                         screen = Screen.TAG_MANAGER
-                    } else {
+                    } else if (isPersonalDataset) {
                         purchaseBackScreen = Screen.MORE
                         purchaseSuccessScreen = Screen.MORE
                         screen = Screen.PURCHASES
+                    } else {
+                        scope.launch {
+                            snackbarHostState.showSnackbar(
+                                "NFC is locked in this workspace until its owner has active Commercial access."
+                            )
+                        }
                     }
                 },
                 onColonyHistory = { screen = Screen.COLONY_HISTORY },
@@ -3015,18 +3122,33 @@ vm.saveHarvestToApiary(
                     autoVoicePrefs.edit { putBoolean("auto_voice_on_nfc", enabled) }
                 },
                 fastTagAssignmentMode = fastTagAssignmentMode,
-                nfcEntitled = isCommercialPlan && commercialEntitlementResolved,
+                nfcEntitled = nfcCanScan,
+                nfcCanManage = nfcCanManage,
                 hiveLimit = activeQuotaLimits.hiveLimit,
                 apiaryLimit = activeQuotaLimits.apiaryLimit,
                 planName = activeQuotaLimits.plan.displayName,
                 quotaEnforcementReady = quotaEnforcementReady,
                 onFastTagAssignmentModeChange = { enabled ->
-                    if (enabled && !commercialEntitlementResolved) {
-                        scope.launch { snackbarHostState.showSnackbar("Checking your BeeKeep plan…") }
-                    } else if (enabled && !isCommercialPlan) {
-                        purchaseBackScreen = Screen.SETTINGS
-                        purchaseSuccessScreen = Screen.SETTINGS
-                        screen = Screen.PURCHASES
+                    if (enabled && !nfcAccessResolved) {
+                        scope.launch { snackbarHostState.showSnackbar("Checking NFC access for the selected data scope…") }
+                    } else if (enabled && !nfcCanScan) {
+                        if (isPersonalDataset) {
+                            purchaseBackScreen = Screen.SETTINGS
+                            purchaseSuccessScreen = Screen.SETTINGS
+                            screen = Screen.PURCHASES
+                        } else {
+                            scope.launch {
+                                snackbarHostState.showSnackbar(
+                                    "NFC is locked until the workspace owner has active Commercial access."
+                                )
+                            }
+                        }
+                    } else if (enabled && !nfcCanManage) {
+                        scope.launch {
+                            snackbarHostState.showSnackbar(
+                                "Fast Tag Assignment requires an Owner, Admin or Member workspace role."
+                            )
+                        }
                     } else {
                     fastTagAssignmentMode = enabled
                     autoVoicePrefs.edit { putBoolean("fast_tag_assignment_mode", enabled) }
@@ -3093,6 +3215,7 @@ vm.saveHarvestToApiary(
                 hives = hives,
                 deadHives = deadHives,
                 lockedHiveIds = lockedHiveIds,
+                canManageTags = nfcCanManage,
                 nfc = nfc,
                 activity = activity,
                 pendingUid = pendingTagUid,
@@ -3123,14 +3246,18 @@ vm.saveHarvestToApiary(
                     }
                 },
                 onAssignTag = { hiveId, uid, reassign, onResult ->
-                    if (requestHiveAccessById(hiveId)) {
+                    if (!nfcCanManage) {
+                        onResult(false, "Your workspace role does not allow NFC tag changes.")
+                    } else if (requestHiveAccessById(hiveId)) {
                         vm.assignTagToHive(hiveId, uid, reassign, onResult)
                     } else {
                         onResult(false, "This hive is locked because its paid subscription has ended. Renew a paid plan to manage its NFC tag.")
                     }
                 },
                 onClearTag = { hiveId, onResult ->
-                    if (requestHiveAccessById(hiveId)) {
+                    if (!nfcCanManage) {
+                        onResult(false, "Your workspace role does not allow NFC tag changes.")
+                    } else if (requestHiveAccessById(hiveId)) {
                         vm.clearTagForHive(hiveId, onResult)
                     } else {
                         onResult(false, "This hive is locked because its paid subscription has ended. Renew a paid plan to manage its NFC tag.")
