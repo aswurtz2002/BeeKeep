@@ -1015,6 +1015,282 @@ class LocalHiveRepository(context: Context) {
         }
     }
 
+
+    private suspend fun resolveApiaryBatchTargets(
+        database: BeeKeepRoomDb,
+        apiaryId: Long,
+        apiaryName: String,
+        targetHiveIds: List<Long>
+    ): List<HiveEntity> {
+        require(targetHiveIds.isNotEmpty()) { "Select at least one hive." }
+        require(targetHiveIds.distinct().size == targetHiveIds.size) {
+            "The selected hive list contains duplicates. Refresh and try again."
+        }
+        val apiary = database.apiaries().get(apiaryId)
+            ?: throw IllegalArgumentException("Apiary not found. Refresh and try again.")
+        require(!apiary.deleted && apiary.name.equals(apiaryName.trim(), ignoreCase = true)) {
+            "This apiary changed while the action was open. Reopen it and try again."
+        }
+        val eligibleById = database.hives()
+            .forApiaryRename(apiary.id, apiary.name)
+            .filter { !it.deleted && it.status == HiveStatus.ACTIVE }
+            .associateBy { it.id }
+        val missingIds = targetHiveIds.filterNot { it in eligibleById }
+        require(missingIds.isEmpty()) {
+            "One or more selected hives are no longer active in this apiary. Refresh and try again."
+        }
+        return targetHiveIds.map { eligibleById.getValue(it) }
+            .sortedWith(
+                compareBy<HiveEntity> { it.number.toIntOrNull() ?: Int.MAX_VALUE }
+                    .thenBy { it.number.lowercase(java.util.Locale.ROOT) }
+                    .thenBy { it.id }
+            )
+    }
+
+    private fun <T> validateApiaryBatchRecords(
+        apiaryId: Long,
+        targetHiveIds: List<Long>,
+        records: List<T>,
+        batchIdOf: (T) -> String?,
+        hiveIdOf: (T) -> Long,
+        apiaryIdOf: (T) -> Long?,
+        recordIdOf: (T) -> Long
+    ): String {
+        require(records.size == targetHiveIds.size) {
+            "Every selected hive must receive exactly one record."
+        }
+        val recordHiveIds = records.map(hiveIdOf)
+        require(recordHiveIds.distinct().size == records.size &&
+            recordHiveIds.toSet() == targetHiveIds.toSet()
+        ) {
+            "The batch records do not match the selected hives."
+        }
+        require(records.all { apiaryIdOf(it) == apiaryId }) {
+            "The batch contains a record for a different apiary."
+        }
+        val batchIds = records.mapNotNull(batchIdOf).distinct()
+        require(batchIds.size == 1 && records.all { !batchIdOf(it).isNullOrBlank() }) {
+            "Every record in an apiary action must share one batch identifier."
+        }
+        val recordIds = records.map(recordIdOf)
+        require(recordIds.all { it > 0L } && recordIds.distinct().size == records.size) {
+            "The batch contains an invalid or duplicate record identifier."
+        }
+        return batchIds.single()
+    }
+
+    private suspend fun enqueueBatchDocument(
+        database: BeeKeepRoomDb,
+        type: String,
+        entityId: Long,
+        payload: String
+    ) {
+        checkWritable()
+        database.outbox().deletePendingForEntity(type, entityId)
+        database.outbox().enqueue(
+            SyncOutboxEntity(IdGenerator.nextLong(), type, entityId, "upsert", payload)
+        )
+    }
+
+    /**
+     * Saves one feeding entry per selected hive in one Room transaction.
+     * Every row shares a batch_id, while its own record_uuid and hive_id stay unique.
+     */
+    suspend fun saveFeedingBatch(
+        apiaryId: Long,
+        apiaryName: String,
+        targetHiveIds: List<Long>,
+        records: List<Feeding>
+    ): Int = withContext(Dispatchers.IO) {
+        checkWritable()
+        require(records.all {
+            it.feedType.trim().isNotBlank() &&
+                it.amount.isFinite() && it.amount > 0.0 &&
+                it.unit.trim().isNotBlank()
+        }) { "Every feeding record needs a type, a positive amount, and a unit." }
+
+        val database = db
+        val workspaceAtStart = _activeWorkspaceId.value
+        database.withTransaction {
+            checkWritable()
+            check(_activeWorkspaceId.value == workspaceAtStart) {
+                "The active workspace changed. Reopen the apiary and try again."
+            }
+            val targets = resolveApiaryBatchTargets(database, apiaryId, apiaryName, targetHiveIds)
+            val batchId = validateApiaryBatchRecords(
+                apiaryId, targetHiveIds, records,
+                { it.batchId }, { it.hiveId }, { it.apiaryId }, { it.id }
+            )
+            val byHiveId = records.associateBy { it.hiveId }
+            val accountId = currentAccountUserId()
+            val deviceId = currentDeviceId()
+            targets.forEach { hive ->
+                val record = byHiveId.getValue(hive.id)
+                val entity = FeedingEntity(
+                    id = record.id,
+                    hiveId = hive.id,
+                    createdAt = record.createdAt,
+                    feedType = record.feedType.trim(),
+                    ratio = record.ratio.trim(),
+                    amount = record.amount,
+                    unit = record.unit.trim(),
+                    notes = record.notes.trim(),
+                    recordUuid = record.recordUuid,
+                    apiaryId = apiaryId,
+                    batchId = batchId,
+                    occurredAt = record.occurredAt,
+                    createdBy = record.createdBy ?: accountId,
+                    deviceId = record.deviceId ?: deviceId
+                )
+                database.feedings().upsert(entity)
+                val event = ActivityEventEntity(
+                    entity.id, hive.id, entity.createdAt, "feeding", "Feeding",
+                    "${entity.amount} ${entity.unit} • ${entity.feedType} ${entity.ratio}"
+                )
+                database.events().upsert(event)
+                enqueueBatchDocument(database, "feeding", entity.id, feedingPayload(entity))
+                enqueueBatchDocument(database, "event", event.id, eventPayload(event))
+            }
+            check(_activeWorkspaceId.value == workspaceAtStart) {
+                "The active workspace changed. Reopen the apiary and try again."
+            }
+            targets.size
+        }
+    }
+
+    /**
+     * Saves one treatment entry per selected hive in one Room transaction.
+     */
+    suspend fun saveTreatmentBatch(
+        apiaryId: Long,
+        apiaryName: String,
+        targetHiveIds: List<Long>,
+        records: List<Treatment>
+    ): Int = withContext(Dispatchers.IO) {
+        checkWritable()
+        require(records.all {
+            it.treatmentType.trim().isNotBlank() && it.product.trim().isNotBlank()
+        }) { "Every treatment record needs a type and product." }
+
+        val database = db
+        val workspaceAtStart = _activeWorkspaceId.value
+        database.withTransaction {
+            checkWritable()
+            check(_activeWorkspaceId.value == workspaceAtStart) {
+                "The active workspace changed. Reopen the apiary and try again."
+            }
+            val targets = resolveApiaryBatchTargets(database, apiaryId, apiaryName, targetHiveIds)
+            val batchId = validateApiaryBatchRecords(
+                apiaryId, targetHiveIds, records,
+                { it.batchId }, { it.hiveId }, { it.apiaryId }, { it.id }
+            )
+            val byHiveId = records.associateBy { it.hiveId }
+            val accountId = currentAccountUserId()
+            val deviceId = currentDeviceId()
+            targets.forEach { hive ->
+                val record = byHiveId.getValue(hive.id)
+                val entity = TreatmentEntity(
+                    id = record.id,
+                    hiveId = hive.id,
+                    createdAt = record.createdAt,
+                    treatmentType = record.treatmentType.trim(),
+                    product = record.product.trim(),
+                    insertedAt = record.insertedAt,
+                    removalAt = record.removalAt,
+                    withdrawalUntil = record.withdrawalUntil,
+                    notes = record.notes.trim(),
+                    recordUuid = record.recordUuid,
+                    apiaryId = apiaryId,
+                    batchId = batchId,
+                    occurredAt = record.occurredAt,
+                    createdBy = record.createdBy ?: accountId,
+                    deviceId = record.deviceId ?: deviceId
+                )
+                database.treatments().upsert(entity)
+                val event = ActivityEventEntity(
+                    entity.id, hive.id, entity.createdAt, "treatment", "Treatment",
+                    "${entity.treatmentType} • ${entity.product}"
+                )
+                database.events().upsert(event)
+                enqueueBatchDocument(database, "treatment", entity.id, treatmentPayload(entity))
+                enqueueBatchDocument(database, "event", event.id, eventPayload(event))
+            }
+            check(_activeWorkspaceId.value == workspaceAtStart) {
+                "The active workspace changed. Reopen the apiary and try again."
+            }
+            targets.size
+        }
+    }
+
+    /**
+     * Saves one harvest entry per selected hive in one Room transaction.
+     * Quantity allocation is prepared by the ViewModel and then verified as a complete batch here.
+     */
+    suspend fun saveHarvestBatch(
+        apiaryId: Long,
+        apiaryName: String,
+        targetHiveIds: List<Long>,
+        records: List<Harvest>
+    ): Int = withContext(Dispatchers.IO) {
+        checkWritable()
+        require(records.all {
+            it.weightUnit.trim().isNotBlank() &&
+                it.supersPulled >= 0 &&
+                listOf(it.wetHoneyWeight, it.dryHoneyWeight, it.waxWeight, it.propolisWeight)
+                    .all { value -> value.isFinite() && value >= 0.0 }
+        }) { "Every harvest record must contain valid non-negative quantities and a weight unit." }
+
+        val database = db
+        val workspaceAtStart = _activeWorkspaceId.value
+        database.withTransaction {
+            checkWritable()
+            check(_activeWorkspaceId.value == workspaceAtStart) {
+                "The active workspace changed. Reopen the apiary and try again."
+            }
+            val targets = resolveApiaryBatchTargets(database, apiaryId, apiaryName, targetHiveIds)
+            val batchId = validateApiaryBatchRecords(
+                apiaryId, targetHiveIds, records,
+                { it.batchId }, { it.hiveId }, { it.apiaryId }, { it.id }
+            )
+            val byHiveId = records.associateBy { it.hiveId }
+            val accountId = currentAccountUserId()
+            val deviceId = currentDeviceId()
+            targets.forEach { hive ->
+                val record = byHiveId.getValue(hive.id)
+                val entity = HarvestEntity(
+                    id = record.id,
+                    hiveId = hive.id,
+                    createdAt = record.createdAt,
+                    supersPulled = record.supersPulled,
+                    wetHoneyWeight = record.wetHoneyWeight,
+                    dryHoneyWeight = record.dryHoneyWeight,
+                    weightUnit = record.weightUnit.trim(),
+                    waxWeight = record.waxWeight,
+                    propolisWeight = record.propolisWeight,
+                    notes = record.notes.trim(),
+                    recordUuid = record.recordUuid,
+                    apiaryId = apiaryId,
+                    batchId = batchId,
+                    occurredAt = record.occurredAt,
+                    createdBy = record.createdBy ?: accountId,
+                    deviceId = record.deviceId ?: deviceId
+                )
+                database.harvests().upsert(entity)
+                val event = ActivityEventEntity(
+                    entity.id, hive.id, entity.createdAt, "harvest", "Harvest",
+                    "${entity.dryHoneyWeight} ${entity.weightUnit} dry honey"
+                )
+                database.events().upsert(event)
+                enqueueBatchDocument(database, "harvest", entity.id, harvestPayload(entity))
+                enqueueBatchDocument(database, "event", event.id, eventPayload(event))
+            }
+            check(_activeWorkspaceId.value == workspaceAtStart) {
+                "The active workspace changed. Reopen the apiary and try again."
+            }
+            targets.size
+        }
+    }
+
     suspend fun saveApiary(a: Apiary) = withContext(Dispatchers.IO) {
         checkWritable()
         val cleanName = a.name.trim()
