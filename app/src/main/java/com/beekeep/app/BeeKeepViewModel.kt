@@ -8,6 +8,7 @@ import com.beekeep.app.cloud.CloudSyncScheduler
 import com.beekeep.app.data.*
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
@@ -35,10 +36,22 @@ class BeeKeepViewModel(
     val inspections: StateFlow<List<Inspection>> = _inspections
     private val _feedings = MutableStateFlow<List<Feeding>>(emptyList())
     val feedings: StateFlow<List<Feeding>> = _feedings
+    private val _feedingsLoading = MutableStateFlow(false)
+    val feedingsLoading: StateFlow<Boolean> = _feedingsLoading
+    private val _feedingsError = MutableStateFlow<String?>(null)
+    val feedingsError: StateFlow<String?> = _feedingsError
     private val _treatments = MutableStateFlow<List<Treatment>>(emptyList())
     val treatments: StateFlow<List<Treatment>> = _treatments
+    private val _treatmentsLoading = MutableStateFlow(false)
+    val treatmentsLoading: StateFlow<Boolean> = _treatmentsLoading
+    private val _treatmentsError = MutableStateFlow<String?>(null)
+    val treatmentsError: StateFlow<String?> = _treatmentsError
     private val _harvests = MutableStateFlow<List<Harvest>>(emptyList())
     val harvests: StateFlow<List<Harvest>> = _harvests
+    private val _harvestsLoading = MutableStateFlow(false)
+    val harvestsLoading: StateFlow<Boolean> = _harvestsLoading
+    private val _harvestsError = MutableStateFlow<String?>(null)
+    val harvestsError: StateFlow<String?> = _harvestsError
     private val _events = MutableStateFlow<List<ActivityEvent>>(emptyList())
     val events: StateFlow<List<ActivityEvent>> = _events
     private val _ready = MutableStateFlow(false)
@@ -100,8 +113,14 @@ class BeeKeepViewModel(
                     _selected.value = null
                     _inspections.value = emptyList()
                     _feedings.value = emptyList()
+                    _feedingsLoading.value = false
+                    _feedingsError.value = null
                     _treatments.value = emptyList()
+                    _treatmentsLoading.value = false
+                    _treatmentsError.value = null
                     _harvests.value = emptyList()
+                    _harvestsLoading.value = false
+                    _harvestsError.value = null
                     _events.value = emptyList()
                 }
             }
@@ -120,8 +139,14 @@ class BeeKeepViewModel(
             _selected.value = openedHive
             _inspections.value = emptyList()
             _feedings.value = emptyList()
+            _feedingsLoading.value = openedHive != null
+            _feedingsError.value = null
             _treatments.value = emptyList()
+            _treatmentsLoading.value = openedHive != null
+            _treatmentsError.value = null
             _harvests.value = emptyList()
+            _harvestsLoading.value = openedHive != null
+            _harvestsError.value = null
             _events.value = emptyList()
 
             if (openedHive != null) {
@@ -136,9 +161,57 @@ class BeeKeepViewModel(
                         }
                     }
                     launch { repo.observeInspections(id).collect { _inspections.value = it } }
-                    launch { repo.observeFeedings(id).collect { _feedings.value = it } }
-                    launch { repo.observeTreatments(id).collect { _treatments.value = it } }
-                    launch { repo.observeHarvests(id).collect { _harvests.value = it } }
+                    launch {
+                        repo.observeFeedings(id)
+                            .catch { failure ->
+                                if (_selected.value?.id == id) {
+                                    _feedingsError.value = failure.message?.takeIf { it.isNotBlank() }
+                                        ?: "Could not load feeding records."
+                                    _feedingsLoading.value = false
+                                }
+                            }
+                            .collect { records ->
+                                if (_selected.value?.id == id) {
+                                    _feedings.value = records
+                                    _feedingsError.value = null
+                                    _feedingsLoading.value = false
+                                }
+                            }
+                    }
+                    launch {
+                        repo.observeTreatments(id)
+                            .catch { failure ->
+                                if (_selected.value?.id == id) {
+                                    _treatmentsError.value = failure.message?.takeIf { it.isNotBlank() }
+                                        ?: "Could not load treatment records."
+                                    _treatmentsLoading.value = false
+                                }
+                            }
+                            .collect { records ->
+                                if (_selected.value?.id == id) {
+                                    _treatments.value = records
+                                    _treatmentsError.value = null
+                                    _treatmentsLoading.value = false
+                                }
+                            }
+                    }
+                    launch {
+                        repo.observeHarvests(id)
+                            .catch { failure ->
+                                if (_selected.value?.id == id) {
+                                    _harvestsError.value = failure.message?.takeIf { it.isNotBlank() }
+                                        ?: "Could not load harvest records."
+                                    _harvestsLoading.value = false
+                                }
+                            }
+                            .collect { records ->
+                                if (_selected.value?.id == id) {
+                                    _harvests.value = records
+                                    _harvestsError.value = null
+                                    _harvestsLoading.value = false
+                                }
+                            }
+                    }
                     launch { repo.observeEvents(id).collect { _events.value = it } }
                 }
             }
@@ -166,8 +239,14 @@ class BeeKeepViewModel(
         _selected.value = null
         _inspections.value = emptyList()
         _feedings.value = emptyList()
+        _feedingsLoading.value = false
+        _feedingsError.value = null
         _treatments.value = emptyList()
+        _treatmentsLoading.value = false
+        _treatmentsError.value = null
         _harvests.value = emptyList()
+        _harvestsLoading.value = false
+        _harvestsError.value = null
         _events.value = emptyList()
     }
 
