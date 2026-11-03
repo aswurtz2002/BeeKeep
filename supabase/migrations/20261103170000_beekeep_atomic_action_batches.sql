@@ -100,7 +100,10 @@ begin
                 using errcode = '42501';
         end if;
 
-        if not public.beekeep_workspace_owner_has_active_commercial(target_workspace_id) then
+        if not coalesce((
+            select entitlement.active
+            from public.beekeep_workspace_owner_commercial_entitlement(target_workspace_id) entitlement
+        ), false) then
             raise exception 'The team workspace owner must have an active BeeKeep Commercial subscription to sync apiary actions.'
                 using errcode = '42501';
         end if;
