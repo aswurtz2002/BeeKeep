@@ -61,6 +61,7 @@ class NfcController {
     @Volatile private var passiveReadListener: ((NfcResult.Read) -> Unit)? = null
     // Entitlement is resolved by the active data scope in BeeKeepApp. Default deny
     // until the personal account or selected workspace has been verified.
+    @Volatile private var entitlementScopeKey: String? = null
     @Volatile private var entitlementAllowsNfc: Boolean = false
     @Volatile private var entitlementAllowsTagManagement: Boolean = false
     @Volatile private var knownHiveIdByTagUid: Map<String, Long> = emptyMap()
@@ -94,20 +95,33 @@ class NfcController {
      * Viewers may scan existing tags but cannot write to a physical tag or
      * change the assignment ledger.
      */
-    fun setEntitlementAccess(canScan: Boolean, canManageTags: Boolean) {
+    fun setEntitlementAccess(
+        accessScopeKey: String,
+        canScan: Boolean,
+        canManageTags: Boolean
+    ) {
+        val scopeChanged = entitlementScopeKey != accessScopeKey
+        val wasAllowedToManageTags = entitlementAllowsTagManagement
+        entitlementScopeKey = accessScopeKey
         entitlementAllowsNfc = canScan
         entitlementAllowsTagManagement = canScan && canManageTags
-        if (!canScan) {
+
+        // A scan/write started in one dataset must never finish after the user
+        // switches to another dataset, or after writable NFC access is revoked.
+        if (scopeChanged || !canScan || (wasAllowedToManageTags && !entitlementAllowsTagManagement)) {
             scanGeneration.incrementAndGet()
             active.set(false)
             passiveReadGeneration.incrementAndGet()
             passiveReadInFlight.set(false)
             fastAssignmentFlowActive = false
+            clearFastAssignmentIgnoredUid()
             attachedActivity?.let { activity ->
                 runCatching { adapter?.disableReaderMode(activity) }
                 passiveReaderActive = false
             }
-        } else {
+        }
+
+        if (canScan) {
             attachedActivity?.takeIf { activityResumed }?.let(::enablePassiveIfNeeded)
         }
     }
