@@ -67,6 +67,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.beekeep.app.data.ActivityEvent
+import com.beekeep.app.data.Feeding
 import com.beekeep.app.data.Harvest
 import com.beekeep.app.data.Hive
 import com.beekeep.app.data.Treatment
@@ -346,12 +347,244 @@ internal fun convertLogAmountUnits(raw: String, fromUnit: String, toUnit: String
     return String.format(Locale.US, "%.3f", converted).trimEnd('0').trimEnd('.')
 }
 
+private fun formatActionRecordDate(occurredAt: Long, createdAt: Long): String {
+    val timestamp = occurredAt.takeIf { it > 0L } ?: createdAt
+    return DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT).format(Date(timestamp))
+}
+
+private fun formatActionRecordQuantity(value: Double): String =
+    String.format(Locale.US, "%.2f", value).trimEnd('0').trimEnd('.')
+
+@Composable
+private fun ApiaryWideRecordBadge(batchId: String?) {
+    if (!batchId.isNullOrBlank()) {
+        Surface(
+            shape = RoundedCornerShape(50),
+            color = MaterialTheme.colorScheme.secondaryContainer
+        ) {
+            Text(
+                "APIARY-WIDE",
+                modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp),
+                color = MaterialTheme.colorScheme.onSecondaryContainer,
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.ExtraBold
+            )
+        }
+    }
+}
+
+@Composable
+private fun RecordHistoryMessage(message: String, modifier: Modifier = Modifier) {
+    Surface(
+        modifier = modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f)
+    ) {
+        Text(
+            message,
+            modifier = Modifier.padding(18.dp),
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            style = MaterialTheme.typography.bodyMedium
+        )
+    }
+}
+
+@Composable
+private fun FeedingRecordCard(record: Feeding) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+    ) {
+        Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(record.feedType, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Text(
+                        formatActionRecordDate(record.occurredAt, record.createdAt),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                ApiaryWideRecordBadge(record.batchId)
+            }
+            Text(
+                buildList {
+                    add("Amount: ${formatActionRecordQuantity(record.amount)} ${record.unit}")
+                    if (record.ratio.isNotBlank()) add("Ratio: ${record.ratio}")
+                }.joinToString(" · "),
+                style = MaterialTheme.typography.bodyMedium
+            )
+            if (record.notes.isNotBlank()) {
+                Text(record.notes, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+    }
+}
+
+@Composable
+private fun TreatmentRecordCard(record: Treatment) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+    ) {
+        Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(record.product, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Text(record.treatmentType, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(
+                        formatActionRecordDate(record.occurredAt, record.createdAt),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                ApiaryWideRecordBadge(record.batchId)
+            }
+            val timing = buildList {
+                record.insertedAt?.let { add("Placed: ${formatActionRecordDate(it, it)}") }
+                record.removalAt?.let { add("Remove: ${formatActionRecordDate(it, it)}") }
+                record.withdrawalUntil?.let { add("Withdrawal ends: ${formatActionRecordDate(it, it)}") }
+            }
+            if (timing.isNotEmpty()) Text(timing.joinToString(" · "), style = MaterialTheme.typography.bodySmall)
+            if (record.notes.isNotBlank()) {
+                Text(record.notes, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+    }
+}
+
+@Composable
+private fun HarvestRecordCard(record: Harvest) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+    ) {
+        Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text("Harvest", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Text(
+                        formatActionRecordDate(record.occurredAt, record.createdAt),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                ApiaryWideRecordBadge(record.batchId)
+            }
+            Text(
+                "Supers: ${record.supersPulled} · Wet honey: ${formatActionRecordQuantity(record.wetHoneyWeight)} ${record.weightUnit} · " +
+                    "Dry honey: ${formatActionRecordQuantity(record.dryHoneyWeight)} ${record.weightUnit}",
+                style = MaterialTheme.typography.bodyMedium
+            )
+            Text(
+                "Wax: ${formatActionRecordQuantity(record.waxWeight)} ${record.weightUnit} · " +
+                    "Propolis: ${formatActionRecordQuantity(record.propolisWeight)} ${record.weightUnit}",
+                style = MaterialTheme.typography.bodyMedium
+            )
+            if (record.notes.isNotBlank()) {
+                Text(record.notes, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+    }
+}
+
+@Composable
+private fun FeedingHistoryContent(
+    modifier: Modifier,
+    records: List<Feeding>,
+    loading: Boolean,
+    error: String?
+) {
+    when {
+        loading -> RecordHistoryMessage("Loading feeding records…", modifier)
+        error != null -> RecordHistoryMessage("Feeding records could not be loaded. Close and reopen this hive to try again. ($error)", modifier)
+        records.isEmpty() -> RecordHistoryMessage("No feeding records for this hive yet.", modifier)
+        else -> LazyColumn(
+            modifier = modifier,
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+            contentPadding = PaddingValues(bottom = 8.dp)
+        ) {
+            item {
+                Text(
+                    "Showing records saved on this device. This history remains available offline.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            items(records, key = { it.id }) { FeedingRecordCard(it) }
+        }
+    }
+}
+
+@Composable
+private fun TreatmentHistoryContent(
+    modifier: Modifier,
+    records: List<Treatment>,
+    loading: Boolean,
+    error: String?
+) {
+    when {
+        loading -> RecordHistoryMessage("Loading treatment records…", modifier)
+        error != null -> RecordHistoryMessage("Treatment records could not be loaded. Close and reopen this hive to try again. ($error)", modifier)
+        records.isEmpty() -> RecordHistoryMessage("No treatment records for this hive yet.", modifier)
+        else -> LazyColumn(
+            modifier = modifier,
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+            contentPadding = PaddingValues(bottom = 8.dp)
+        ) {
+            item {
+                Text(
+                    "Showing records saved on this device. This history remains available offline.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            items(records, key = { it.id }) { TreatmentRecordCard(it) }
+        }
+    }
+}
+
+@Composable
+private fun HarvestHistoryContent(
+    modifier: Modifier,
+    records: List<Harvest>,
+    loading: Boolean,
+    error: String?
+) {
+    when {
+        loading -> RecordHistoryMessage("Loading harvest records…", modifier)
+        error != null -> RecordHistoryMessage("Harvest records could not be loaded. Close and reopen this hive to try again. ($error)", modifier)
+        records.isEmpty() -> RecordHistoryMessage("No harvest records for this hive yet.", modifier)
+        else -> LazyColumn(
+            modifier = modifier,
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+            contentPadding = PaddingValues(bottom = 8.dp)
+        ) {
+            item {
+                Text(
+                    "Showing records saved on this device. This history remains available offline.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            items(records, key = { it.id }) { HarvestRecordCard(it) }
+        }
+    }
+}
+
 @Composable
 internal fun FeedDialog(
     onDismiss: () -> Unit,
     hiveName: String? = null,
+    records: List<Feeding> = emptyList(),
+    recordsLoading: Boolean = false,
+    recordsError: String? = null,
     onSave: (String, String, Double, String, String) -> Unit
 ) {
+    var selectedTab by rememberSaveable { mutableStateOf("entry") }
     var type by rememberSaveable { mutableStateOf("Syrup") }
     var customType by rememberSaveable { mutableStateOf("") }
     var ratioChoice by rememberSaveable { mutableStateOf("1:1") }
@@ -387,7 +620,10 @@ internal fun FeedDialog(
                 type == "Syrup" && finalRatio.isBlank() -> error = "Choose or enter a syrup ratio."
                 else -> onSave(finalType, finalRatio, parsedAmount, unit, notes.trim())
             }
-        }
+        },
+        selectedTab = selectedTab,
+        onTabSelected = { selectedTab = it },
+        historyContent = { modifier -> FeedingHistoryContent(modifier, records, recordsLoading, recordsError) }
     ) {
         LogInfoPanel(
             title = "Feeding entry",
@@ -489,8 +725,12 @@ internal fun FeedDialog(
 internal fun TreatmentDialog(
     onDismiss: () -> Unit,
     hiveName: String? = null,
+    records: List<Treatment> = emptyList(),
+    recordsLoading: Boolean = false,
+    recordsError: String? = null,
     onSave: (String, String, Int, Int, String) -> Unit
 ) {
+    var selectedTab by rememberSaveable { mutableStateOf("entry") }
     var type by rememberSaveable { mutableStateOf("Mite treatment") }
     var customType by rememberSaveable { mutableStateOf("") }
     var product by rememberSaveable { mutableStateOf("") }
@@ -526,7 +766,10 @@ internal fun TreatmentDialog(
                 parsedRemovalDays == 0 && parsedWithdrawalDays != null && parsedWithdrawalDays > 0 -> error = "An additional withdrawal period needs a removal date. Check the product label."
                 else -> onSave(finalType, product.trim(), parsedRemovalDays, parsedWithdrawalDays, notes.trim())
             }
-        }
+        },
+        selectedTab = selectedTab,
+        onTabSelected = { selectedTab = it },
+        historyContent = { modifier -> TreatmentHistoryContent(modifier, records, recordsLoading, recordsError) }
     ) {
         LogInfoPanel(
             title = "Product-label timing",
@@ -615,8 +858,12 @@ internal fun TreatmentDialog(
 internal fun HarvestDialog(
     onDismiss: () -> Unit,
     hiveName: String? = null,
+    records: List<Harvest> = emptyList(),
+    recordsLoading: Boolean = false,
+    recordsError: String? = null,
     onSave: (Int, Double, Double, String, Double, Double, String) -> Unit
 ) {
+    var selectedTab by rememberSaveable { mutableStateOf("entry") }
     var supers by rememberSaveable { mutableIntStateOf(0) }
     var wet by rememberSaveable { mutableStateOf("") }
     var dry by rememberSaveable { mutableStateOf("") }
@@ -648,7 +895,10 @@ internal fun HarvestDialog(
                 unit !in listOf("lb", "kg") -> error = "Choose a valid weight unit."
                 else -> onSave(supers, parsedWet, parsedDry, unit, parsedWax, parsedPropolis, notes.trim())
             }
-        }
+        },
+        selectedTab = selectedTab,
+        onTabSelected = { selectedTab = it },
+        historyContent = { modifier -> HarvestHistoryContent(modifier, records, recordsLoading, recordsError) }
     ) {
         LogInfoPanel(
             title = "Harvest record",
@@ -758,6 +1008,9 @@ private fun FieldLogDialog(
     validationMessage: String,
     onDismiss: () -> Unit,
     onSave: () -> Unit,
+    selectedTab: String = "entry",
+    onTabSelected: (String) -> Unit = {},
+    historyContent: (@Composable (Modifier) -> Unit)? = null,
     content: @Composable ColumnScope.() -> Unit
 ) {
     val configuration = LocalConfiguration.current
@@ -807,33 +1060,69 @@ private fun FieldLogDialog(
                     }
                 }
                 Divider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.75f))
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(max = maxFormHeight)
-                        .verticalScroll(formScrollState)
-                        .padding(horizontal = 20.dp, vertical = 16.dp),
-                    verticalArrangement = Arrangement.spacedBy(16.dp),
-                    content = content
-                )
+                if (historyContent != null) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 10.dp),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        FilterChip(
+                            selected = selectedTab == "entry",
+                            onClick = { onTabSelected("entry") },
+                            label = { Text("New entry") }
+                        )
+                        FilterChip(
+                            selected = selectedTab == "records",
+                            onClick = { onTabSelected("records") },
+                            label = { Text("Records") }
+                        )
+                    }
+                    Divider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.75f))
+                }
+                if (historyContent != null && selectedTab == "records") {
+                    historyContent(
+                        Modifier.fillMaxWidth()
+                            .heightIn(min = 150.dp, max = maxFormHeight)
+                            .padding(horizontal = 20.dp, vertical = 12.dp)
+                    )
+                } else {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = maxFormHeight)
+                            .verticalScroll(formScrollState)
+                            .padding(horizontal = 20.dp, vertical = 16.dp),
+                        verticalArrangement = Arrangement.spacedBy(16.dp),
+                        content = content
+                    )
+                }
                 Divider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.75f))
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(16.dp),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
+                if (historyContent != null && selectedTab == "records") {
                     OutlinedButton(
                         onClick = onDismiss,
-                        modifier = Modifier.weight(1f).heightIn(min = 52.dp),
+                        modifier = Modifier.fillMaxWidth().padding(16.dp).heightIn(min = 52.dp),
                         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 12.dp)
                     ) {
-                        Text("CANCEL", fontWeight = FontWeight.Bold)
+                        Text("CLOSE", fontWeight = FontWeight.Bold)
                     }
-                    Button(
-                        onClick = onSave,
-                        modifier = Modifier.weight(1.25f).heightIn(min = 52.dp),
-                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 12.dp)
+                } else {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(16.dp),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
-                        Text("SAVE LOG", fontWeight = FontWeight.ExtraBold)
+                        OutlinedButton(
+                            onClick = onDismiss,
+                            modifier = Modifier.weight(1f).heightIn(min = 52.dp),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 12.dp)
+                        ) {
+                            Text("CANCEL", fontWeight = FontWeight.Bold)
+                        }
+                        Button(
+                            onClick = onSave,
+                            modifier = Modifier.weight(1.25f).heightIn(min = 52.dp),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 12.dp)
+                        ) {
+                            Text("SAVE LOG", fontWeight = FontWeight.ExtraBold)
+                        }
                     }
                 }
             }
