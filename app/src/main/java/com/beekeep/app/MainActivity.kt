@@ -904,7 +904,10 @@ fun BeeKeepApp(
         // Keep the NFC controller aligned with the entitlement for the selected
         // personal/team database. It starts denied and is enabled only after a
         // trusted personal or membership-scoped workspace check succeeds.
-        nfc.setEntitlementAllowsNfc(nfcAccessResolved && nfcCanScan)
+        nfc.setEntitlementAccess(
+            canScan = nfcAccessResolved && nfcCanScan,
+            canManageTags = nfcAccessResolved && nfcCanManage
+        )
         if (!nfcAccessResolved) return@LaunchedEffect
 
         if (!nfcCanScan || !nfcCanManage) {
