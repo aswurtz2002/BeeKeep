@@ -112,6 +112,7 @@ internal fun SettingsScreen(
     onAutoVoiceEnabledChange: (Boolean) -> Unit,
     fastTagAssignmentMode: Boolean,
     nfcEntitled: Boolean,
+    nfcCanManage: Boolean,
     hiveLimit: Int,
     apiaryLimit: Int,
     planName: String,
@@ -359,26 +360,39 @@ internal fun SettingsScreen(
             }
 
             SettingsSection("NFC & Voice behaviour", Icons.Rounded.Nfc) {
-                // Tag-management controls come first.
-                if (nfcEntitled) {
+                // Fast assignment changes shared NFC assignments, so it is limited
+                // to writable workspace roles even though viewers may scan and verify.
+                if (nfcEntitled && nfcCanManage) {
                     SettingsSwitchRow(
                         title = "Fast tag assignment mode",
                         checked = fastTagAssignmentMode,
                         onCheckedChange = onFastTagAssignmentModeChange
                     )
+                } else if (nfcEntitled) {
+                    Text(
+                        "NFC scanning and tag verification are available in this workspace. Your view-only role cannot assign, replace or remove tags.",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodySmall
+                    )
                 } else {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text(
-                            "NFC scanning, tag assignment and fast assignment are Commercial features. Your existing tag assignments remain saved.",
+                            if (activeWorkspaceId.isNullOrBlank()) {
+                                "NFC scanning, tag assignment and fast assignment require BeeKeep Commercial. Your existing tag assignments remain saved."
+                            } else {
+                                "NFC is locked in this workspace until its owner has active BeeKeep Commercial access. Existing tag assignments remain saved."
+                            },
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             style = MaterialTheme.typography.bodySmall
                         )
-                        OutlinedButton(onClick = onOpenPlans, modifier = Modifier.fillMaxWidth()) {
-                            Text("VIEW COMMERCIAL PLAN")
+                        if (activeWorkspaceId.isNullOrBlank()) {
+                            OutlinedButton(onClick = onOpenPlans, modifier = Modifier.fillMaxWidth()) {
+                                Text("VIEW COMMERCIAL PLAN")
+                            }
                         }
                     }
                 }
-                if (nfcEntitled && fastTagAssignmentMode) {
+                if (nfcEntitled && nfcCanManage && fastTagAssignmentMode) {
                     Text(
                         "TURN THIS SETTING OFF TO CONTINUE NORMAL OPERATION",
                         style = MaterialTheme.typography.bodySmall,
