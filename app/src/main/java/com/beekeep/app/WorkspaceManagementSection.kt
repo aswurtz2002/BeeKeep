@@ -1481,7 +1481,7 @@ private fun WorkspaceMemberCard(
 }
 
 @Composable
-private fun WorkspacePanel(
+fun WorkspacePanel(
     title: String,
     description: String? = null,
     collapsible: Boolean = false,
