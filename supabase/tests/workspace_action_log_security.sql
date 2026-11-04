@@ -3,13 +3,49 @@
 
 begin;
 
+do $grant_assertions$
+declare
+    log_privileges text[];
+    settings_privileges text[];
+begin
+    select array_agg(privilege_type order by privilege_type)
+      into log_privileges
+      from information_schema.role_table_grants
+     where table_schema = 'public'
+       and table_name = 'beekeep_workspace_action_log'
+       and grantee = 'authenticated';
+
+    select array_agg(privilege_type order by privilege_type)
+      into settings_privileges
+      from information_schema.role_table_grants
+     where table_schema = 'public'
+       and table_name = 'beekeep_workspace_action_log_settings'
+       and grantee = 'authenticated';
+
+    if log_privileges is distinct from array['SELECT']::text[] then
+        raise exception 'Expected only SELECT on the action log for authenticated, got %', log_privileges;
+    end if;
+    if settings_privileges is distinct from array['SELECT']::text[] then
+        raise exception 'Expected only SELECT on retention settings for authenticated, got %', settings_privileges;
+    end if;
+    if exists (
+        select 1 from information_schema.role_table_grants
+        where table_schema = 'public'
+          and table_name in ('beekeep_workspace_action_log', 'beekeep_workspace_action_log_settings')
+          and grantee in ('anon', 'public')
+    ) then
+        raise exception 'Anonymous or PUBLIC table grants must not exist on workspace Actions tables';
+    end if;
+end;
+$grant_assertions$;
+
 insert into auth.users (id, email, raw_app_meta_data, raw_user_meta_data)
 values
  ('00000000-0000-0000-0000-000000000301', 'action-log-owner@example.test',
   '{"beekeep_plan":"commercial_monthly","beekeep_subscription_expires_at":"2099-01-01T00:00:00Z"}'::jsonb, '{"username":"LogOwner"}'::jsonb),
  ('00000000-0000-0000-0000-000000000302', 'action-log-admin@example.test', '{}'::jsonb, '{"username":"LogAdmin"}'::jsonb),
  ('00000000-0000-0000-0000-000000000303', 'action-log-member@example.test', '{}'::jsonb, '{"username":"LogMember"}'::jsonb),
- ('00000000-0000-0000-0000/000000000304', 'action-log-viewer@example.test', '{}'::jsonb, '{"username":"LogViewer"}'::jsonb),
+ ('00000000-0000-0000-0000-000000000304', 'action-log-viewer@example.test', '{}'::jsonb, '{"username":"LogViewer"}'::jsonb),
  ('00000000-0000-0000-0000-000000000305', 'action-log-outsider@example.test', '{}'::jsonb, '{"username":"LogOutside"}'::jsonb)
 on conflict (id) do update
 set email = excluded.email,
@@ -208,12 +244,12 @@ select public.beekeep_workspace_action_log_delete(
     '00000000-0000-4000-8000-000000000311'
 );
 
+reset role;
 do $single_delete_assertion$
 declare
     log_is_deleted boolean;
     business_record_exists boolean;
 begin
-    reset role;
     select deleted_at is not null into log_is_deleted
     from public.beekeep_workspace_action_log
     where id = '00000000-0000-4000-8000-000000000311';
