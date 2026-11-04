@@ -394,19 +394,19 @@ as $function$
 declare
     caller_id uuid := (select auth.uid());
     item jsonb;
-    action_id uuid;
-    entity_type text;
-    entity_id bigint;
-    operation text;
-    payload_text text;
-    payload_json jsonb;
-    updated_at_ms bigint;
-    action_at_ms bigint;
-    is_deleted boolean;
-    device_id_value text;
-    processed_count integer := 0;
-    applied_count integer := 0;
-    affected_count integer;
+    v_action_id uuid;
+    v_entity_type text;
+    v_entity_id bigint;
+    v_operation text;
+    v_payload_text text;
+    v_payload_json jsonb;
+    v_updated_at_ms bigint;
+    v_action_at_ms bigint;
+    v_is_deleted boolean;
+    v_device_id_value text;
+    v_processed_count integer := 0;
+    v_applied_count integer := 0;
+    v_affected_count integer;
 begin
     if caller_id is null then
         raise exception 'Sign in before syncing workspace actions.'
@@ -447,26 +447,26 @@ begin
         from pg_catalog.jsonb_array_elements(target_actions) with ordinality as a(value, item_order)
         order by item_order
     loop
-        action_id := nullif(item ->> 'client_action_id', '')::uuid;
-        entity_type := nullif(pg_catalog.btrim(item ->> 'entity_type'), '');
-        entity_id := nullif(item ->> 'entity_id', '')::bigint;
-        operation := pg_catalog.lower(pg_catalog.btrim(coalesce(item ->> 'operation', '')));
-        payload_text := item ->> 'payload';
-        payload_json := payload_text::jsonb;
-        updated_at_ms := nullif(payload_json ->> 'updated_at', '')::bigint;
-        action_at_ms := coalesce(nullif(item ->> 'action_at', '')::bigint, updated_at_ms);
-        is_deleted := operation = 'delete';
-        device_id_value := coalesce(nullif(pg_catalog.btrim(item ->> 'device_id'), ''), 'android');
+        v_action_id := nullif(item ->> 'client_action_id', '')::uuid;
+        v_entity_type := nullif(pg_catalog.btrim(item ->> 'v_entity_type'), '');
+        v_entity_id := nullif(item ->> 'v_entity_id', '')::bigint;
+        v_operation := pg_catalog.lower(pg_catalog.btrim(coalesce(item ->> 'v_operation', '')));
+        v_payload_text := item ->> 'payload';
+        v_payload_json := v_payload_text::jsonb;
+        v_updated_at_ms := nullif(v_payload_json ->> 'updated_at', '')::bigint;
+        v_action_at_ms := coalesce(nullif(item ->> 'action_at', '')::bigint, v_updated_at_ms);
+        v_is_deleted := v_operation = 'delete';
+        v_device_id_value := coalesce(nullif(pg_catalog.btrim(item ->> 'device_id'), ''), 'android');
 
-        if action_id is null
-           or entity_type is null
-           or entity_type not in ('apiary', 'hive', 'inspection')
-           or entity_id is null or entity_id <= 0
-           or operation not in ('upsert', 'delete')
-           or payload_text is null
-           or updated_at_ms is null or updated_at_ms <= 0
-           or action_at_ms is null or action_at_ms <= 0
-           or nullif(payload_json ->> 'id', '')::bigint is distinct from entity_id then
+        if v_action_id is null
+           or v_entity_type is null
+           or v_entity_type not in ('apiary', 'hive', 'inspection')
+           or v_entity_id is null or v_entity_id <= 0
+           or v_operation not in ('upsert', 'delete')
+           or v_payload_text is null
+           or v_updated_at_ms is null or v_updated_at_ms <= 0
+           or v_action_at_ms is null or v_action_at_ms <= 0
+           or nullif(v_payload_json ->> 'id', '')::bigint is distinct from v_entity_id then
             raise exception 'The offline workspace action queue contains an invalid record.'
                 using errcode = '22023';
         end if;
@@ -476,10 +476,10 @@ begin
             updated_at, deleted, device_id, updated_by, client_action_id, action_at
         )
         values (
-            target_workspace_id, entity_type, entity_id, payload_text,
-            updated_at_ms, is_deleted, device_id_value, caller_id, action_id, action_at_ms
+            target_workspace_id, v_entity_type, v_entity_id, v_payload_text,
+            v_updated_at_ms, v_is_deleted, v_device_id_value, caller_id, v_action_id, v_action_at_ms
         )
-        on conflict (workspace_id, entity_type, entity_id)
+        on conflict (workspace_id, v_entity_type, v_entity_id)
         do update set
             payload = excluded.payload,
             updated_at = excluded.updated_at,
@@ -489,14 +489,14 @@ begin
             client_action_id = excluded.client_action_id,
             action_at = excluded.action_at;
 
-        get diagnostics affected_count = row_count;
-        processed_count := processed_count + 1;
-        if affected_count > 0 then
-            applied_count := applied_count + 1;
+        get diagnostics v_affected_count = row_count;
+        v_processed_count := v_processed_count + 1;
+        if v_affected_count > 0 then
+            v_applied_count := v_applied_count + 1;
         end if;
     end loop;
 
-    return query select processed_count, applied_count;
+    return query select v_processed_count, v_applied_count;
 end;
 $function$;
 
