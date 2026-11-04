@@ -471,7 +471,7 @@ begin
      and a.entity_type = 'apiary'
      and a.entity_id = b.apiary_id
     left join lateral (
-        select pg_catalog.coalesce(
+        select coalesce(
             pg_catalog.jsonb_agg(
                 pg_catalog.jsonb_build_object(
                     'hive_id', ids.hive_id,
