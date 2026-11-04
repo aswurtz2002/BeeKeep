@@ -55,6 +55,15 @@ sealed interface CloudResult {
     data object NotSignedIn : CloudResult
 }
 
+private object WorkspaceActionLogRefreshSignal {
+    private val mutableVersion = MutableStateFlow(0L)
+    val version: StateFlow<Long> = mutableVersion.asStateFlow()
+
+    fun publish() {
+        mutableVersion.value = mutableVersion.value + 1L
+    }
+}
+
 private const val SYNC_UPLOAD_BATCH_SIZE = 200
 private const val SYNC_DOWNLOAD_PAGE_SIZE = 500
 private const val SYNC_CONFLICT_LOOKUP_BATCH_SIZE = 100
@@ -92,6 +101,8 @@ class SupabaseGateway(
         CloudAccountState(configured = configured, signedIn = false)
     )
     val account: StateFlow<CloudAccountState> = _account.asStateFlow()
+    /** Emits after any configured sync attempt completes, including WorkManager syncs. */
+    val workspaceActionLogRefreshVersion: StateFlow<Long> = WorkspaceActionLogRefreshSignal.version
     private val _accountInitialized = MutableStateFlow(false)
     /** True after Supabase has restored the stored session and the account identity is known. */
     val accountInitialized: StateFlow<Boolean> = _accountInitialized.asStateFlow()
@@ -1002,7 +1013,13 @@ class SupabaseGateway(
         knownMutations
     )
 
-    suspend fun syncNow(): CloudResult = syncMutex.withLock { syncNowUnlocked() }
+    suspend fun syncNow(): CloudResult = syncMutex.withLock {
+        val result = syncNowUnlocked()
+        if (result is CloudResult.Success || result is CloudResult.Failure) {
+            WorkspaceActionLogRefreshSignal.publish()
+        }
+        result
+    }
 
     /**
      * Synchronize the scoped harvest interpretation independently from hive documents.
