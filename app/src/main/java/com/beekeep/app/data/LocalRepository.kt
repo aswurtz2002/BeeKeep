@@ -217,8 +217,10 @@ class LocalHiveRepository(context: Context) {
             db.hives().clearAll()
             db.apiaries().clearAll()
             db.outbox().clearAll()
-            // A reset must not let a queued atomic batch recreate the records being wiped.
+            // A reset must not let a queued atomic batch or offline audit replay
+            // recreate business records that the user intentionally cleared.
             db.actionBatchOutbox().clearAll()
+            db.workspaceActionOutbox().clearAll()
 
             recordsToDelete.forEach { (type, id) ->
                 val draftKey = inspectionNoteDraftKey(activeDraftWorkspaceId, id)
@@ -651,11 +653,18 @@ class LocalHiveRepository(context: Context) {
     suspend fun deleteHivePermanently(hiveId: Long) = withContext(Dispatchers.IO) {
         checkWritable()
         db.withTransaction {
-            db.hives().get(hiveId) ?: throw IllegalArgumentException("Hive not found.")
+            val hive = db.hives().get(hiveId) ?: throw IllegalArgumentException("Hive not found.")
             val deletionTime = System.currentTimeMillis()
             enqueueHiveHistoryDeletions(hiveId, deletionTime)
+            // Keep the last known Hive fields in the tombstone so the server trigger can
+            // describe the deletion accurately without needing the deleted local row.
+            enqueue(
+                "hive",
+                hiveId,
+                "delete",
+                hivePayload(hive.copy(updatedAt = deletionTime, deleted = true))
+            )
             permanentlyDeleteHiveLocal(hiveId)
-            enqueue("hive", hiveId, "delete", JSONObject().put("id", hiveId).put("updated_at", deletionTime).toString())
         }
     }
 
@@ -725,13 +734,13 @@ class LocalHiveRepository(context: Context) {
             val deletionTime = System.currentTimeMillis()
             apiaryHives.forEach { hive ->
                 enqueueHiveHistoryDeletions(hive.id, deletionTime)
-                permanentlyDeleteHiveLocal(hive.id)
                 enqueue(
                     "hive",
                     hive.id,
                     "delete",
-                    JSONObject().put("id", hive.id).put("updated_at", deletionTime).toString()
+                    hivePayload(hive.copy(updatedAt = deletionTime, deleted = true))
                 )
+                permanentlyDeleteHiveLocal(hive.id)
             }
 
             // Remove the map pin locally and sync a tombstone so connected devices
@@ -938,6 +947,11 @@ class LocalHiveRepository(context: Context) {
             val safeBeeCountFrames = i.beeCountFrames?.let {
                 (it * 2.0).roundToInt().coerceIn(1, 20) / 2.0
             }
+            val previousInspection = db.inspections().get(i.id)
+            val inspectionActionAt = maxOf(
+                System.currentTimeMillis(),
+                (previousInspection?.updatedAt ?: 0L) + 1L
+            )
             val entity = InspectionEntity(
                 id = i.id, hiveId = i.hiveId, createdAt = i.createdAt, strength = i.strength.coerceIn(0, 10),
                 queenStatus = i.queenStatus.trim().ifBlank { "Laying" }, miteCount = safeMites, sampleSize = safeSample,
@@ -945,7 +959,7 @@ class LocalHiveRepository(context: Context) {
                 emergencyCells = i.emergencyCells.coerceAtLeast(0), supercedureCells = i.supercedureCells.coerceAtLeast(0), swarmCells = i.swarmCells.coerceAtLeast(0),
                 eggs = normalizeBroodStoresGauge(i.eggs), openBrood = normalizeBroodStoresGauge(i.openBrood), cappedBrood = normalizeBroodStoresGauge(i.cappedBrood),
                 honeyStores = normalizeBroodStoresGauge(i.honeyStores), pollen = normalizeBroodStoresGauge(i.pollen), emptyDrawnComb = normalizeBroodStoresGauge(i.emptyDrawnComb),
-                diseaseFlags = i.diseaseFlags.trim(), updatedAt = i.createdAt,
+                diseaseFlags = i.diseaseFlags.trim(), updatedAt = inspectionActionAt,
                 beeCountFrames = safeBeeCountFrames
             )
             db.inspections().upsert(entity)
@@ -955,8 +969,9 @@ class LocalHiveRepository(context: Context) {
             val event = ActivityEventEntity(i.id, i.hiveId, i.createdAt, "inspection", "Inspection", "Strength ${ColonyStrength.gradeFromStored(entity.strength)}/5 • ${ColonyStrength.labelFromStored(entity.strength)} • Mites ${String.format(java.util.Locale.US, "%.2f", entity.mitePercent)}%")
             db.events().upsert(event)
             enqueue("inspection", i.id, "upsert", inspectionPayload(entity))
-            val updatedHive = db.hives().get(i.hiveId) ?: return@withTransaction
-            enqueue("hive", i.hiveId, "upsert", hivePayload(updatedHive))
+            // Hive strength/queen/mites are a derived cache of inspection history.
+            // Other devices recompute that summary when this inspection syncs; publishing
+            // a second hive mutation here would create a misleading duplicate Actions row.
             enqueue("event", event.id, "upsert", eventPayload(event))
         }
     }
@@ -1612,6 +1627,30 @@ class LocalHiveRepository(context: Context) {
     suspend fun pendingActionBatches(limit: Int = 20): List<ActionBatchOutboxEntity> =
         withContext(Dispatchers.IO) { db.actionBatchOutbox().pending(limit) }
 
+    suspend fun pendingWorkspaceActionChanges(
+        workspaceId: String,
+        limit: Int = 50
+    ): List<WorkspaceActionOutboxEntity> = withContext(Dispatchers.IO) {
+        db.workspaceActionOutbox().pending(workspaceId, limit)
+    }
+
+    suspend fun completeWorkspaceActionChanges(ids: Collection<Long>) = withContext(Dispatchers.IO) {
+        ids.distinct().chunked(500).forEach { batch ->
+            db.workspaceActionOutbox().markDone(batch)
+        }
+    }
+
+    suspend fun markWorkspaceActionChangesError(ids: Collection<Long>, message: String) = withContext(Dispatchers.IO) {
+        if (ids.isNotEmpty()) {
+            db.workspaceActionOutbox().markPendingWithError(ids.distinct(), message.take(500))
+        }
+    }
+
+    suspend fun hasPendingWorkspaceActionChanges(workspaceId: String): Boolean =
+        withContext(Dispatchers.IO) {
+            db.workspaceActionOutbox().pendingCount(workspaceId) > 0
+        }
+
     suspend fun completeActionBatch(batchId: String) = withContext(Dispatchers.IO) {
         val database = db
         database.withTransaction {
@@ -1637,7 +1676,11 @@ class LocalHiveRepository(context: Context) {
         }
     }
     suspend fun markSyncError(id: Long, message: String) = db.outbox().setState(id, "pending", message.take(500))
-    suspend fun pruneSync() = db.outbox().pruneDone(System.currentTimeMillis() - 7 * 24 * 60 * 60 * 1000)
+    suspend fun pruneSync() {
+        val cutoff = System.currentTimeMillis() - 7 * 24 * 60 * 60 * 1000
+        db.outbox().pruneDone(cutoff)
+        db.workspaceActionOutbox().pruneDone(cutoff)
+    }
 
     private fun clearLocalInspectionFormDraft(hiveId: Long, deletedAt: Long) {
         InspectionFormDraftStore.clearRemote(
@@ -1868,6 +1911,8 @@ class LocalHiveRepository(context: Context) {
                 ) {
                     db.hives().refreshTagCache(doc.entity_id)
                 }
+                // Inspection-derived strength/queen/mites stay authoritative on this device.
+                refreshHiveInspectionSummary(doc.entity_id)
             }
             "nfc_assignment" -> {
                 val incoming = NfcTagAssignmentEntity(
@@ -2441,17 +2486,49 @@ class LocalHiveRepository(context: Context) {
     }
 
     private suspend fun enqueue(type: String, entityId: Long, operation: String, payload: String) {
-        // Replacing an older pending write and inserting its replacement must be atomic.
-        // Capture the current database so a workspace switch cannot split this operation
-        // across two Room instances.
+        // Keep the coalescing document outbox for latest-state sync, but append an
+        // immutable action snapshot for every tracked team mutation. Replaying these
+        // snapshots in order preserves every offline edit to the same record.
         val database = db
+        val workspaceId = _activeWorkspaceId.value
         database.withTransaction {
             // Remote hydration for a viewer may adjust local caches. Never turn that into
             // a pending client write for a read-only role.
             if (_activeWorkspaceReadOnly.value) return@withTransaction
+
+            var queuedPayload = payload
+            val tracksWorkspaceAction = !workspaceId.isNullOrBlank() &&
+                (type == "apiary" || type == "hive" || (type == "inspection" && operation == "upsert"))
+            if (tracksWorkspaceAction) {
+                val now = System.currentTimeMillis()
+                val payloadTimestamp = runCatching {
+                    JSONObject(payload).optLong("updated_at", 0L)
+                }.getOrDefault(0L)
+                val previousActionAt = database.workspaceActionOutbox().latestActionAt(
+                    workspaceId!!, type, entityId
+                ) ?: 0L
+                val actionAt = maxOf(now, payloadTimestamp, previousActionAt + 1L)
+                queuedPayload = JSONObject(payload)
+                    .put("updated_at", actionAt)
+                    .toString()
+                database.workspaceActionOutbox().enqueue(
+                    WorkspaceActionOutboxEntity(
+                        clientActionId = UUID.randomUUID().toString(),
+                        workspaceId = workspaceId,
+                        entityType = type,
+                        entityId = entityId,
+                        operation = operation,
+                        payload = queuedPayload,
+                        actionAt = actionAt,
+                        createdAt = now
+                    )
+                )
+            }
+
+            // Replacing an older pending write and inserting its replacement must be atomic.
             database.outbox().deletePendingForEntity(type, entityId)
             database.outbox().enqueue(
-                SyncOutboxEntity(IdGenerator.nextLong(), type, entityId, operation, payload)
+                SyncOutboxEntity(IdGenerator.nextLong(), type, entityId, operation, queuedPayload)
             )
         }
     }

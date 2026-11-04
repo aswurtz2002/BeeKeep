@@ -1,0 +1,4 @@
+-- Intentionally retain the expanded action_type/target_type checks on rollback.
+-- Workspace Actions rows are retained by the feature rollback; reverting these checks
+-- would make valid persisted feeding/treatment/harvest history violate the schema.
+-- The broader accepted value set is backward-compatible with the original log format.

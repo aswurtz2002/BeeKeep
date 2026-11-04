@@ -121,6 +121,9 @@ select * from public.beekeep_apply_action_batch(
     )
 );
 
+-- The Actions list is intentionally Owner-only. Switch to the owner for log assertions.
+select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-000000000201', false);
+
 do $success_assertion$
 declare row_count integer; batch_count integer;
 begin
@@ -142,8 +145,45 @@ begin
     if batch_count <> 2 then
         raise exception 'Expected exactly two feeding records for the apiary batch';
     end if;
+
+    -- The workspace-document insert trigger groups all hive rows sharing one
+    -- batch UUID into exactly one owner-visible Actions entry.
+    if to_regclass('public.beekeep_workspace_action_log') is not null then
+        select count(*) into batch_count
+        from public.beekeep_workspace_action_log
+        where workspace_id = (select value::uuid from action_batch_context where key='workspace_id')
+          and client_action_id = (select value::uuid from action_batch_context where key='batch_id')
+          and action_type = 'mass_feed';
+
+        if batch_count <> 1 then
+            raise exception 'Expected one mass_feed Actions row for batch %, found %. Existing rows: %',
+                (select value from action_batch_context where key='batch_id'),
+                batch_count,
+                coalesce((
+                    select pg_catalog.string_agg(
+                        l.action_type || ':' || l.description || ':' || l.client_action_id::text,
+                        ' | '
+                    )
+                    from public.beekeep_workspace_action_log l
+                    where l.workspace_id = (select value::uuid from action_batch_context where key='workspace_id')
+                ), 'none');
+        end if;
+
+        if not exists (
+            select 1
+            from public.beekeep_workspace_action_log
+            where workspace_id = (select value::uuid from action_batch_context where key='workspace_id')
+              and client_action_id = (select value::uuid from action_batch_context where key='batch_id')
+              and description = 'Mass feeding applied to Apiary Batch Apiary (2 hives)'
+        ) then
+            raise exception 'Mass batch entry found but its action type, batch UUID or description was incorrect';
+        end if;
+    end if;
 end;
 $success_assertion$;
+
+-- Return to the writable member for the idempotent batch retry.
+select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-000000000202', false);
 
 -- A retry with exactly the same records is idempotent; it must not duplicate or mutate history.
 select * from public.beekeep_apply_action_batch(
@@ -162,6 +202,28 @@ select * from public.beekeep_apply_action_batch(
             'payload',jsonb_build_object('id',92012,'hive_id',92002,'created_at',2000,'updated_at',2000,'type','feeding','title','Feeding','detail','2 L • Sugar syrup 1:1','apiary_id',92000,'batch_id',(select value from action_batch_context where key='batch_id'))::text)
     )
 );
+
+-- Verify retry idempotency through the Owner-only Actions view.
+select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-000000000201', false);
+
+do $batch_retry_log_assertion$
+declare logged_count integer;
+begin
+    if to_regclass('public.beekeep_workspace_action_log') is not null then
+        select count(*) into logged_count
+        from public.beekeep_workspace_action_log
+        where workspace_id = (select value::uuid from action_batch_context where key='workspace_id')
+          and client_action_id = (select value::uuid from action_batch_context where key='batch_id')
+          and action_type = 'mass_feed';
+        if logged_count <> 1 then
+            raise exception 'An idempotent batch retry duplicated its Actions entry';
+        end if;
+    end if;
+end;
+$batch_retry_log_assertion$;
+
+-- Switch back to the member for the remaining write-permission checks.
+select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-000000000202', false);
 
 -- A target hive that is no longer active/in the apiary rejects the whole request.
 do $atomic_failure_assertion$

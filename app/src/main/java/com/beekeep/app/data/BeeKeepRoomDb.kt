@@ -8,8 +8,8 @@ import androidx.room.Room
 import androidx.room.RoomDatabase
 
 @Database(
-    entities = [ApiaryEntity::class, HiveEntity::class, InspectionEntity::class, FeedingEntity::class, TreatmentEntity::class, HarvestEntity::class, ActivityEventEntity::class, SyncOutboxEntity::class, TaskEntity::class, NfcTagAssignmentEntity::class, ActionBatchOutboxEntity::class, WorkspaceActionSettingsEntity::class],
-    version = 13,
+    entities = [ApiaryEntity::class, HiveEntity::class, InspectionEntity::class, FeedingEntity::class, TreatmentEntity::class, HarvestEntity::class, ActivityEventEntity::class, SyncOutboxEntity::class, TaskEntity::class, NfcTagAssignmentEntity::class, ActionBatchOutboxEntity::class, WorkspaceActionSettingsEntity::class, WorkspaceActionOutboxEntity::class],
+    version = 14,
     exportSchema = false
 )
 abstract class BeeKeepRoomDb : RoomDatabase() {
@@ -22,6 +22,7 @@ abstract class BeeKeepRoomDb : RoomDatabase() {
     abstract fun events(): EventDao
     abstract fun outbox(): OutboxDao
     abstract fun actionBatchOutbox(): ActionBatchOutboxDao
+    abstract fun workspaceActionOutbox(): WorkspaceActionOutboxDao
     abstract fun workspaceActionSettings(): WorkspaceActionSettingsDao
     abstract fun nfcTagAssignments(): NfcTagAssignmentDao
     abstract fun tasks(): TaskDao
@@ -351,6 +352,29 @@ abstract class BeeKeepRoomDb : RoomDatabase() {
             }
         }
 
+        val MIGRATION_13_14 = object : Migration(13, 14) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS workspace_action_outbox (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        client_action_id TEXT NOT NULL,
+                        workspace_id TEXT NOT NULL,
+                        entity_type TEXT NOT NULL,
+                        entity_id INTEGER NOT NULL,
+                        operation TEXT NOT NULL,
+                        payload TEXT NOT NULL,
+                        action_at INTEGER NOT NULL,
+                        created_at INTEGER NOT NULL,
+                        state TEXT NOT NULL,
+                        last_error TEXT
+                    )
+                """.trimIndent())
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS index_workspace_action_outbox_client_action_id ON workspace_action_outbox(client_action_id)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_workspace_action_outbox_workspace_id_state_id ON workspace_action_outbox(workspace_id, state, id)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_workspace_action_outbox_workspace_id_entity_type_entity_id_action_at ON workspace_action_outbox(workspace_id, entity_type, entity_id, action_at)")
+            }
+        }
+
         private val instances = mutableMapOf<String, BeeKeepRoomDb>()
 
         fun get(context: Context): BeeKeepRoomDb = getNamed(context, "beekeep_room.db")
@@ -375,7 +399,7 @@ abstract class BeeKeepRoomDb : RoomDatabase() {
                     .addMigrations(
                         MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5,
                         MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9,
-                        MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13
+                        MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14
                     )
                     .setJournalMode(RoomDatabase.JournalMode.WRITE_AHEAD_LOGGING)
                     .build()

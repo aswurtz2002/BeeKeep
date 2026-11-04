@@ -180,8 +180,8 @@ begin
     from public.beekeep_workspace_action_log
     where workspace_id = (select value::uuid from action_log_context where key = 'workspace_id');
 
-    if log_count <> 3 then
-        raise exception 'Owner expected to read 3 active log rows, received %', log_count;
+    if log_count <> 4 then
+        raise exception 'Owner expected to read 4 active log rows (including the trigger-generated Apiary insert), received %', log_count;
     end if;
     if not exists (
         select 1 from public.beekeep_workspace_action_log_settings
@@ -378,8 +378,8 @@ begin
     affected := public.beekeep_workspace_action_log_delete_all(
         (select value::uuid from action_log_context where key = 'workspace_id')
     );
-    if affected <> 2 then
-        raise exception 'Delete all expected to soft-delete 2 active rows, changed %', affected;
+    if affected <> 3 then
+        raise exception 'Delete all expected to soft-delete 3 active rows, changed %', affected;
     end if;
 end;
 $delete_all_assertion$;
@@ -401,8 +401,8 @@ begin
           and entity_type = 'apiary' and entity_id = 99301 and not deleted
     ) into business_record_exists;
 
-    if deleted_count <> 3 then
-        raise exception 'Expected all 3 log entries to be soft-deleted, got %', deleted_count;
+    if deleted_count <> 4 then
+        raise exception 'Expected all 4 log entries to be soft-deleted, got %', deleted_count;
     end if;
     if not business_record_exists then
         raise exception 'Delete all changed the real apiary record';
