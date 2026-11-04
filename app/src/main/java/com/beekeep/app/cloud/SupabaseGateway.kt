@@ -1923,6 +1923,53 @@ class SupabaseGateway(
             client!!.postgrest.rpc("beekeep_list_workspaces").decodeList<BeeKeepWorkspace>()
         }
 
+    /** Owner-only Workspace Actions feed. The database RLS is the final access boundary. */
+    suspend fun listWorkspaceActionLog(
+        workspaceId: String
+    ): WorkspaceOperationResult<List<BeeKeepWorkspaceActionLogEntry>> = workspaceOperation {
+        require(workspaceId.isNotBlank()) { "A team workspace is required." }
+        client!!.from("beekeep_workspace_action_log")
+            .select {
+                filter { eq("workspace_id", workspaceId); isNull("deleted_at") }
+                order(column = "action_at", order = Order.DESCENDING)
+                order(column = "id", order = Order.DESCENDING)
+                limit(200)
+            }
+            .decodeList<BeeKeepWorkspaceActionLogEntry>()
+    }
+
+    /** Reads the workspace's owner-controlled retention mode; missing rows mean Keep. */
+    suspend fun getWorkspaceActionLogSettings(
+        workspaceId: String
+    ): WorkspaceOperationResult<BeeKeepWorkspaceActionLogSettings?> = workspaceOperation {
+        require(workspaceId.isNotBlank()) { "A team workspace is required." }
+        client!!.from("beekeep_workspace_action_log_settings")
+            .select { filter { eq("workspace_id", workspaceId) } }
+            .decodeList<BeeKeepWorkspaceActionLogSettings>()
+            .firstOrNull()
+    }
+
+    suspend fun setWorkspaceActionLogRetention(
+        workspaceId: String,
+        retentionMode: String
+    ): WorkspaceOperationResult<String> = workspaceOperation {
+        require(retentionMode in setOf("keep", "expire_90_days")) { "Choose a supported retention setting." }
+        client!!.postgrest.rpc(
+            "beekeep_workspace_action_log_set_retention",
+            WorkspaceActionRetentionParams(workspaceId, retentionMode)
+        ).decodeList<String>().firstOrNull() ?: retentionMode
+    }
+
+    suspend fun deleteWorkspaceActionLogEntry(
+        entryId: String
+    ): WorkspaceOperationResult<Boolean> = workspaceOperation {
+        require(entryId.isNotBlank()) { "An activity entry is required." }
+        client!!.postgrest.rpc(
+            "beekeep_workspace_action_log_delete",
+            WorkspaceActionDeleteParams(entryId)
+        ).decodeList<Boolean>().firstOrNull() ?: false
+    }
+
     /**
      * Reads the signed-in account's server-managed Commercial entitlement. The database derives
      * this from trusted auth app metadata; local plan simulation is never an authorization source.
