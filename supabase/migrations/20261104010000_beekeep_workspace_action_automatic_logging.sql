@@ -164,6 +164,35 @@ begin
             return pg_catalog.format('Created inspection for Hive %s', record_name);
         end if;
         return pg_catalog.format('Edited inspection for Hive %s', record_name);
+    elsif target_entity_type in ('feeding', 'treatment', 'harvest') then
+        hive_id := nullif(target_payload ->> 'hive_id', '')::bigint;
+        select
+            nullif(pg_catalog.btrim(h.payload::jsonb ->> 'number'), ''),
+            coalesce(
+                nullif(pg_catalog.btrim(h.payload::jsonb ->> 'apiary'), ''),
+                nullif(pg_catalog.btrim(a.payload::jsonb ->> 'name'), '')
+            )
+          into record_name, apiary_name
+          from public.beekeep_workspace_documents h
+          left join public.beekeep_workspace_documents a
+            on a.workspace_id = h.workspace_id
+           and a.entity_type = 'apiary'
+           and a.entity_id = nullif(h.payload::jsonb ->> 'apiary_id', '')::bigint
+           and not a.deleted
+         where h.workspace_id = target_workspace_id
+           and h.entity_type = 'hive'
+           and h.entity_id = hive_id
+           and not h.deleted
+         limit 1;
+        record_name := coalesce(record_name, hive_id::text, target_entity_id::text);
+        apiary_name := coalesce(apiary_name, 'Unknown apiary');
+        return pg_catalog.format(
+            '%s %s for Hive %s in Apiary %s',
+            target_verb,
+            target_entity_type,
+            record_name,
+            apiary_name
+        );
     end if;
 
     return pg_catalog.format('%s %s %s', target_verb, target_entity_type, target_entity_id);
@@ -292,6 +321,37 @@ begin
     where b.hive_count > 0
     on conflict (workspace_id, client_action_id) do nothing;
 
+    -- Individual Feed/Treatment/Harvest records have no batch UUID. Keep
+    -- these entries separate from the Apiary-wide batch summary above.
+    insert into public.beekeep_workspace_action_log (
+        workspace_id, client_action_id, user_id, username,
+        action_type, target_type, target_id, description, action_at
+    )
+    select
+        n.workspace_id,
+        coalesce(n.client_action_id, pg_catalog.gen_random_uuid()),
+        coalesce(n.updated_by, (select auth.uid())),
+        coalesce(nullif(pg_catalog.btrim(p.username), ''), 'Team member'),
+        case n.entity_type
+            when 'feeding' then 'feeding_added'
+            when 'treatment' then 'treatment_added'
+            else 'harvest_added'
+        end,
+        n.entity_type,
+        n.entity_id::text,
+        public.beekeep_workspace_action_log_description(
+            n.workspace_id, n.entity_type, n.entity_id, n.payload::jsonb, 'Added'
+        ),
+        pg_catalog.to_timestamp(
+            coalesce(nullif(n.action_at, 0), n.updated_at)::double precision / 1000.0
+        )
+    from new_rows n
+    left join public.beekeep_profiles p
+      on p.user_id = coalesce(n.updated_by, (select auth.uid()))
+    where n.entity_type in ('feeding', 'treatment', 'harvest')
+      and nullif(n.payload::jsonb ->> 'batch_id', '') is null
+    on conflict (workspace_id, client_action_id) do nothing;
+
     return null;
 end;
 $function$;
@@ -359,6 +419,45 @@ begin
           or n.deleted is distinct from o.deleted
       )
       and (n.entity_type <> 'inspection' or not n.deleted)
+    on conflict (workspace_id, client_action_id) do nothing;
+
+    -- Individual records are logged on edits; batch rows remain represented
+    -- by their single mass-action entry and are intentionally excluded here.
+    insert into public.beekeep_workspace_action_log (
+        workspace_id, client_action_id, user_id, username,
+        action_type, target_type, target_id, description, action_at
+    )
+    select
+        n.workspace_id,
+        coalesce(n.client_action_id, pg_catalog.gen_random_uuid()),
+        coalesce(n.updated_by, (select auth.uid())),
+        coalesce(nullif(pg_catalog.btrim(p.username), ''), 'Team member'),
+        case n.entity_type
+            when 'feeding' then 'feeding_edited'
+            when 'treatment' then 'treatment_edited'
+            else 'harvest_edited'
+        end,
+        n.entity_type,
+        n.entity_id::text,
+        public.beekeep_workspace_action_log_description(
+            n.workspace_id, n.entity_type, n.entity_id, n.payload::jsonb, 'Edited'
+        ),
+        pg_catalog.to_timestamp(
+            coalesce(nullif(n.action_at, 0), n.updated_at)::double precision / 1000.0
+        )
+    from new_rows n
+    join old_rows o
+      on o.workspace_id = n.workspace_id
+     and o.entity_type = n.entity_type
+     and o.entity_id = n.entity_id
+    left join public.beekeep_profiles p
+      on p.user_id = coalesce(n.updated_by, (select auth.uid()))
+    where n.entity_type in ('feeding', 'treatment', 'harvest')
+      and nullif(n.payload::jsonb ->> 'batch_id', '') is null
+      and (
+          n.payload is distinct from o.payload
+          or n.deleted is distinct from o.deleted
+      )
     on conflict (workspace_id, client_action_id) do nothing;
 
     return null;
