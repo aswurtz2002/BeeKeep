@@ -313,7 +313,7 @@ begin
     where workspace_id = (select value::uuid from automatic_action_log_context where key='workspace_id');
 
     if row_count <> 14 or unique_ids <> 14 then
-        raise exception 'Expected 10 distinct action entries after offline replay, retry, and UUID reuse; found % entries and % UUIDs', row_count, unique_ids;
+        raise exception 'Expected 14 distinct action entries including standalone records, offline replay, retry, and UUID reuse; found % entries and % UUIDs', row_count, unique_ids;
     end if;
 
     if not exists (
