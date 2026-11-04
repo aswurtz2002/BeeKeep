@@ -14,6 +14,12 @@ comment on column public.beekeep_workspace_documents.client_action_id is
 comment on column public.beekeep_workspace_documents.action_at is
     'Original local action time in Unix milliseconds; distinct from server sync time.';
 
+-- Enforce one action UUID per workspace document mutation even when multiple
+-- records are sent in one direct PostgREST statement.
+create unique index if not exists beekeep_workspace_documents_client_action_id_uidx
+    on public.beekeep_workspace_documents (workspace_id, client_action_id)
+    where client_action_id is not null;
+
 -- Stamp metadata for direct current/legacy sync writes too. A client cannot suppress
 -- logging by omitting an action UUID. Exact retries with no business-record difference
 -- retain the original idempotency values and do not create another entry.
@@ -42,6 +48,17 @@ begin
                 from public.beekeep_workspace_action_log l
                 where l.workspace_id = new.workspace_id
                   and l.client_action_id = new.client_action_id
+           )
+           or exists (
+                select 1
+                from public.beekeep_workspace_documents d
+                where d.workspace_id = new.workspace_id
+                  and d.client_action_id = new.client_action_id
+                  and (
+                      tg_op <> 'UPDATE'
+                      or d.entity_type is distinct from new.entity_type
+                      or d.entity_id is distinct from new.entity_id
+                  )
            ) then
             new.client_action_id := pg_catalog.gen_random_uuid();
         end if;
@@ -51,6 +68,11 @@ begin
             from public.beekeep_workspace_action_log l
             where l.workspace_id = new.workspace_id
               and l.client_action_id = new.client_action_id
+        ) or exists (
+            select 1
+            from public.beekeep_workspace_documents d
+            where d.workspace_id = new.workspace_id
+              and d.client_action_id = new.client_action_id
         ) then
             new.client_action_id := pg_catalog.gen_random_uuid();
         end if;
