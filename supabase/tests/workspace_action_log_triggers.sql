@@ -146,6 +146,19 @@ set payload = jsonb_build_object(
 where workspace_id = (select value::uuid from automatic_action_log_context where key='workspace_id')
   and entity_type = 'apiary' and entity_id = 96301;
 
+-- Reusing a previously logged UUID on the same row must not suppress a new edit.
+update public.beekeep_workspace_documents
+set payload = jsonb_build_object(
+        'id',96301,'name','North Yard 2',
+        'updated_at',(select value::bigint from automatic_action_log_context where key='base_ms') + 7
+    )::text,
+    updated_at = (select value::bigint from automatic_action_log_context where key='base_ms') + 7,
+    client_action_id = '00000000-0000-4000-8000-000000000361',
+    action_at = (select value::bigint from automatic_action_log_context where key='base_ms') + 7,
+    updated_by = auth.uid()
+where workspace_id = (select value::uuid from automatic_action_log_context where key='workspace_id')
+  and entity_type = 'apiary' and entity_id = 96301;
+
 update public.beekeep_workspace_documents
 set payload = jsonb_build_object(
         'id',96302,'number','12A','apiary','North Yard','apiary_id',96301,
@@ -259,8 +272,8 @@ begin
     from public.beekeep_workspace_action_log
     where workspace_id = (select value::uuid from automatic_action_log_context where key='workspace_id');
 
-    if row_count <> 9 or unique_ids <> 9 then
-        raise exception 'Expected 9 distinct action entries after offline replay and retry; found % entries and % UUIDs', row_count, unique_ids;
+    if row_count <> 10 or unique_ids <> 10 then
+        raise exception 'Expected 10 distinct action entries after offline replay, retry, and UUID reuse; found % entries and % UUIDs', row_count, unique_ids;
     end if;
 
     if not exists (
@@ -280,6 +293,15 @@ begin
           and description = 'Edited apiary North Yard'
     ) then
         raise exception 'Apiary edit was not logged from the changed document';
+    end if;
+
+    if not exists (
+        select 1 from public.beekeep_workspace_action_log
+        where workspace_id = (select value::uuid from automatic_action_log_context where key='workspace_id')
+          and action_type = 'apiary_edited'
+          and description = 'Edited apiary North Yard 2'
+    ) then
+        raise exception 'Reusing an old action UUID suppressed a later apiary edit';
     end if;
 
     if not exists (
