@@ -226,3 +226,161 @@ end;
 $function$;
 
 
+
+create or replace function public.beekeep_workspace_action_log_after_insert()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $function$
+begin
+    -- Apiary, hive, and inspection records.
+    insert into public.beekeep_workspace_action_log (
+        workspace_id, client_action_id, user_id, username,
+        action_type, target_type, target_id, description, action_at
+    )
+    select
+        n.workspace_id,
+        coalesce(n.client_action_id, pg_catalog.gen_random_uuid()),
+        coalesce(n.updated_by, (select auth.uid())),
+        coalesce(nullif(pg_catalog.btrim(p.username), ''), 'Team member'),
+        case
+            when n.entity_type = 'apiary' and n.deleted then 'apiary_deleted'
+            when n.entity_type = 'apiary' then 'apiary_added'
+            when n.entity_type = 'hive' and n.deleted then 'hive_deleted'
+            when n.entity_type = 'hive' then 'hive_added'
+            else 'inspection_created'
+        end,
+        n.entity_type,
+        n.entity_id::text,
+        case
+            when n.entity_type = 'inspection' then
+                public.beekeep_inspection_action_log_description(
+                    n.workspace_id, n.entity_id, '{}'::jsonb, n.payload::jsonb, true
+                )
+            else public.beekeep_workspace_action_log_description(
+                n.workspace_id,
+                n.entity_type,
+                n.entity_id,
+                n.payload::jsonb,
+                case
+                    when n.entity_type in ('apiary', 'hive') and n.deleted then 'Deleted'
+                    when n.entity_type in ('apiary', 'hive') then 'Added'
+                    else 'Created'
+                end
+            )
+        end,
+        pg_catalog.to_timestamp(
+            coalesce(nullif(n.action_at, 0), n.updated_at)::double precision / 1000.0
+        )
+    from new_rows n
+    left join public.beekeep_profiles p
+      on p.user_id = coalesce(n.updated_by, (select auth.uid()))
+    where n.entity_type in ('apiary', 'hive', 'inspection')
+      and (n.entity_type <> 'inspection' or not n.deleted)
+    on conflict (workspace_id, client_action_id) do nothing;
+
+    -- Apply-to-Apiary Feed/Treatment/Harvest inserts are written by one atomic
+    -- statement. Group that statement by the batch UUID to produce exactly one row.
+    with action_rows as (
+        select
+            n.workspace_id,
+            n.entity_type,
+            (n.payload::jsonb ->> 'batch_id')::uuid as batch_id,
+            (n.payload::jsonb ->> 'apiary_id')::bigint as apiary_id,
+            (n.payload::jsonb ->> 'hive_id')::bigint as hive_id,
+            coalesce(
+                nullif(n.payload::jsonb ->> 'occurred_at', '')::bigint,
+                nullif(n.payload::jsonb ->> 'created_at', '')::bigint,
+                n.updated_at
+            ) as action_at_ms,
+            coalesce(n.updated_by, (select auth.uid())) as actor_id
+        from new_rows n
+        where n.entity_type in ('feeding', 'treatment', 'harvest')
+          and nullif(n.payload::jsonb ->> 'batch_id', '') ~*
+              '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+    ),
+    grouped_batches as (
+        select
+            workspace_id,
+            entity_type,
+            batch_id,
+            pg_catalog.max(apiary_id) as apiary_id,
+            pg_catalog.count(distinct hive_id)::integer as hive_count,
+            pg_catalog.max(action_at_ms) as action_at_ms,
+            (pg_catalog.array_agg(actor_id))[1] as actor_id
+        from action_rows
+        group by workspace_id, entity_type, batch_id
+    )
+    insert into public.beekeep_workspace_action_log (
+        workspace_id, client_action_id, user_id, username,
+        action_type, target_type, target_id, description, action_at
+    )
+    select
+        b.workspace_id,
+        b.batch_id,
+        b.actor_id,
+        coalesce(nullif(pg_catalog.btrim(p.username), ''), 'Team member'),
+        case b.entity_type
+            when 'feeding' then 'mass_feed'
+            when 'treatment' then 'mass_treatment'
+            else 'mass_harvest'
+        end,
+        'batch',
+        b.batch_id::text,
+        pg_catalog.format(
+            'Mass %s applied to Apiary %s (%s hives)',
+            case b.entity_type
+                when 'feeding' then 'feeding'
+                when 'treatment' then 'treatment'
+                else 'harvest'
+            end,
+            coalesce(nullif(pg_catalog.btrim(a.payload::jsonb ->> 'name'), ''), b.apiary_id::text),
+            b.hive_count
+        ),
+        pg_catalog.to_timestamp(b.action_at_ms::double precision / 1000.0)
+    from grouped_batches b
+    left join public.beekeep_profiles p on p.user_id = b.actor_id
+    left join public.beekeep_workspace_documents a
+      on a.workspace_id = b.workspace_id
+     and a.entity_type = 'apiary'
+     and a.entity_id = b.apiary_id
+     and not a.deleted
+    where b.hive_count > 0
+    on conflict (workspace_id, client_action_id) do nothing;
+
+    -- Individual Feed/Treatment/Harvest records have no batch UUID. Keep
+    -- these entries separate from the Apiary-wide batch summary above.
+    insert into public.beekeep_workspace_action_log (
+        workspace_id, client_action_id, user_id, username,
+        action_type, target_type, target_id, description, action_at
+    )
+    select
+        n.workspace_id,
+        coalesce(n.client_action_id, pg_catalog.gen_random_uuid()),
+        coalesce(n.updated_by, (select auth.uid())),
+        coalesce(nullif(pg_catalog.btrim(p.username), ''), 'Team member'),
+        case n.entity_type
+            when 'feeding' then 'feeding_added'
+            when 'treatment' then 'treatment_added'
+            else 'harvest_added'
+        end,
+        n.entity_type,
+        n.entity_id::text,
+        public.beekeep_workspace_action_log_description(
+            n.workspace_id, n.entity_type, n.entity_id, n.payload::jsonb, 'Added'
+        ),
+        pg_catalog.to_timestamp(
+            coalesce(nullif(n.action_at, 0), n.updated_at)::double precision / 1000.0
+        )
+    from new_rows n
+    left join public.beekeep_profiles p
+      on p.user_id = coalesce(n.updated_by, (select auth.uid()))
+    where n.entity_type in ('feeding', 'treatment', 'harvest')
+      and nullif(n.payload::jsonb ->> 'batch_id', '') is null
+    on conflict (workspace_id, client_action_id) do nothing;
+
+    return null;
+end;
+$function$;
+
