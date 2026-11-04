@@ -80,7 +80,9 @@ begin
 
     new.action_at := coalesce(nullif(new.action_at, 0), new.updated_at, server_now_ms);
     if new.action_at > server_now_ms + 300000 then
-        new.action_at := coalesce(new.updated_at, server_now_ms);
+        -- Keep the audit timestamp grounded in server time when a device clock
+        -- is materially ahead; ordinary offline past timestamps remain unchanged.
+        new.action_at := server_now_ms;
     end if;
     if new.action_at <= 0 then
         new.action_at := server_now_ms;
