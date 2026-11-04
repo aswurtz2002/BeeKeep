@@ -29,7 +29,10 @@ data class CloudWorkspaceDocumentRow(
     val deleted: Boolean = false,
     val device_id: String = "android",
     val updated_by: String?,
-    // Supplied only by the incremental-sync RPC. The default keeps it out of ordinary upserts.
+    // Supplied by automatic Workspace Actions logging and ignored by older sync semantics.
+    val client_action_id: String? = null,
+    val action_at: Long? = null,
+    // Supplied only by the incremental-sync RPC.
     val sync_version: Long = 0L
 )
 
