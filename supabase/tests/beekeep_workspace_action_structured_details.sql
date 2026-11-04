@@ -15,6 +15,12 @@ declare
     hive_b_id bigint := 900000000000000012;
     hive_c_id bigint := 900000000000000013;
     hive_d_id bigint := 900000000000000014;
+    inspection_a_id bigint := 900000000000000031;
+    inspection_b_id bigint := 900000000000000032;
+    inspection_a_action_id uuid := pg_catalog.gen_random_uuid();
+    inspection_b_action_id uuid := pg_catalog.gen_random_uuid();
+    treatment_batch_id uuid := pg_catalog.gen_random_uuid();
+    harvest_batch_id uuid := pg_catalog.gen_random_uuid();
     move_action_id uuid := gen_random_uuid();
     noop_action_id uuid := gen_random_uuid();
     delete_action_id uuid := gen_random_uuid();
@@ -155,6 +161,59 @@ begin
         raise exception 'Metadata-only/no-op update created an action-log entry.';
     end if;
 
+    -- First inspection suppresses untouched defaults; a later inspection compares
+    -- against the previous inspection for the same hive.
+    insert into public.beekeep_workspace_documents (
+        workspace_id, entity_type, entity_id, payload, updated_at,
+        deleted, device_id, client_action_id, action_at
+    ) values (
+        workspace_to_test, 'inspection', inspection_a_id,
+        pg_catalog.jsonb_build_object(
+            'id', inspection_a_id, 'hive_id', hive_b_id,
+            'strength', 8, 'queen_status', 'Laying',
+            'mite_count', 0, 'sample_size', 300, 'eggs', 0,
+            'open_brood', 0, 'capped_brood', 0, 'notes', ''
+        )::text,
+        now_ms + 3, false, 'structured-action-test', inspection_a_action_id, now_ms + 3
+    );
+
+    if not exists (
+        select 1 from public.beekeep_workspace_action_log
+         where workspace_id = workspace_to_test
+           and client_action_id = inspection_a_action_id
+           and action_type = 'inspection_created'
+           and changes = '[{"field":"strength","old_value":null,"new_value":8}]'::jsonb
+    ) then
+        raise exception 'First inspection did not suppress default-only fields.';
+    end if;
+
+    insert into public.beekeep_workspace_documents (
+        workspace_id, entity_type, entity_id, payload, updated_at,
+        deleted, device_id, client_action_id, action_at
+    ) values (
+        workspace_to_test, 'inspection', inspection_b_id,
+        pg_catalog.jsonb_build_object(
+            'id', inspection_b_id, 'hive_id', hive_b_id,
+            'strength', 10, 'queen_status', 'Laying',
+            'mite_count', 2, 'sample_size', 300, 'eggs', 4,
+            'open_brood', 3, 'capped_brood', 0, 'notes', ''
+        )::text,
+        now_ms + 4, false, 'structured-action-test', inspection_b_action_id, now_ms + 4
+    );
+
+    if not exists (
+        select 1 from public.beekeep_workspace_action_log
+         where workspace_id = workspace_to_test
+           and client_action_id = inspection_b_action_id
+           and changes @> '[
+               {"field":"strength","old_value":8,"new_value":10},
+               {"field":"mite_count","old_value":0,"new_value":2},
+               {"field":"eggs","old_value":0,"new_value":4}
+           ]'::jsonb
+    ) then
+        raise exception 'Inspection diff was not compared against the previous inspection.';
+    end if;
+
     -- Deleted hive values remain in the old_value side of the structured diff.
     update public.beekeep_workspace_documents
        set deleted = true,
@@ -211,6 +270,79 @@ begin
        or pg_catalog.jsonb_array_length(result_row.affected_hives_snapshot) <> 2
        or not result_row.changes @> '[{"field":"amount","old_value":null,"new_value":2.5}]'::jsonb then
         raise exception 'Apiary-wide batch did not produce one structured row with affected hives and values.';
+    end if;
+
+    -- Mass Treatment and Harvest are grouped identically: one log row per batch.
+    insert into public.beekeep_workspace_documents (
+        workspace_id, entity_type, entity_id, payload, updated_at,
+        deleted, device_id, client_action_id, action_at
+    ) values
+    (
+        workspace_to_test, 'treatment', base_id + 41,
+        pg_catalog.jsonb_build_object(
+            'id', base_id + 41, 'hive_id', hive_b_id, 'apiary_id', apiary_a_id,
+            'batch_id', treatment_batch_id, 'treatment_type', 'formic',
+            'product', 'Formic Pro', 'inserted_at', '2026-11-04'
+        )::text,
+        now_ms + 5, false, 'structured-action-test', pg_catalog.gen_random_uuid(), now_ms + 5
+    ),
+    (
+        workspace_to_test, 'treatment', base_id + 42,
+        pg_catalog.jsonb_build_object(
+            'id', base_id + 42, 'hive_id', hive_d_id, 'apiary_id', apiary_a_id,
+            'batch_id', treatment_batch_id, 'treatment_type', 'formic',
+            'product', 'Formic Pro', 'inserted_at', '2026-11-04'
+        )::text,
+        now_ms + 5, false, 'structured-action-test', pg_catalog.gen_random_uuid(), now_ms + 5
+    );
+
+    if (select pg_catalog.count(*) from public.beekeep_workspace_action_log
+         where workspace_id = workspace_to_test and client_action_id = treatment_batch_id) <> 1
+       or not exists (
+           select 1 from public.beekeep_workspace_action_log
+            where workspace_id = workspace_to_test
+              and client_action_id = treatment_batch_id
+              and action_type = 'mass_treatment'
+              and affected_hive_count = 2
+              and changes @> '[{"field":"product","old_value":null,"new_value":"Formic Pro"}]'::jsonb
+       ) then
+        raise exception 'Mass Treatment did not produce one structured batch entry.';
+    end if;
+
+    insert into public.beekeep_workspace_documents (
+        workspace_id, entity_type, entity_id, payload, updated_at,
+        deleted, device_id, client_action_id, action_at
+    ) values
+    (
+        workspace_to_test, 'harvest', base_id + 51,
+        pg_catalog.jsonb_build_object(
+            'id', base_id + 51, 'hive_id', hive_b_id, 'apiary_id', apiary_a_id,
+            'batch_id', harvest_batch_id, 'supers_pulled', 2,
+            'wet_honey_weight', 18.5, 'dry_honey_weight', 15.0, 'weight_unit', 'lb'
+        )::text,
+        now_ms + 6, false, 'structured-action-test', pg_catalog.gen_random_uuid(), now_ms + 6
+    ),
+    (
+        workspace_to_test, 'harvest', base_id + 52,
+        pg_catalog.jsonb_build_object(
+            'id', base_id + 52, 'hive_id', hive_d_id, 'apiary_id', apiary_a_id,
+            'batch_id', harvest_batch_id, 'supers_pulled', 2,
+            'wet_honey_weight', 18.5, 'dry_honey_weight', 15.0, 'weight_unit', 'lb'
+        )::text,
+        now_ms + 6, false, 'structured-action-test', pg_catalog.gen_random_uuid(), now_ms + 6
+    );
+
+    if (select pg_catalog.count(*) from public.beekeep_workspace_action_log
+         where workspace_id = workspace_to_test and client_action_id = harvest_batch_id) <> 1
+       or not exists (
+           select 1 from public.beekeep_workspace_action_log
+            where workspace_id = workspace_to_test
+              and client_action_id = harvest_batch_id
+              and action_type = 'mass_harvest'
+              and affected_hive_count = 2
+              and changes @> '[{"field":"wet_honey_weight","old_value":null,"new_value":18.5}]'::jsonb
+       ) then
+        raise exception 'Mass Harvest did not produce one structured batch entry.';
     end if;
 
     select pg_catalog.count(*)
