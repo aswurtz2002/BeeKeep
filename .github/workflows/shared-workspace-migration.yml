@@ -1,3 +1,171 @@
+name: BeeKeep shared-workspace migration test
+# Avoid a queue of obsolete runs after rapid branch updates.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+
+on:
+  push:
+    paths:
+      - 'supabase/migrations/**'
+      - 'supabase/tests/**'
+      - '.github/workflows/shared-workspace-migration.yml'
+  pull_request:
+    paths:
+      - 'supabase/migrations/**'
+      - 'supabase/tests/**'
+      - '.github/workflows/shared-workspace-migration.yml'
+  workflow_dispatch:
+
+jobs:
+  migration:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      PGHOST: localhost
+      PGPORT: 5432
+      PGUSER: postgres
+      PGPASSWORD: postgres
+      PGDATABASE: postgres
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create Supabase-compatible database roles
+        run: |
+          psql -v ON_ERROR_STOP=1 <<'SQL'
+          DO $roles$
+          BEGIN
+            IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN
+              CREATE ROLE anon NOLOGIN;
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN
+              CREATE ROLE authenticated NOLOGIN;
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN
+              CREATE ROLE service_role NOLOGIN BYPASSRLS;
+            END IF;
+          END;
+          $roles$;
+          SQL
+      - name: Prepare existing per-user cloud schema and sample data
+        run: psql -v ON_ERROR_STOP=1 -f supabase/tests/shared_workspace_pre_migration.sql
+      - name: Apply Stage 1 workspace migration
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261017224333_beekeep_shared_workspaces.sql
+      - name: Verify backfill, sign-up trigger, row security, and write restrictions
+        run: psql -v ON_ERROR_STOP=1 -f supabase/tests/shared_workspace_foundation.sql
+      - name: Apply Stage 2 workspace invitations and roles migration
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261018025012_beekeep_workspace_invitations.sql
+      - name: Apply workspace role guard hardening
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261018025136_beekeep_workspace_role_guard_fix.sql
+      - name: Apply invitation acceptance fix
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261018025508_beekeep_workspace_accept_invitation_fix.sql
+      - name: Configure invitation token search paths
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261018025716_beekeep_workspace_crypto_search_path_fix.sql
+      - name: Apply short workspace invitation code migration
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261018035833_beekeep_short_workspace_invitation_codes.sql
+      - name: Verify invitation acceptance, short codes, and manager permissions
+        run: psql -v ON_ERROR_STOP=1 -f supabase/tests/workspace_invitation_security.sql
+      - name: Apply workspace-scoped shared record migration
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261018045154_beekeep_workspace_shared_documents.sql
+      - name: Apply workspace document index and policy tuning
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261018045419_beekeep_workspace_document_rls_performance.sql
+      - name: Apply personal-to-team record copy migration
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261018050700_beekeep_copy_personal_documents_to_workspace.sql
+      - name: Verify shared-record membership isolation and write permissions
+        run: psql -v ON_ERROR_STOP=1 -f supabase/tests/shared_workspace_document_security.sql
+      - name: Apply username and workspace deletion migration
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261018162900_beekeep_usernames_and_workspace_delete.sql
+      - name: Fix workspace roster RPC return types
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261018214324_beekeep_workspace_member_roster_type_fix.sql
+      - name: Verify usernames, member roster, and owner-only workspace deletion
+        run: psql -v ON_ERROR_STOP=1 -f supabase/tests/workspace_username_and_delete_security.sql
+      - name: Apply username availability and sign-up safety migration
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261020025057_beekeep_username_availability.sql
+      - name: Verify duplicate username handling and availability
+        run: psql -v ON_ERROR_STOP=1 -f supabase/tests/username_availability.sql
+      - name: Apply Ultimate workspace entitlement enforcement
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261020031200_beekeep_ultimate_workspace_entitlement.sql
+      - name: Verify Ultimate workspace ownership and invited worker access
+        run: psql -v ON_ERROR_STOP=1 -f supabase/tests/ultimate_workspace_entitlement.sql
+      - name: Apply Bee-prefixed invitation code migration
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261027020000_beekeep_bee_invitation_codes.sql
+      - name: Verify Bee code format, case-insensitive acceptance, and legacy compatibility
+        run: psql -v ON_ERROR_STOP=1 -f supabase/tests/workspace_invitation_bee_codes.sql
+
+      - name: Apply per-account Ultimate hive-limit overrides
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261027062000_beekeep_per_account_hive_limit_overrides.sql
+      - name: Verify per-account Ultimate hive-limit authorization and sync guards
+        run: psql -v ON_ERROR_STOP=1 -f supabase/tests/hive_limit_overrides.sql
+      - name: Apply protected support-admin hive-limit RPC
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261027110000_beekeep_admin_hive_limit_tool.sql
+      - name: Verify protected support-admin hive-limit operations
+        run: psql -v ON_ERROR_STOP=1 -f supabase/tests/admin_hive_limit_tool.sql
+
+      - name: Extend custom hive limits to Pro and add support audit history
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261027130000_beekeep_pro_and_ultimate_hive_limit_overrides.sql
+      - name: Verify Pro and Ultimate custom hive limits and audit trail
+        run: psql -v ON_ERROR_STOP=1 -f supabase/tests/pro_hive_limit_overrides.sql
+
+      - name: Apply incremental cloud sync version ledger
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261101143217_beekeep_incremental_sync_versions.sql
+      - name: Verify incremental cloud sync versions, paging and RLS isolation
+        run: psql -v ON_ERROR_STOP=1 -f supabase/tests/incremental_cloud_sync.sql
+      - name: Apply cloud document conflict guards
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261101200000_beekeep_document_conflict_guards.sql
+      - name: Verify stale cloud writes and permanent tombstones are blocked
+        run: psql -v ON_ERROR_STOP=1 -f supabase/tests/document_conflict_guards.sql
+      - name: Apply explicit deletion timestamp reconciliation
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261101203000_beekeep_delete_timestamp_reconciliation.sql
+      - name: Re-verify stale writes, permanent tombstones and reusable drafts
+        run: psql -v ON_ERROR_STOP=1 -f supabase/tests/document_conflict_guards.sql
+      - name: Verify explicit deletion overrides device clock skew
+        run: psql -v ON_ERROR_STOP=1 -f supabase/tests/delete_timestamp_reconciliation.sql
+      - name: Apply Commercial entitlement and apiary quota enforcement
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261102041836_beekeep_commercial_entitlements_and_apiary_limits.sql
+      - name: Restrict internal Commercial helper grants
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261102041925_beekeep_internal_commercial_owner_helper_acl.sql
+      - name: Enforce Commercial entitlement for personal cloud NFC assignments
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261102042210_beekeep_nfc_entitlement_guard.sql
+      - name: Expose workspace owner Commercial status to invited members
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261102042500_beekeep_workspace_owner_commercial_entitlement_rpc.sql
+      - name: Expose membership-scoped workspace owner quota limits
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261102043000_beekeep_workspace_owner_quota_entitlement_rpc.sql
+      - name: Verify Commercial entitlements, workspace downgrade security, NFC and apiary quotas
+        run: psql -v ON_ERROR_STOP=1 -f supabase/tests/commercial_entitlement_server_enforcement.sql
+
+      - name: Apply harvest quantity setting access controls
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261103131228_beekeep_harvest_quantity_settings.sql
+      - name: Restrict harvest quantity settings table grants
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261103131406_beekeep_harvest_quantity_settings_acl_fix.sql
+      - name: Verify harvest quantity setting scope and Owner/Admin restrictions
+        run: psql -v ON_ERROR_STOP=1 -f supabase/tests/harvest_quantity_settings_security.sql
+
+      - name: Apply atomic apiary action batch RPC
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261103170000_beekeep_atomic_action_batches.sql
+
+      - name: Apply workspace Actions log foundation
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261104002314_beekeep_workspace_action_log_foundation.sql
+      - name: Allow individual Feed, Treatment and Harvest Actions
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261104005000_beekeep_workspace_action_record_types.sql
+      - name: Apply automatic workspace Actions logging and offline replay
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261104010000_beekeep_workspace_action_automatic_logging.sql
+      - name: Verify owner-only workspace Actions access, retention, and log-only deletes
+        run: psql -v ON_ERROR_STOP=1 -f supabase/tests/workspace_action_log_security.sql
+      - name: Verify automatic workspace Actions triggers and offline replay idempotency
+        run: psql -v ON_ERROR_STOP=1 -f supabase/tests/workspace_action_log_triggers.sql
       - name: Verify atomic apiary action batches and one Actions entry per batch
         run: psql -v ON_ERROR_STOP=1 -f supabase/tests/atomic_action_batches.sql
 
