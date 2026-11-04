@@ -448,9 +448,9 @@ begin
         order by item_order
     loop
         v_action_id := nullif(item ->> 'client_action_id', '')::uuid;
-        v_entity_type := nullif(pg_catalog.btrim(item ->> 'v_entity_type'), '');
-        v_entity_id := nullif(item ->> 'v_entity_id', '')::bigint;
-        v_operation := pg_catalog.lower(pg_catalog.btrim(coalesce(item ->> 'v_operation', '')));
+        v_entity_type := nullif(pg_catalog.btrim(item ->> 'entity_type'), '');
+        v_entity_id := nullif(item ->> 'entity_id', '')::bigint;
+        v_operation := pg_catalog.lower(pg_catalog.btrim(coalesce(item ->> 'operation', '')));
         v_payload_text := item ->> 'payload';
         v_payload_json := v_payload_text::jsonb;
         v_updated_at_ms := nullif(v_payload_json ->> 'updated_at', '')::bigint;
@@ -479,7 +479,7 @@ begin
             target_workspace_id, v_entity_type, v_entity_id, v_payload_text,
             v_updated_at_ms, v_is_deleted, v_device_id_value, caller_id, v_action_id, v_action_at_ms
         )
-        on conflict (workspace_id, v_entity_type, v_entity_id)
+        on conflict (workspace_id, entity_type, entity_id)
         do update set
             payload = excluded.payload,
             updated_at = excluded.updated_at,
