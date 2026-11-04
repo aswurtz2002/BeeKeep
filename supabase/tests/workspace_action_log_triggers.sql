@@ -214,7 +214,9 @@ where workspace_id = (select value::uuid from automatic_action_log_context where
 update public.beekeep_workspace_documents
 set payload = jsonb_build_object(
         'id',96303,'hive_id',96302,'created_at',(select value::bigint from automatic_action_log_context where key='base_ms'),
-        'notes','Edited inspection','updated_at',(select value::bigint from automatic_action_log_context where key='base_ms') + 3
+        'strength',5,'queenStatus','Spotted','miteCount',4,'sampleSize',300,
+        'eggs',2.0,'honeyStores',4.0,'notes','Edited inspection',
+        'updated_at',(select value::bigint from automatic_action_log_context where key='base_ms') + 3
     )::text,
     updated_at = (select value::bigint from automatic_action_log_context where key='base_ms') + 3,
     client_action_id = '00000000-0000-4000-8000-000000000366',
@@ -385,9 +387,20 @@ begin
         select 1 from public.beekeep_workspace_action_log
         where workspace_id = (select value::uuid from automatic_action_log_context where key='workspace_id')
           and action_type = 'inspection_created'
-          and description = 'Created inspection for Hive 12'
+          and description like 'Recorded inspection for Hive 12: Strength: 3, Queen status: Laying, Mite count: 2, Sample size: 300%'
+          and description like '%Field notes added'
     ) then
         raise exception 'Inspection creation was not logged';
+    end if;
+
+    if not exists (
+        select 1 from public.beekeep_workspace_action_log
+        where workspace_id = (select value::uuid from automatic_action_log_context where key='workspace_id')
+          and action_type = 'inspection_edited'
+          and description like 'Updated inspection for Hive 12A: Strength: 3 → 5, Queen status: Laying → Spotted, Mite count: 2 → 4%'
+          and description like '%Field notes changed'
+    ) then
+        raise exception 'Inspection edit did not describe only the changed fields';
     end if;
 
     select count(*) into description_count
