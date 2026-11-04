@@ -121,6 +121,9 @@ select * from public.beekeep_apply_action_batch(
     )
 );
 
+-- The Actions list is intentionally Owner-only. Switch to the owner for log assertions.
+select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-000000000201', false);
+
 do $success_assertion$
 declare row_count integer; batch_count integer;
 begin
@@ -179,6 +182,9 @@ begin
 end;
 $success_assertion$;
 
+-- Return to the writable member for the idempotent batch retry.
+select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-000000000202', false);
+
 -- A retry with exactly the same records is idempotent; it must not duplicate or mutate history.
 select * from public.beekeep_apply_action_batch(
     (select value::uuid from action_batch_context where key = 'workspace_id'),
@@ -197,6 +203,9 @@ select * from public.beekeep_apply_action_batch(
     )
 );
 
+-- Verify retry idempotency through the Owner-only Actions view.
+select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-000000000201', false);
+
 do $batch_retry_log_assertion$
 declare logged_count integer;
 begin
@@ -212,6 +221,9 @@ begin
     end if;
 end;
 $batch_retry_log_assertion$;
+
+-- Switch back to the member for the remaining write-permission checks.
+select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-000000000202', false);
 
 -- A target hive that is no longer active/in the apiary rejects the whole request.
 do $atomic_failure_assertion$
