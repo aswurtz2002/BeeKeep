@@ -316,7 +316,11 @@ private fun WorkspaceActionChangeRow(
             fontWeight = FontWeight.Medium
         )
         val valueModifier = if (change.isExpandable) {
-            Modifier.clickable(role = Role.Button, onClick = onToggleExpanded)
+            Modifier.clickable(
+                role = Role.Button,
+                onClickLabel = if (expanded) "Collapse full value" else "Expand full value",
+                onClick = onToggleExpanded
+            )
         } else {
             Modifier
         }
