@@ -286,6 +286,9 @@ interface WorkspaceActionOutboxDao {
 
     @Query("DELETE FROM workspace_action_outbox WHERE state = 'done' AND created_at < :cutoff")
     suspend fun pruneDone(cutoff: Long)
+
+    @Query("DELETE FROM workspace_action_outbox")
+    suspend fun clearAll()
 }
 
 @Dao
