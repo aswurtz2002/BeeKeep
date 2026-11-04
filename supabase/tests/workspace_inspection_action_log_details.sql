@@ -14,11 +14,11 @@ begin
         jsonb_build_object(
             'hive_id', 96302,
             'strength', 4,
-            'queenStatus', 'Spotted',
-            'miteCount', 2,
-            'sampleSize', 300,
+            'queen_status', 'Spotted',
+            'mite_count', 2,
+            'sample_size', 300,
             'eggs', 2.0,
-            'honeyStores', 4.0,
+            'honey_stores', 4.0,
             'notes', 'private note text'
         ),
         true
@@ -36,21 +36,21 @@ begin
         jsonb_build_object(
             'hive_id', 96302,
             'strength', 3,
-            'queenStatus', 'Laying',
-            'miteCount', 2,
-            'sampleSize', 300,
+            'queen_status', 'Laying',
+            'mite_count', 2,
+            'sample_size', 300,
             'eggs', 2.0,
-            'honeyStores', 4.0,
+            'honey_stores', 4.0,
             'notes', 'old private note'
         ),
         jsonb_build_object(
             'hive_id', 96302,
             'strength', 4,
-            'queenStatus', 'Spotted',
-            'miteCount', 4,
-            'sampleSize', 300,
+            'queen_status', 'Spotted',
+            'mite_count', 4,
+            'sample_size', 300,
             'eggs', 2.0,
-            'honeyStores', 4.0,
+            'honey_stores', 4.0,
             'notes', 'new private note'
         ),
         false
