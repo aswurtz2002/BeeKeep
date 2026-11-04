@@ -233,6 +233,27 @@ data class ActionBatchOutboxEntity(
 )
 
 @Entity(
+    tableName = "workspace_action_outbox",
+    indices = [
+        Index(value = ["workspace_id", "state", "id"]),
+        Index(value = ["workspace_id", "entity_type", "entity_id", "action_at"])
+    ]
+)
+data class WorkspaceActionOutboxEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0L,
+    @ColumnInfo(name = "client_action_id") val clientActionId: String,
+    @ColumnInfo(name = "workspace_id") val workspaceId: String,
+    @ColumnInfo(name = "entity_type") val entityType: String,
+    @ColumnInfo(name = "entity_id") val entityId: Long,
+    val operation: String,
+    val payload: String,
+    @ColumnInfo(name = "action_at") val actionAt: Long,
+    @ColumnInfo(name = "created_at") val createdAt: Long = System.currentTimeMillis(),
+    val state: String = "pending",
+    @ColumnInfo(name = "last_error") val lastError: String? = null
+)
+
+@Entity(
     tableName = "workspace_action_settings",
     indices = [Index("workspace_id"), Index("owner_user_id")]
 )
