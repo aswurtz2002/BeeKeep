@@ -166,6 +166,42 @@ begin
             else coalesce(current_payload, '{}'::jsonb) -> field_key
         end;
 
+        -- A first inspection has no historical baseline. Suppress form defaults
+        -- so the log records observations, not untouched zero/blank controls.
+        if target_entity_type = 'inspection'
+           and coalesce(previous_payload, '{}'::jsonb) = '{}'::jsonb then
+            if field_key = 'queen_status'
+               and pg_catalog.lower(coalesce(new_value #>> '{}', 'laying')) = 'laying' then
+                continue;
+            elsif field_key = 'mite_count'
+               and coalesce(nullif(new_value #>> '{}', '')::numeric, 0) = 0 then
+                continue;
+            elsif field_key = 'sample_size'
+               and coalesce(nullif(current_payload ->> 'mite_count', '')::numeric, 0) = 0 then
+                continue;
+            elsif field_key in (
+                'strength', 'eggs', 'open_brood', 'capped_brood', 'honey_stores',
+                'pollen', 'empty_drawn_comb', 'emergency_cells', 'supercedure_cells',
+                'swarm_cells', 'bee_count_frames'
+            ) and coalesce(nullif(new_value #>> '{}', '')::numeric, 0) = 0 then
+                continue;
+            elsif field_key = 'disease_flags'
+               and (new_value is null or new_value = '[]'::jsonb or new_value = '""'::jsonb) then
+                continue;
+            elsif field_key = 'notes'
+               and coalesce(pg_catalog.btrim(new_value #>> '{}'), '') = '' then
+                continue;
+            end if;
+        end if;
+
+        -- Empty strings on newly-created records are untouched form defaults.
+        if coalesce(previous_payload, '{}'::jsonb) = '{}'::jsonb
+           and old_value is null
+           and pg_catalog.jsonb_typeof(new_value) = 'string'
+           and pg_catalog.btrim(new_value #>> '{}') = '' then
+            continue;
+        end if;
+
         -- Keep individual long text fields bounded in the audit table while
         -- preserving enough content for the UI's collapsed/expanded presentation.
         if pg_catalog.jsonb_typeof(old_value) = 'string'
@@ -246,6 +282,7 @@ declare
     item_apiary_name text;
     item_hive_name text;
     item_fallback_apiary_name text;
+    item_previous_payload jsonb;
 begin
     for item in
         select
@@ -319,6 +356,26 @@ begin
         if item.entity_type in ('apiary', 'hive') and item.deleted then
             item_changes := public.beekeep_workspace_action_log_build_changes(
                 item.workspace_id, item.entity_type, item_payload, '{}'::jsonb, true
+            );
+        elsif item.entity_type = 'inspection' then
+            item_previous_payload := '{}'::jsonb;
+            select d.payload::jsonb
+              into item_previous_payload
+              from public.beekeep_workspace_documents d
+             where d.workspace_id = item.workspace_id
+               and d.entity_type = 'inspection'
+               and d.entity_id <> item.entity_id
+               and not d.deleted
+               and nullif(d.payload::jsonb ->> 'hive_id', '')::bigint =
+                   nullif(item_payload ->> 'hive_id', '')::bigint
+             order by d.updated_at desc, d.entity_id desc
+             limit 1;
+            item_changes := public.beekeep_workspace_action_log_build_changes(
+                item.workspace_id,
+                item.entity_type,
+                coalesce(item_previous_payload, '{}'::jsonb),
+                item_payload,
+                false
             );
         else
             item_changes := public.beekeep_workspace_action_log_build_changes(
