@@ -255,6 +255,40 @@ interface OutboxDao {
 
 
 @Dao
+interface WorkspaceActionOutboxDao {
+    @Query("""
+        SELECT * FROM workspace_action_outbox
+        WHERE workspace_id = :workspaceId AND state = 'pending'
+        ORDER BY id
+        LIMIT :limit
+    """)
+    suspend fun pending(workspaceId: String, limit: Int = 50): List<WorkspaceActionOutboxEntity>
+
+    @Query("""
+        SELECT MAX(action_at) FROM workspace_action_outbox
+        WHERE workspace_id = :workspaceId
+          AND entity_type = :entityType
+          AND entity_id = :entityId
+    """)
+    suspend fun latestActionAt(workspaceId: String, entityType: String, entityId: Long): Long?
+
+    @Insert(onConflict = OnConflictStrategy.ABORT)
+    suspend fun enqueue(action: WorkspaceActionOutboxEntity)
+
+    @Query("UPDATE workspace_action_outbox SET state = 'done', last_error = NULL WHERE id IN (:ids)")
+    suspend fun markDone(ids: List<Long>)
+
+    @Query("UPDATE workspace_action_outbox SET state = 'pending', last_error = :error WHERE id IN (:ids)")
+    suspend fun markPendingWithError(ids: List<Long>, error: String)
+
+    @Query("SELECT COUNT(*) FROM workspace_action_outbox WHERE workspace_id = :workspaceId AND state = 'pending'")
+    suspend fun pendingCount(workspaceId: String): Int
+
+    @Query("DELETE FROM workspace_action_outbox WHERE state = 'done' AND created_at < :cutoff")
+    suspend fun pruneDone(cutoff: Long)
+}
+
+@Dao
 interface ActionBatchOutboxDao {
     @Query("SELECT * FROM action_batch_outbox WHERE state = 'pending' ORDER BY created_at, batch_id LIMIT :limit")
     suspend fun pending(limit: Int = 20): List<ActionBatchOutboxEntity>
