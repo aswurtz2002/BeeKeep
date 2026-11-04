@@ -651,11 +651,18 @@ class LocalHiveRepository(context: Context) {
     suspend fun deleteHivePermanently(hiveId: Long) = withContext(Dispatchers.IO) {
         checkWritable()
         db.withTransaction {
-            db.hives().get(hiveId) ?: throw IllegalArgumentException("Hive not found.")
+            val hive = db.hives().get(hiveId) ?: throw IllegalArgumentException("Hive not found.")
             val deletionTime = System.currentTimeMillis()
             enqueueHiveHistoryDeletions(hiveId, deletionTime)
+            // Keep the last known Hive fields in the tombstone so the server trigger can
+            // describe the deletion accurately without needing the deleted local row.
+            enqueue(
+                "hive",
+                hiveId,
+                "delete",
+                hivePayload(hive.copy(updatedAt = deletionTime, deleted = true))
+            )
             permanentlyDeleteHiveLocal(hiveId)
-            enqueue("hive", hiveId, "delete", JSONObject().put("id", hiveId).put("updated_at", deletionTime).toString())
         }
     }
 
@@ -725,13 +732,13 @@ class LocalHiveRepository(context: Context) {
             val deletionTime = System.currentTimeMillis()
             apiaryHives.forEach { hive ->
                 enqueueHiveHistoryDeletions(hive.id, deletionTime)
-                permanentlyDeleteHiveLocal(hive.id)
                 enqueue(
                     "hive",
                     hive.id,
                     "delete",
-                    JSONObject().put("id", hive.id).put("updated_at", deletionTime).toString()
+                    hivePayload(hive.copy(updatedAt = deletionTime, deleted = true))
                 )
+                permanentlyDeleteHiveLocal(hive.id)
             }
 
             // Remove the map pin locally and sync a tombstone so connected devices
