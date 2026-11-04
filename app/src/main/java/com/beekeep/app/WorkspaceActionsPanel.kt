@@ -214,7 +214,7 @@ private fun WorkspaceActionEntryCard(
                     text = presentation.header,
                     modifier = Modifier
                         .weight(1f)
-                        .semantics { contentDescription = presentation.header },
+                        .semantics { contentDescription = presentation.accessibilityDescription },
                     style = MaterialTheme.typography.labelLarge,
                     fontWeight = FontWeight.SemiBold
                 )
