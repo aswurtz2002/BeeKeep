@@ -44,6 +44,7 @@ internal data class WorkspaceActionChangePresentation(
  * One formatter owns action wording, field labels, timestamp localization, value units,
  * long-value previews, and the complete TalkBack sentence used by the Actions UI.
  * Timestamp and treatment-date output is localized using the caller's device locale and zone.
+ * Full field values remain separate from the short previews so expanded text and TalkBack never lose detail.
  */
 internal object WorkspaceActionFormatter {
     const val MAX_PREVIEW_LENGTH = 80
