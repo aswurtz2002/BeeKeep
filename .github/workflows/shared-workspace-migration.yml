@@ -168,3 +168,14 @@ jobs:
         run: psql -v ON_ERROR_STOP=1 -f supabase/tests/workspace_action_log_triggers.sql
       - name: Verify atomic apiary action batches and one Actions entry per batch
         run: psql -v ON_ERROR_STOP=1 -f supabase/tests/atomic_action_batches.sql
+
+      - name: Apply detailed inspection Actions logging
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261104091300_beekeep_inspection_action_details.sql
+      - name: Apply readable inspection strength labels
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261104092000_beekeep_inspection_action_strength_labels.sql
+      - name: Align inspection logger with snake-case cloud payloads
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261104093000_beekeep_inspection_action_payload_keys.sql
+      - name: Map stored strength values to field grades
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261104094000_beekeep_inspection_strength_grade_mapping.sql
+      - name: Verify detailed inspection Actions descriptions
+        run: psql -v ON_ERROR_STOP=1 -f supabase/tests/workspace_inspection_action_log_details.sql
