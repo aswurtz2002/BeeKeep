@@ -15,6 +15,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -37,15 +38,17 @@ fun WorkspaceActionsPanel(
     if (!isOwner) return
 
     val scope = rememberCoroutineScope()
+    val syncRefreshVersion by cloud.workspaceActionLogRefreshVersion.collectAsState()
     var entries by remember(workspaceId) { mutableStateOf<List<BeeKeepWorkspaceActionLogEntry>>(emptyList()) }
     var retention by remember(workspaceId) { mutableStateOf("keep") }
     var loading by remember(workspaceId) { mutableStateOf(true) }
+    var hasLoaded by remember(workspaceId) { mutableStateOf(false) }
     var saving by remember { mutableStateOf(false) }
     var error by remember(workspaceId) { mutableStateOf<String?>(null) }
     var deleteTarget by remember { mutableStateOf<BeeKeepWorkspaceActionLogEntry?>(null) }
 
     suspend fun refresh() {
-        loading = true
+        if (!hasLoaded) loading = true
         val settings = cloud.getWorkspaceActionLogSettings(workspaceId)
         if (settings.isSuccess) retention = settings.value?.retention_mode ?: "keep"
         else error = settings.error ?: "Couldn't load activity settings."
@@ -55,9 +58,11 @@ fun WorkspaceActionsPanel(
             error = null
         } else error = result.error ?: "Couldn't load workspace activity."
         loading = false
+        hasLoaded = true
     }
 
-    LaunchedEffect(workspaceId) { refresh() }
+    // A sync completion refreshes the list in place; no app restart or tab re-entry needed.
+    LaunchedEffect(workspaceId, syncRefreshVersion) { refresh() }
 
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         WorkspacePanel(title = "Workspace actions") {
