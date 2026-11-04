@@ -21,9 +21,9 @@ declare
     old_value text;
     new_value text;
     field_keys text[] := array[
-        'strength','queenStatus','miteCount','sampleSize','eggs','openBrood',
-        'cappedBrood','honeyStores','pollen','emptyDrawnComb','emergencyCells',
-        'supercedureCells','swarmCells','diseaseFlags','beeCountFrames','notes'
+        'strength','queen_status','mite_count','sample_size','eggs','open_brood',
+        'capped_brood','honey_stores','pollen','empty_drawn_comb','emergency_cells',
+        'supercedure_cells','swarm_cells','disease_flags','bee_count_frames','notes'
     ];
 begin
     hive_id := nullif(current_payload ->> 'hive_id', '')::bigint;
@@ -40,20 +40,20 @@ begin
     foreach field_key in array field_keys loop
         field_label := case field_key
             when 'strength' then 'Strength'
-            when 'queenStatus' then 'Queen status'
-            when 'miteCount' then 'Mite count'
-            when 'sampleSize' then 'Sample size'
+            when 'queen_status' then 'Queen status'
+            when 'mite_count' then 'Mite count'
+            when 'sample_size' then 'Sample size'
             when 'eggs' then 'Eggs'
-            when 'openBrood' then 'Open brood'
-            when 'cappedBrood' then 'Capped brood'
-            when 'honeyStores' then 'Honey stores'
+            when 'open_brood' then 'Open brood'
+            when 'capped_brood' then 'Capped brood'
+            when 'honey_stores' then 'Honey stores'
             when 'pollen' then 'Pollen'
-            when 'emptyDrawnComb' then 'Empty drawn comb'
-            when 'emergencyCells' then 'Emergency cells'
-            when 'supercedureCells' then 'Supersedure cells'
-            when 'swarmCells' then 'Swarm cells'
-            when 'diseaseFlags' then 'Disease flags'
-            when 'beeCountFrames' then 'Bee count'
+            when 'empty_drawn_comb' then 'Empty drawn comb'
+            when 'emergency_cells' then 'Emergency cells'
+            when 'supercedure_cells' then 'Supersedure cells'
+            when 'swarm_cells' then 'Swarm cells'
+            when 'disease_flags' then 'Disease flags'
+            when 'bee_count_frames' then 'Bee count'
             when 'notes' then 'Field notes'
             else field_key
         end;
@@ -65,11 +65,11 @@ begin
                 if pg_catalog.btrim(new_value) <> '' then
                     details := pg_catalog.array_append(details, 'Field notes added');
                 end if;
-            elsif field_key = 'diseaseFlags' then
+            elsif field_key = 'disease_flags' then
                 if pg_catalog.btrim(new_value) <> '' then
                     details := pg_catalog.array_append(details, field_label || ': ' || new_value);
                 end if;
-            elsif field_key in ('strength','queenStatus','miteCount','sampleSize') then
+            elsif field_key in ('strength','queen_status','mite_count','sample_size') then
                 if new_value <> '' then
                     if field_key = 'strength' then
                         new_value := case new_value when '1' then 'Very Weak' when '2' then 'Weak' when '3' then 'Moderate' when '4' then 'Strong' when '5' then 'Very Strong' else new_value end;
@@ -82,7 +82,7 @@ begin
         elsif (previous_payload -> field_key) is distinct from (current_payload -> field_key) then
             if field_key = 'notes' then
                 details := pg_catalog.array_append(details, 'Field notes changed');
-            elsif field_key = 'diseaseFlags' then
+            elsif field_key = 'disease_flags' then
                 details := pg_catalog.array_append(details, field_label || ': ' ||
                     coalesce(nullif(old_value, ''), 'None') || ' → ' ||
                     coalesce(nullif(new_value, ''), 'None'));
