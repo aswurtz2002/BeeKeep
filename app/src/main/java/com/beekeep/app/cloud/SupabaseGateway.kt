@@ -40,6 +40,7 @@ import io.ktor.client.call.body
 import java.util.UUID
 import org.json.JSONObject
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -1588,6 +1589,69 @@ class SupabaseGateway(
         return result
     }
 
+    /**
+     * Replays every locally recorded team mutation in insertion order. The database
+     * trigger creates each Actions entry from the actual accepted document transition.
+     * A stable action UUID makes a retry safe if the response is lost after commit.
+     */
+    private suspend fun uploadPendingWorkspaceActionChanges(workspaceId: String) {
+        val supabase = client ?: throw IllegalStateException("BeeKeep Cloud is not configured.")
+        while (true) {
+            val pending = repository.pendingWorkspaceActionChanges(workspaceId, limit = 50)
+            if (pending.isEmpty()) return
+            if (repository.activeWorkspaceId.value != workspaceId) {
+                throw IllegalStateException(
+                    "The selected workspace changed before offline actions could sync. Switch back to the original workspace and sync again."
+                )
+            }
+
+            try {
+                val actions = buildJsonArray {
+                    pending.forEach { action ->
+                        add(buildJsonObject {
+                            put("client_action_id", action.clientActionId)
+                            put("entity_type", action.entityType)
+                            put("entity_id", action.entityId)
+                            put("operation", action.operation)
+                            put("payload", action.payload)
+                            put("action_at", action.actionAt)
+                            put("device_id", deviceId)
+                        })
+                    }
+                }
+                val confirmation = supabase.postgrest.rpc(
+                    "beekeep_replay_workspace_action_changes",
+                    ReplayWorkspaceActionChangesParams(
+                        target_workspace_id = workspaceId,
+                        target_actions = actions
+                    )
+                ).decodeList<ReplayWorkspaceActionChangesResult>().singleOrNull()
+                    ?: throw IllegalStateException(
+                        "The server did not confirm the offline workspace actions."
+                    )
+                if (confirmation.processed_actions != pending.size) {
+                    throw IllegalStateException(
+                        "The server confirmed ${confirmation.processed_actions} of ${pending.size} offline workspace actions."
+                    )
+                }
+                if (repository.activeWorkspaceId.value != workspaceId) {
+                    throw IllegalStateException(
+                        "The selected workspace changed while offline actions were syncing. The same actions will safely retry."
+                    )
+                }
+                repository.completeWorkspaceActionChanges(pending.map { it.id })
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Throwable) {
+                repository.markWorkspaceActionChangesError(
+                    pending.map { it.id },
+                    error.message ?: "Offline workspace actions could not sync."
+                )
+                throw error
+            }
+        }
+    }
+
     private suspend fun syncSharedWorkspace(
         workspaceId: String,
         userId: String,
@@ -1652,6 +1716,11 @@ class SupabaseGateway(
             val cursorKey = workspaceSyncCursorKey(userId, workspaceId)
             val previousCursor = readSyncCursor(cursorKey)
             if (isWritable) {
+                // Replay immutable action snapshots before draining the coalescing document
+                // outbox. This preserves repeated offline edits to the same record; the
+                // ordinary outbox then reconciles to the final accepted cloud state.
+                uploadPendingWorkspaceActionChanges(workspaceId)
+
                 // Keep uploading bounded chunks until the selected workspace outbox drains.
                 // Conflict checks now read only the cloud records for this pending outbox batch.
                 while (true) {
