@@ -20,7 +20,7 @@ comment on column public.beekeep_workspace_documents.action_at is
 create or replace function public.beekeep_workspace_document_action_stamp()
 returns trigger
 language plpgsql
-security invoker
+security definer
 set search_path = ''
 as $function$
 declare
@@ -36,11 +36,24 @@ begin
         end if;
 
         if new.client_action_id is null
-           or new.client_action_id is not distinct from old.client_action_id then
+           or new.client_action_id is not distinct from old.client_action_id
+           or exists (
+                select 1
+                from public.beekeep_workspace_action_log l
+                where l.workspace_id = new.workspace_id
+                  and l.client_action_id = new.client_action_id
+           ) then
             new.client_action_id := pg_catalog.gen_random_uuid();
         end if;
     else
-        new.client_action_id := coalesce(new.client_action_id, pg_catalog.gen_random_uuid());
+        if new.client_action_id is null or exists (
+            select 1
+            from public.beekeep_workspace_action_log l
+            where l.workspace_id = new.workspace_id
+              and l.client_action_id = new.client_action_id
+        ) then
+            new.client_action_id := pg_catalog.gen_random_uuid();
+        end if;
     end if;
 
     new.action_at := coalesce(nullif(new.action_at, 0), new.updated_at, server_now_ms);
@@ -422,6 +435,7 @@ begin
         device_id_value := coalesce(nullif(pg_catalog.btrim(item ->> 'device_id'), ''), 'android');
 
         if action_id is null
+           or entity_type is null
            or entity_type not in ('apiary', 'hive', 'inspection')
            or entity_id is null or entity_id <= 0
            or operation not in ('upsert', 'delete')
