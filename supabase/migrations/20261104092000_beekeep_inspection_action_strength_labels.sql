@@ -72,7 +72,7 @@ begin
             elsif field_key in ('strength','queen_status','mite_count','sample_size') then
                 if new_value <> '' then
                     if field_key = 'strength' then
-                        new_value := case new_value when '1' then 'Very Weak' when '2' then 'Weak' when '3' then 'Moderate' when '4' then 'Strong' when '5' then 'Very Strong' else new_value end;
+                        new_value := case new_value when '2' then 'Very Weak' when '4' then 'Weak' when '6' then 'Moderate' when '8' then 'Strong' when '10' then 'Very Strong' else new_value end;
                     end if;
                     details := pg_catalog.array_append(details, field_label || ': ' || new_value);
                 end if;
@@ -88,8 +88,8 @@ begin
                     coalesce(nullif(new_value, ''), 'None'));
             else
                 if field_key = 'strength' then
-                    old_value := case old_value when '1' then 'Very Weak' when '2' then 'Weak' when '3' then 'Moderate' when '4' then 'Strong' when '5' then 'Very Strong' else old_value end;
-                    new_value := case new_value when '1' then 'Very Weak' when '2' then 'Weak' when '3' then 'Moderate' when '4' then 'Strong' when '5' then 'Very Strong' else new_value end;
+                    old_value := case old_value when '2' then 'Very Weak' when '4' then 'Weak' when '6' then 'Moderate' when '8' then 'Strong' when '10' then 'Very Strong' else old_value end;
+                    new_value := case new_value when '2' then 'Very Weak' when '4' then 'Weak' when '6' then 'Moderate' when '8' then 'Strong' when '10' then 'Very Strong' else new_value end;
                 end if;
                 details := pg_catalog.array_append(details, field_label || ': ' ||
                     coalesce(nullif(old_value, ''), 'Not set') || ' → ' ||
