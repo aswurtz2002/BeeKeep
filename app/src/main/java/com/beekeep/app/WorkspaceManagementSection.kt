@@ -557,6 +557,13 @@ fun WorkspaceManagementSection(
                         selected = selectedWorkspaceSection == "people",
                         modifier = Modifier.weight(1f)
                     ) { selectedWorkspaceSection = "people" }
+                    if (selectedWorkspace?.member_role == "owner") {
+                        WorkspaceSectionTab(
+                            label = "Actions",
+                            selected = selectedWorkspaceSection == "actions",
+                            modifier = Modifier.weight(1f)
+                        ) { selectedWorkspaceSection = "actions" }
+                    }
                     if (!selectedWorkspaceReadOnly && (selectedWorkspace?.member_role == "owner" || selectedWorkspace?.member_role == "admin")) {
                         WorkspaceSectionTab(
                             label = "Settings",
@@ -753,6 +760,14 @@ fun WorkspaceManagementSection(
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
+                }
+
+                if (selectedWorkspaceSection == "actions" && workspace.member_role == "owner") {
+                    WorkspaceActionsPanel(
+                        cloud = cloud,
+                        workspaceId = workspace.id,
+                        isOwner = true
+                    )
                 }
 
                 if (selectedWorkspaceSection == "people") {
@@ -1466,7 +1481,7 @@ private fun WorkspaceMemberCard(
 }
 
 @Composable
-private fun WorkspacePanel(
+fun WorkspacePanel(
     title: String,
     description: String? = null,
     collapsible: Boolean = false,

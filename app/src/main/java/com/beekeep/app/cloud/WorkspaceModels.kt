@@ -132,6 +132,40 @@ data class WorkspaceRemoveMemberParams(
     val target_user_id: String
 )
 
+
+@Serializable
+data class BeeKeepWorkspaceActionLogEntry(
+    val id: String,
+    val workspace_id: String,
+    val client_action_id: String,
+    val user_id: String? = null,
+    val username: String,
+    val action_type: String,
+    val target_type: String,
+    val target_id: String? = null,
+    val description: String,
+    val action_at: String,
+    val created_at: String,
+    val deleted_at: String? = null
+)
+
+@Serializable
+data class BeeKeepWorkspaceActionLogSettings(
+    val workspace_id: String,
+    val retention_mode: String = "keep",
+    val updated_at: String = "",
+    val updated_by: String? = null
+)
+
+@Serializable
+data class WorkspaceActionRetentionParams(
+    val target_workspace_id: String,
+    val target_retention_mode: String
+)
+
+@Serializable
+data class WorkspaceActionDeleteParams(val target_entry_id: String)
+
 /**
  * Accept the current Bee + six-digit invitation format and older invitations that
  * were already issued before the format change.
