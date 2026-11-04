@@ -85,6 +85,46 @@ values
   (select value::bigint from automatic_action_log_context where key='base_ms')
  );
 
+-- Standalone Feed/Treatment/Harvest saves must be logged individually too.
+insert into public.beekeep_workspace_documents (
+    workspace_id, entity_type, entity_id, payload, updated_at, deleted, device_id,
+    updated_by, client_action_id, action_at
+)
+values
+ (
+  (select value::uuid from automatic_action_log_context where key='workspace_id'),
+  'feeding', 96304,
+  jsonb_build_object('id',96304,'hive_id',96302,'apiary_id',96301,'feed_type','Sugar syrup','ratio','1:1','amount',2,'unit','L','updated_at',(select value::bigint from automatic_action_log_context where key='base_ms') + 8)::text,
+  (select value::bigint from automatic_action_log_context where key='base_ms') + 8,
+  false,'automatic-log-test',auth.uid(),'00000000-0000-4000-8000-000000000370',
+  (select value::bigint from automatic_action_log_context where key='base_ms') + 8
+ ),
+ (
+  (select value::uuid from automatic_action_log_context where key='workspace_id'),
+  'treatment', 96305,
+  jsonb_build_object('id',96305,'hive_id',96302,'apiary_id',96301,'treatment_type','Varroa','product','Oxalic acid','updated_at',(select value::bigint from automatic_action_log_context where key='base_ms') + 9)::text,
+  (select value::bigint from automatic_action_log_context where key='base_ms') + 9,
+  false,'automatic-log-test',auth.uid(),'00000000-0000-4000-8000-000000000371',
+  (select value::bigint from automatic_action_log_context where key='base_ms') + 9
+ ),
+ (
+  (select value::uuid from automatic_action_log_context where key='workspace_id'),
+  'harvest', 96306,
+  jsonb_build_object('id',96306,'hive_id',96302,'apiary_id',96301,'dry_honey_weight',12,'weight_unit','kg','updated_at',(select value::bigint from automatic_action_log_context where key='base_ms') + 10)::text,
+  (select value::bigint from automatic_action_log_context where key='base_ms') + 10,
+  false,'automatic-log-test',auth.uid(),'00000000-0000-4000-8000-000000000372',
+  (select value::bigint from automatic_action_log_context where key='base_ms') + 10
+ );
+
+update public.beekeep_workspace_documents
+set payload = jsonb_build_object('id',96304,'hive_id',96302,'apiary_id',96301,'feed_type','Fondant','ratio','','amount',1,'unit','kg','updated_at',(select value::bigint from automatic_action_log_context where key='base_ms') + 11)::text,
+    updated_at = (select value::bigint from automatic_action_log_context where key='base_ms') + 11,
+    client_action_id = '00000000-0000-4000-8000-000000000373',
+    action_at = (select value::bigint from automatic_action_log_context where key='base_ms') + 11,
+    updated_by = auth.uid()
+where workspace_id = (select value::uuid from automatic_action_log_context where key='workspace_id')
+  and entity_type = 'feeding' and entity_id = 96304;
+
 -- Members can write business documents, but cannot read the owner-only activity log.
 do $member_cannot_read_assertion$
 declare visible_count integer;
@@ -272,7 +312,7 @@ begin
     from public.beekeep_workspace_action_log
     where workspace_id = (select value::uuid from automatic_action_log_context where key='workspace_id');
 
-    if row_count <> 10 or unique_ids <> 10 then
+    if row_count <> 14 or unique_ids <> 14 then
         raise exception 'Expected 10 distinct action entries after offline replay, retry, and UUID reuse; found % entries and % UUIDs', row_count, unique_ids;
     end if;
 
@@ -302,6 +342,43 @@ begin
           and description = 'Edited apiary North Yard 2'
     ) then
         raise exception 'Reusing an old action UUID suppressed a later apiary edit';
+    end if;
+
+    if not exists (
+        select 1 from public.beekeep_workspace_action_log
+        where workspace_id = (select value::uuid from automatic_action_log_context where key='workspace_id')
+          and action_type = 'feeding_added'
+          and description = 'Added feeding for Hive 12 in Apiary North'
+          and username = 'ActionMember'
+    ) then
+        raise exception 'Standalone feeding creation was not logged';
+    end if;
+
+    if not exists (
+        select 1 from public.beekeep_workspace_action_log
+        where workspace_id = (select value::uuid from automatic_action_log_context where key='workspace_id')
+          and action_type = 'feeding_edited'
+          and description = 'Edited feeding for Hive 12 in Apiary North'
+    ) then
+        raise exception 'Standalone feeding edit was not logged';
+    end if;
+
+    if not exists (
+        select 1 from public.beekeep_workspace_action_log
+        where workspace_id = (select value::uuid from automatic_action_log_context where key='workspace_id')
+          and action_type = 'treatment_added'
+          and description = 'Added treatment for Hive 12 in Apiary North'
+    ) then
+        raise exception 'Standalone treatment creation was not logged';
+    end if;
+
+    if not exists (
+        select 1 from public.beekeep_workspace_action_log
+        where workspace_id = (select value::uuid from automatic_action_log_context where key='workspace_id')
+          and action_type = 'harvest_added'
+          and description = 'Added harvest for Hive 12 in Apiary North'
+    ) then
+        raise exception 'Standalone harvest creation was not logged';
     end if;
 
     if not exists (
