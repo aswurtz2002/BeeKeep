@@ -1930,7 +1930,7 @@ class SupabaseGateway(
         require(workspaceId.isNotBlank()) { "A team workspace is required." }
         client!!.from("beekeep_workspace_action_log")
             .select {
-                filter { eq("workspace_id", workspaceId); isNull("deleted_at") }
+                filter { eq("workspace_id", workspaceId) }
                 order(column = "action_at", order = Order.DESCENDING)
                 order(column = "id", order = Order.DESCENDING)
                 limit(200)
