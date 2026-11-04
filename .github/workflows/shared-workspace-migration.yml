@@ -155,10 +155,14 @@ jobs:
 
       - name: Apply atomic apiary action batch RPC
         run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261103170000_beekeep_atomic_action_batches.sql
-      - name: Verify atomic apiary action batches, retries and workspace permissions
-        run: psql -v ON_ERROR_STOP=1 -f supabase/tests/atomic_action_batches.sql
 
       - name: Apply workspace Actions log foundation
         run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261104002314_beekeep_workspace_action_log_foundation.sql
+      - name: Apply automatic workspace Actions logging and offline replay
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261104010000_beekeep_workspace_action_automatic_logging.sql
       - name: Verify owner-only workspace Actions access, retention, and log-only deletes
         run: psql -v ON_ERROR_STOP=1 -f supabase/tests/workspace_action_log_security.sql
+      - name: Verify automatic workspace Actions triggers and offline replay idempotency
+        run: psql -v ON_ERROR_STOP=1 -f supabase/tests/workspace_action_log_triggers.sql
+      - name: Verify atomic apiary action batches and one Actions entry per batch
+        run: psql -v ON_ERROR_STOP=1 -f supabase/tests/atomic_action_batches.sql
