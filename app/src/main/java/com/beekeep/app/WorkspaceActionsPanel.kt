@@ -351,7 +351,7 @@ private fun WorkspaceActionChangeRow(
                 }
             },
             style = MaterialTheme.typography.bodySmall,
-            maxLines = if (expanded) Int.MAX_VALUE else 3,
+            maxLines = if (expanded) Int.MAX_VALUE else 5,
             overflow = TextOverflow.Ellipsis
         )
     }
