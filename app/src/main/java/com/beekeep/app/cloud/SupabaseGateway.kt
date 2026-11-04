@@ -1957,7 +1957,7 @@ class SupabaseGateway(
         client!!.postgrest.rpc(
             "beekeep_workspace_action_log_set_retention",
             WorkspaceActionRetentionParams(workspaceId, retentionMode)
-        ).decodeList<String>().firstOrNull() ?: retentionMode
+        ).decodeSingle<String>()
     }
 
     suspend fun deleteWorkspaceActionLogEntry(
@@ -1967,7 +1967,7 @@ class SupabaseGateway(
         client!!.postgrest.rpc(
             "beekeep_workspace_action_log_delete",
             WorkspaceActionDeleteParams(entryId)
-        ).decodeList<Boolean>().firstOrNull() ?: false
+        ).decodeSingle<Boolean>()
     }
 
     /**
