@@ -217,8 +217,10 @@ class LocalHiveRepository(context: Context) {
             db.hives().clearAll()
             db.apiaries().clearAll()
             db.outbox().clearAll()
-            // A reset must not let a queued atomic batch recreate the records being wiped.
+            // A reset must not let a queued atomic batch or offline audit replay
+            // recreate business records that the user intentionally cleared.
             db.actionBatchOutbox().clearAll()
+            db.workspaceActionOutbox().clearAll()
 
             recordsToDelete.forEach { (type, id) ->
                 val draftKey = inspectionNoteDraftKey(activeDraftWorkspaceId, id)
