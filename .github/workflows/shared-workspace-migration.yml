@@ -157,3 +157,8 @@ jobs:
         run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261103170000_beekeep_atomic_action_batches.sql
       - name: Verify atomic apiary action batches, retries and workspace permissions
         run: psql -v ON_ERROR_STOP=1 -f supabase/tests/atomic_action_batches.sql
+
+      - name: Apply workspace Actions log foundation
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261103200000_beekeep_workspace_action_log_foundation.sql
+      - name: Verify owner-only workspace Actions access, retention, and log-only deletes
+        run: psql -v ON_ERROR_STOP=1 -f supabase/tests/workspace_action_log_security.sql
