@@ -152,14 +152,28 @@ begin
           and client_action_id = (select value::uuid from action_batch_context where key='batch_id')
           and action_type = 'mass_feed';
 
-        if batch_count <> 1 or not exists (
+        if batch_count <> 1 then
+            raise exception 'Expected one mass_feed Actions row for batch %, found %. Existing rows: %',
+                (select value from action_batch_context where key='batch_id'),
+                batch_count,
+                coalesce((
+                    select pg_catalog.string_agg(
+                        l.action_type || ':' || l.description || ':' || l.client_action_id::text,
+                        ' | '
+                    )
+                    from public.beekeep_workspace_action_log l
+                    where l.workspace_id = (select value::uuid from action_batch_context where key='workspace_id')
+                ), 'none');
+        end if;
+
+        if not exists (
             select 1
             from public.beekeep_workspace_action_log
             where workspace_id = (select value::uuid from action_batch_context where key='workspace_id')
               and client_action_id = (select value::uuid from action_batch_context where key='batch_id')
               and description = 'Mass feeding applied to Apiary Batch Apiary (2 hives)'
         ) then
-            raise exception 'A two-hive Feed batch did not create exactly one correctly described Actions entry';
+            raise exception 'Mass batch entry found but its action type, batch UUID or description was incorrect';
         end if;
     end if;
 end;
