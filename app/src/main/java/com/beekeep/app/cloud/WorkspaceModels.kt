@@ -146,7 +146,29 @@ data class BeeKeepWorkspaceActionLogEntry(
     val description: String,
     val action_at: String,
     val created_at: String,
-    val deleted_at: String? = null
+    val deleted_at: String? = null,
+    val structured_version: Int = 0,
+    val apiary_id: Long? = null,
+    val apiary_name_snapshot: String? = null,
+    val hive_id: Long? = null,
+    val hive_name_snapshot: String? = null,
+    val changes: List<BeeKeepWorkspaceActionChange> = emptyList(),
+    val affected_hive_count: Int? = null,
+    val affected_hive_ids: List<Long> = emptyList(),
+    val affected_hives_snapshot: List<BeeKeepWorkspaceAffectedHiveSnapshot> = emptyList()
+)
+
+@Serializable
+data class BeeKeepWorkspaceActionChange(
+    val field: String,
+    val old_value: kotlinx.serialization.json.JsonElement? = null,
+    val new_value: kotlinx.serialization.json.JsonElement? = null
+)
+
+@Serializable
+data class BeeKeepWorkspaceAffectedHiveSnapshot(
+    val hive_id: Long,
+    val name: String
 )
 
 @Serializable
