@@ -125,3 +125,15 @@ data class ApplyActionBatchResult(
     val saved_records: Int,
     val already_applied: Boolean
 )
+
+@Serializable
+data class ReplayWorkspaceActionChangesParams(
+    val target_workspace_id: String,
+    val target_actions: JsonArray
+)
+
+@Serializable
+data class ReplayWorkspaceActionChangesResult(
+    val processed_actions: Int,
+    val applied_actions: Int
+)
