@@ -13,7 +13,7 @@ begin
         '{}'::jsonb,
         jsonb_build_object(
             'hive_id', 96302,
-            'strength', 4,
+            'strength', 8,
             'queen_status', 'Spotted',
             'mite_count', 2,
             'sample_size', 300,
@@ -35,7 +35,7 @@ begin
         96303,
         jsonb_build_object(
             'hive_id', 96302,
-            'strength', 3,
+            'strength', 6,
             'queen_status', 'Laying',
             'mite_count', 2,
             'sample_size', 300,
@@ -45,7 +45,7 @@ begin
         ),
         jsonb_build_object(
             'hive_id', 96302,
-            'strength', 4,
+            'strength', 8,
             'queen_status', 'Spotted',
             'mite_count', 4,
             'sample_size', 300,
