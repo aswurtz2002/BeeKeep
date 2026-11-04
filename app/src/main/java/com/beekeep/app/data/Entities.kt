@@ -235,6 +235,7 @@ data class ActionBatchOutboxEntity(
 @Entity(
     tableName = "workspace_action_outbox",
     indices = [
+        Index(value = ["client_action_id"], unique = true),
         Index(value = ["workspace_id", "state", "id"]),
         Index(value = ["workspace_id", "entity_type", "entity_id", "action_at"])
     ]
