@@ -142,6 +142,26 @@ begin
     if batch_count <> 2 then
         raise exception 'Expected exactly two feeding records for the apiary batch';
     end if;
+
+    -- The workspace-document insert trigger groups all hive rows sharing one
+    -- batch UUID into exactly one owner-visible Actions entry.
+    if to_regclass('public.beekeep_workspace_action_log') is not null then
+        select count(*) into batch_count
+        from public.beekeep_workspace_action_log
+        where workspace_id = (select value::uuid from action_batch_context where key='workspace_id')
+          and client_action_id = (select value::uuid from action_batch_context where key='batch_id')
+          and action_type = 'mass_feed';
+
+        if batch_count <> 1 or not exists (
+            select 1
+            from public.beekeep_workspace_action_log
+            where workspace_id = (select value::uuid from action_batch_context where key='workspace_id')
+              and client_action_id = (select value::uuid from action_batch_context where key='batch_id')
+              and description = 'Mass feeding applied to Apiary Batch Apiary (2 hives)'
+        ) then
+            raise exception 'A two-hive Feed batch did not create exactly one correctly described Actions entry';
+        end if;
+    end if;
 end;
 $success_assertion$;
 
@@ -162,6 +182,22 @@ select * from public.beekeep_apply_action_batch(
             'payload',jsonb_build_object('id',92012,'hive_id',92002,'created_at',2000,'updated_at',2000,'type','feeding','title','Feeding','detail','2 L • Sugar syrup 1:1','apiary_id',92000,'batch_id',(select value from action_batch_context where key='batch_id'))::text)
     )
 );
+
+do $batch_retry_log_assertion$
+declare logged_count integer;
+begin
+    if to_regclass('public.beekeep_workspace_action_log') is not null then
+        select count(*) into logged_count
+        from public.beekeep_workspace_action_log
+        where workspace_id = (select value::uuid from action_batch_context where key='workspace_id')
+          and client_action_id = (select value::uuid from action_batch_context where key='batch_id')
+          and action_type = 'mass_feed';
+        if logged_count <> 1 then
+            raise exception 'An idempotent batch retry duplicated its Actions entry';
+        end if;
+    end if;
+end;
+$batch_retry_log_assertion$;
 
 -- A target hive that is no longer active/in the apiary rejects the whole request.
 do $atomic_failure_assertion$
