@@ -67,6 +67,8 @@ private object WorkspaceActionLogRefreshSignal {
 private const val SYNC_UPLOAD_BATCH_SIZE = 200
 private const val SYNC_DOWNLOAD_PAGE_SIZE = 500
 private const val SYNC_CONFLICT_LOOKUP_BATCH_SIZE = 100
+private const val CLOUD_DATA_ATTACHMENT_PENDING_USER_PREF = "cloud_data_attachment_pending_user_id"
+private const val CLOUD_DATA_ATTACHMENT_PAUSED_MESSAGE = "Cloud sync is paused while this device's existing records wait for review. Nothing will be uploaded or deleted yet."
 
 class SupabaseGateway(
     private val context: Context,
@@ -104,6 +106,9 @@ class SupabaseGateway(
     /** Emits after any configured sync attempt completes, including WorkManager syncs. */
     val workspaceActionLogRefreshVersion: StateFlow<Long> = WorkspaceActionLogRefreshSignal.version
     private val _accountInitialized = MutableStateFlow(false)
+    /** True when this signed-in account has not yet reviewed this device's pre-existing local data. */
+    private val _localDataAttachmentRequired = MutableStateFlow(false)
+    val localDataAttachmentRequired: StateFlow<Boolean> = _localDataAttachmentRequired.asStateFlow()
     /** True after Supabase has restored the stored session and the account identity is known. */
     val accountInitialized: StateFlow<Boolean> = _accountInitialized.asStateFlow()
 
@@ -162,6 +167,7 @@ class SupabaseGateway(
             val session = supabase.auth.currentSessionOrNull()
             val userId = session?.user?.id?.trim()?.takeIf { it.isNotEmpty() }
             if (userId == null) {
+                _localDataAttachmentRequired.value = false
                 // The auth SDK can have no current session when an expired token cannot refresh
                 // offline. An explicit in-app sign-out clears the active workspace before it gets
                 // here, so retain an account-bound selection as read-only instead of mistaking an
@@ -211,7 +217,20 @@ class SupabaseGateway(
                     _account.value = CloudAccountState(configured = true, signedIn = false)
                 }
             } else {
-                appContext.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE).edit()
+                val accountPrefs = appContext.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
+                val previousUserId = accountPrefs.getString("last_cloud_user_id", null)
+                    ?.trim()?.takeIf { it.isNotEmpty() }
+                if (previousUserId != userId) {
+                    // A first login on this device (or a switch to another account) must not
+                    // upload the device's pre-existing personal dataset automatically. Stage 6
+                    // will replace this hold with an explicit, non-destructive attach workflow.
+                    accountPrefs.edit()
+                        .putString(CLOUD_DATA_ATTACHMENT_PENDING_USER_PREF, userId)
+                        .apply()
+                }
+                _localDataAttachmentRequired.value =
+                    accountPrefs.getString(CLOUD_DATA_ATTACHMENT_PENDING_USER_PREF, null) == userId
+                accountPrefs.edit()
                     .putString("last_cloud_user_id", userId)
                     .putString("last_cloud_user_email", session?.user?.email.orEmpty())
                     .apply()
@@ -265,6 +284,9 @@ class SupabaseGateway(
                 // Clear the selected team in this case; transient/offline failures above retain it.
                 repository.switchWorkspace(null)
             }
+            _localDataAttachmentRequired.value = cachedUserId != null &&
+                appContext.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
+                    .getString(CLOUD_DATA_ATTACHMENT_PENDING_USER_PREF, null) == cachedUserId
             if (cachedUserId != null) {
                 BeeKeepEntitlements.activateCloudHiveLimitOverride(appContext, cachedUserId)
                 _hiveLimitOverride.value =
@@ -641,6 +663,15 @@ class SupabaseGateway(
         }
     }
 
+    private fun isLocalDataAttachmentPending(userId: String): Boolean {
+        val pendingUserId = appContext.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
+            .getString(CLOUD_DATA_ATTACHMENT_PENDING_USER_PREF, null)
+            ?.trim()?.takeIf { it.isNotEmpty() }
+        val pending = pendingUserId == userId
+        _localDataAttachmentRequired.value = pending
+        return pending
+    }
+
     private fun selectedRealtimeWorkspaceId(): String =
         appContext.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
             .getString("active_team_workspace_id", "")
@@ -658,6 +689,10 @@ class SupabaseGateway(
         if (!configured || supabase == null) return
         val session = supabase.auth.currentSessionOrNull() ?: return
         val userId = session.user?.id?.trim()?.takeIf { it.isNotEmpty() } ?: return
+        if (isLocalDataAttachmentPending(userId)) {
+            stopRealtime()
+            return
+        }
         val workspaceId = selectedRealtimeWorkspaceId()
         val scopeKey = if (workspaceId.isBlank()) {
             "personal:$userId"
@@ -1240,6 +1275,15 @@ class SupabaseGateway(
             refreshAccountUnlocked()
             _account.value = _account.value.copy(syncing = false, signedIn = false, error = "Your cloud session has no user ID. Sign in again.")
             return CloudResult.NotSignedIn
+        }
+        if (isLocalDataAttachmentPending(userId)) {
+            stopRealtime()
+            _account.value = _account.value.copy(
+                syncing = false,
+                signedIn = true,
+                error = CLOUD_DATA_ATTACHMENT_PAUSED_MESSAGE
+            )
+            return CloudResult.Failure(CLOUD_DATA_ATTACHMENT_PAUSED_MESSAGE)
         }
         refreshVerifiedPlanForUser(userId)
         refreshHiveLimitOverrideForUser(userId)
