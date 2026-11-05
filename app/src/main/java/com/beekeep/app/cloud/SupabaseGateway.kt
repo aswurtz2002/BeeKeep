@@ -71,7 +71,9 @@ private const val SYNC_CONFLICT_LOOKUP_BATCH_SIZE = 100
 private const val CLOUD_DATA_ATTACHMENT_PENDING_USER_PREF = "cloud_data_attachment_pending_user_id"
 private const val CLOUD_DATA_ATTACHMENT_LAST_USER_PREF = "cloud_data_attachment_last_user_id"
 private const val CLOUD_DATA_ATTACHMENT_PAUSED_MESSAGE = "Cloud sync is paused while this device's existing records wait for review. Nothing will be uploaded or deleted yet."
-private const val PENDING_PASSWORD_RESET_REQUEST_PREF = "pending_password_reset_request"
+private const val PENDING_PASSWORD_RESET_REQUEST_EMAIL_PREF = "pending_password_reset_request_email"
+private const val PENDING_PASSWORD_RESET_REQUEST_AT_PREF = "pending_password_reset_request_at"
+private const val PASSWORD_RESET_REQUEST_MAX_AGE_MS = 60L * 60L * 1000L
 private const val PASSWORD_RECOVERY_SESSION_PREF = "password_recovery_session_active"
 
 class SupabaseGateway(
@@ -564,7 +566,8 @@ class SupabaseGateway(
         }
         if (result == CloudResult.Success) {
             appContext.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE).edit()
-                .putBoolean(PENDING_PASSWORD_RESET_REQUEST_PREF, true)
+                .putString(PENDING_PASSWORD_RESET_REQUEST_EMAIL_PREF, email.trim())
+                .putLong(PENDING_PASSWORD_RESET_REQUEST_AT_PREF, System.currentTimeMillis())
                 .apply()
         }
         return result
@@ -586,16 +589,25 @@ class SupabaseGateway(
         if (result == CloudResult.Success) {
             // Keep the recovery screen active until the user acknowledges success.
             appContext.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE).edit()
-                .remove(PENDING_PASSWORD_RESET_REQUEST_PREF)
+                .remove(PENDING_PASSWORD_RESET_REQUEST_EMAIL_PREF)
+            .remove(PENDING_PASSWORD_RESET_REQUEST_AT_PREF)
                 .apply()
         }
         return result
     }
 
+    private fun clearPendingPasswordResetRequest() {
+        appContext.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE).edit()
+            .remove(PENDING_PASSWORD_RESET_REQUEST_EMAIL_PREF)
+            .remove(PENDING_PASSWORD_RESET_REQUEST_AT_PREF)
+            .apply()
+    }
+
     /** Leaves the recovery-only screen after the user acknowledges the successful password change. */
     suspend fun finishPasswordRecovery() {
         appContext.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE).edit()
-            .remove(PENDING_PASSWORD_RESET_REQUEST_PREF)
+            .remove(PENDING_PASSWORD_RESET_REQUEST_EMAIL_PREF)
+            .remove(PENDING_PASSWORD_RESET_REQUEST_AT_PREF)
             .remove(PASSWORD_RECOVERY_SESSION_PREF)
             .apply()
         _passwordRecoveryRequired.value = false
@@ -631,7 +643,8 @@ class SupabaseGateway(
         val supabase = client ?: return CloudResult.NotConfigured
         stopRealtime()
         appContext.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE).edit()
-            .remove(PENDING_PASSWORD_RESET_REQUEST_PREF)
+            .remove(PENDING_PASSWORD_RESET_REQUEST_EMAIL_PREF)
+            .remove(PENDING_PASSWORD_RESET_REQUEST_AT_PREF)
             .remove(PASSWORD_RECOVERY_SESSION_PREF)
             .apply()
         _passwordRecoveryRequired.value = false
@@ -2107,7 +2120,8 @@ class SupabaseGateway(
                     if (recoverySessionEstablished) {
                         prefs.edit()
                             .putBoolean(PASSWORD_RECOVERY_SESSION_PREF, true)
-                            .remove(PENDING_PASSWORD_RESET_REQUEST_PREF)
+                            .remove(PENDING_PASSWORD_RESET_REQUEST_EMAIL_PREF)
+            .remove(PENDING_PASSWORD_RESET_REQUEST_AT_PREF)
                             .apply()
                         _passwordRecoveryRequired.value = true
                     } else {
