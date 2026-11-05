@@ -16,6 +16,7 @@ import io.github.jan.supabase.SupabaseClient
 import io.github.jan.supabase.annotations.SupabaseInternal
 import io.github.jan.supabase.auth.status.SessionStatus
 import io.github.jan.supabase.auth.user.UserSession
+import io.github.jan.supabase.exceptions.HttpRequestException
 import io.github.jan.supabase.exceptions.RestException
 import io.ktor.client.plugins.HttpRequestTimeoutException
 import io.github.jan.supabase.auth.auth
@@ -212,14 +213,12 @@ class SupabaseGateway(
                 ?.trim()?.takeIf { it.isNotEmpty() } ?: return
             if (expectedUserId != null && activeUserId != expectedUserId) return
 
-            var failedRequest: Throwable? = null
             try {
                 withTimeout(15_000L) {
                     supabase.auth.refreshCurrentSession()
                 }
                 return
             } catch (timeout: TimeoutCancellationException) {
-                failedRequest = timeout
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Throwable) {
@@ -242,7 +241,6 @@ class SupabaseGateway(
                     }
                     return
                 }
-                failedRequest = error
             }
 
             if (attempt == SessionRefreshPolicy.MAX_ATTEMPTS) {
@@ -521,9 +519,13 @@ class SupabaseGateway(
             repository.completeStartupWorkspaceAccessResolution()
             val lastKnownUserId = cachedUserId
             _accountSetupState.value = if (lastKnownUserId != null) {
-                cachedAccountSetupState(lastKnownUserId) ?: BeeKeepAccountSetupState.Unavailable(
-                    "BeeKeep couldn't verify your profile and personal workspace. Reconnect and retry. Your hive records have not been changed."
-                )
+                cachedAccountSetupState(lastKnownUserId) ?: if (isTransientNetworkFailure(error)) {
+                    BeeKeepAccountSetupState.Offline
+                } else {
+                    BeeKeepAccountSetupState.Unavailable(
+                        "BeeKeep couldn't verify your profile and personal workspace. Reconnect and retry. Your hive records have not been changed."
+                    )
+                }
             } else {
                 BeeKeepAccountSetupState.SignedOut
             }
@@ -633,6 +635,8 @@ class SupabaseGateway(
                 if (prefs.getString("last_cloud_user_id", null) != userId) return@withTimeout false
                 repository.hasLocalData()
             }
+        } catch (_: TimeoutCancellationException) {
+            false
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (_: Throwable) {
@@ -671,6 +675,8 @@ class SupabaseGateway(
                 scheduleAccountVerification(supabase, userId)
                 true
             }
+        } catch (_: TimeoutCancellationException) {
+            false
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (_: Throwable) {
@@ -3403,8 +3409,9 @@ class SupabaseGateway(
         // as pending. Run the session transition in this gateway-owned scope so disposing that
         // Compose screen cannot cancel the operation and strand accountInitialized=false.
         return authOperationRunner.run {
+            val supabase = client ?: return@run CloudResult.NotConfigured
             try {
-                ensureAuthStorageInitialized(client ?: return CloudResult.NotConfigured)
+                ensureAuthStorageInitialized(supabase)
                 // Authentication can replace the signed-in account. Return to private/local data
                 // before that transition so a cached team dataset is not displayed to the next account.
                 // Serialize account transitions with sync so a background worker cannot
