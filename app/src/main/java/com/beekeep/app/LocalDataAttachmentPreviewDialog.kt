@@ -235,7 +235,7 @@ internal fun LocalDataAttachmentPreviewDialog(
                         )
                     }
 
-                    if (plan.isSafeToProceed && executionResult == null) {
+                    mergePlan?.takeIf { it.isSafeToProceed && executionResult == null }?.let {
                         Text(
                             "A safe plan is ready. The final action adds only new local records, skips exact duplicates, and keeps tasks, drafts and pending queues on this device.",
                             style = MaterialTheme.typography.bodySmall,
