@@ -68,6 +68,7 @@ private const val SYNC_UPLOAD_BATCH_SIZE = 200
 private const val SYNC_DOWNLOAD_PAGE_SIZE = 500
 private const val SYNC_CONFLICT_LOOKUP_BATCH_SIZE = 100
 private const val CLOUD_DATA_ATTACHMENT_PENDING_USER_PREF = "cloud_data_attachment_pending_user_id"
+private const val CLOUD_DATA_ATTACHMENT_LAST_USER_PREF = "cloud_data_attachment_last_user_id"
 private const val CLOUD_DATA_ATTACHMENT_PAUSED_MESSAGE = "Cloud sync is paused while this device's existing records wait for review. Nothing will be uploaded or deleted yet."
 
 class SupabaseGateway(
@@ -218,8 +219,13 @@ class SupabaseGateway(
                 }
             } else {
                 val accountPrefs = appContext.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
-                val previousUserId = accountPrefs.getString("last_cloud_user_id", null)
-                    ?.trim()?.takeIf { it.isNotEmpty() }
+                // This dedicated marker survives explicit sign-out, which clears the active
+                // session identity but must not make the same account look new on this device.
+                // Fall back to the legacy active-account marker once for upgraded installs.
+                val previousUserId = (
+                    accountPrefs.getString(CLOUD_DATA_ATTACHMENT_LAST_USER_PREF, null)
+                        ?: accountPrefs.getString("last_cloud_user_id", null)
+                    )?.trim()?.takeIf { it.isNotEmpty() }
                 if (previousUserId != userId) {
                     // A first login on this device (or a switch to another account) must not
                     // upload the device's pre-existing personal dataset automatically. Stage 6
@@ -231,6 +237,7 @@ class SupabaseGateway(
                 _localDataAttachmentRequired.value =
                     accountPrefs.getString(CLOUD_DATA_ATTACHMENT_PENDING_USER_PREF, null) == userId
                 accountPrefs.edit()
+                    .putString(CLOUD_DATA_ATTACHMENT_LAST_USER_PREF, userId)
                     .putString("last_cloud_user_id", userId)
                     .putString("last_cloud_user_email", session?.user?.email.orEmpty())
                     .apply()
@@ -665,14 +672,19 @@ class SupabaseGateway(
 
     private fun isLocalDataAttachmentPending(userId: String): Boolean {
         val prefs = appContext.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
-        val previousUserId = prefs.getString("last_cloud_user_id", null)
-        if (previousUserId?.trim() != userId.trim()) {
+        val previousUserId = (
+            prefs.getString(CLOUD_DATA_ATTACHMENT_LAST_USER_PREF, null)
+                ?: prefs.getString("last_cloud_user_id", null)
+            )?.trim()?.takeIf { it.isNotEmpty() }
+        if (previousUserId != userId.trim()) {
             // Do this check inside sync and Realtime entry points as well as account restore.
             // A worker can win the startup race and reach sync before refreshAccount completes.
             prefs.edit()
                 .putString(CLOUD_DATA_ATTACHMENT_PENDING_USER_PREF, userId)
                 .apply()
         }
+        // Keep this identity across explicit sign-out; only the active session marker is cleared.
+        prefs.edit().putString(CLOUD_DATA_ATTACHMENT_LAST_USER_PREF, userId).apply()
         val pendingUserId = prefs.getString(CLOUD_DATA_ATTACHMENT_PENDING_USER_PREF, null)
         val pending = LocalDataAttachmentPolicy.requiresReview(
             previousUserId = previousUserId,
