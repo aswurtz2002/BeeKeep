@@ -311,7 +311,7 @@ internal fun LocalDataAttachmentPreviewDialog(
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
-                        "BeeKeep will insert ${plan?.newRecordCount?.plus(plan.remapCount) ?: 0} local records into this account and skip exact duplicates."
+                        "BeeKeep will insert ${plan?.let { it.newRecordCount + it.remapCount } ?: 0} local records into this account and skip exact duplicates."
                     )
                     Text("No existing cloud record will be replaced or deleted.")
                     Text(
