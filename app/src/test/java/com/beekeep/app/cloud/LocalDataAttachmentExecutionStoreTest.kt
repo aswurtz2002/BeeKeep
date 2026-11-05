@@ -49,7 +49,7 @@ class LocalDataAttachmentExecutionStoreTest {
                 pendingDeleteCount = 0,
                 pendingActionBatchCount = 0,
                 pendingWorkspaceActionCount = 0,
-                cloudInventorySha256 = "b".repeat(64)
+                cloudInventorySha256 = "a".repeat(64)
             ),
             createdAt = 1_800_000_000_001L
         )
@@ -68,7 +68,20 @@ class LocalDataAttachmentExecutionStoreTest {
         )
 
         assertEquals(original, restored)
-        assertEquals("b".repeat(64), restored?.plan?.cloudInventorySha256)
+        assertEquals("a".repeat(64), restored?.plan?.cloudInventorySha256)
+    }
+
+    @Test
+    fun checkpointRejectsPlanWithDifferentCloudInventoryFingerprint() {
+        val snapshot = snapshotInfo()
+        val valid = journal(snapshot.fileName, snapshot.sha256)
+        val invalid = valid.copy(
+            plan = valid.plan.copy(cloudInventorySha256 = "b".repeat(64))
+        )
+
+        assertThrows(IllegalArgumentException::class.java) {
+            LocalDataAttachmentExecutionStore.save(temporaryFolder.root, invalid)
+        }
     }
 
     @Test
