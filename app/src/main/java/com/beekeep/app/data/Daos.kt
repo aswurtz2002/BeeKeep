@@ -372,3 +372,13 @@ interface TaskDao {
     @Query("DELETE FROM tasks")
     suspend fun clearAll()
 }
+
+
+@Dao
+interface LocalDataAttachmentMarkerDao {
+    @Query("SELECT * FROM local_data_attachment_markers WHERE snapshot_sha256 = :snapshotSha256 LIMIT 1")
+    suspend fun get(snapshotSha256: String): LocalDataAttachmentMarkerEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsert(marker: LocalDataAttachmentMarkerEntity)
+}
