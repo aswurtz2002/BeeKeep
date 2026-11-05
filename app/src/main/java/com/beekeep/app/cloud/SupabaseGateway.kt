@@ -13,6 +13,11 @@ import com.beekeep.app.data.HarvestQuantityMode
 import com.beekeep.app.data.WorkspaceActionSettingsEntity
 import com.beekeep.app.data.workspaceActionSettingsScopeKey
 import io.github.jan.supabase.SupabaseClient
+import io.github.jan.supabase.annotations.SupabaseInternal
+import io.github.jan.supabase.auth.status.SessionStatus
+import io.github.jan.supabase.auth.user.UserSession
+import io.github.jan.supabase.exceptions.RestException
+import io.ktor.client.plugins.HttpRequestTimeoutException
 import io.github.jan.supabase.auth.auth
 import io.github.jan.supabase.auth.OtpType
 import io.github.jan.supabase.auth.handleDeeplinks
@@ -31,8 +36,11 @@ import io.github.jan.supabase.realtime.PostgresAction
 import io.github.jan.supabase.storage.storage
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -44,6 +52,7 @@ import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.launch
 import io.ktor.client.call.body
 import java.util.UUID
+import java.io.IOException
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
 import org.json.JSONObject
@@ -99,6 +108,11 @@ class SupabaseGateway(
     )
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val authOperationRunner = GatewayOwnedOperationRunner(scope)
+    private val authInitializationMutex = Mutex()
+    @Volatile
+    private var authStorageInitialized = false
+    @Volatile
+    private var sessionRefreshJob: Job? = null
     private val deviceId = appContext.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
         .getString("device_id", null)
         ?: UUID.randomUUID().toString().also {
@@ -156,6 +170,156 @@ class SupabaseGateway(
     }
 
     /**
+     * Load the persisted session without asking the SDK to refresh it as part of initialization.
+     * Supabase Auth 3.9 joins the initial refresh job and retries network failures recursively;
+     * that can leave the SDK in Initializing forever. A local restore is bounded and never needs
+     * network access. The actual refresh is scheduled separately with a capped retry budget.
+     */
+    @OptIn(SupabaseInternal::class)
+    private suspend fun ensureAuthStorageInitialized(supabase: SupabaseClient) {
+        authInitializationMutex.withLock {
+            if (authStorageInitialized) return
+            val found = withTimeout(5_000L) {
+                supabase.auth.loadFromStorage(autoRefresh = false)
+            }
+            if (!found && supabase.auth.sessionStatus.value is SessionStatus.Initializing) {
+                // Mark only the in-memory auth state as signed out. Do not delete a stored session
+                // or any Room data; a later successful sign-in replaces the local session.
+                supabase.auth.setSessionStatus(SessionStatus.NotAuthenticated())
+            }
+            authStorageInitialized = true
+        }
+    }
+
+    private fun scheduleSessionRefresh(supabase: SupabaseClient, session: UserSession) {
+        sessionRefreshJob?.cancel()
+        val expectedUserId = session.user?.id?.trim()?.takeIf { it.isNotEmpty() }
+        sessionRefreshJob = scope.launch {
+            val refreshAtMillis = session.expiresAt.toEpochMilliseconds() -
+                (session.expiresIn.coerceAtLeast(0L) * 200L)
+            val waitMillis = (refreshAtMillis - System.currentTimeMillis()).coerceAtLeast(0L)
+            if (waitMillis > 0L) delay(waitMillis)
+            refreshSessionWithBoundedRetries(supabase, expectedUserId)
+        }
+    }
+
+    private suspend fun refreshSessionWithBoundedRetries(
+        supabase: SupabaseClient,
+        expectedUserId: String?
+    ) {
+        for (attempt in 1..SessionRefreshPolicy.MAX_ATTEMPTS) {
+            val activeUserId = supabase.auth.currentSessionOrNull()?.user?.id
+                ?.trim()?.takeIf { it.isNotEmpty() } ?: return
+            if (expectedUserId != null && activeUserId != expectedUserId) return
+
+            var failedRequest: Throwable? = null
+            try {
+                withTimeout(15_000L) {
+                    supabase.auth.refreshCurrentSession()
+                }
+                return
+            } catch (timeout: TimeoutCancellationException) {
+                failedRequest = timeout
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Throwable) {
+                if (error is RestException &&
+                    SessionRefreshPolicy.isRejectedRefreshCredential(error.statusCode)
+                ) {
+                    // Clearing an invalid refresh credential does not touch the hive databases,
+                    // pending outbox rows, or inspection drafts.
+                    if (supabase.auth.currentSessionOrNull()?.user?.id == expectedUserId) {
+                        supabase.auth.clearSession()
+                        _account.value = CloudAccountState(
+                            configured = true,
+                            signedIn = false,
+                            error = "Your session has expired. Sign in again. Your local hive records are still on this device."
+                        )
+                        _accountSetupState.value = BeeKeepAccountSetupState.SignedOut
+                        _localDataAttachmentRequired.value = false
+                        _accountInitialized.value = true
+                        stopRealtime()
+                    }
+                    return
+                }
+                failedRequest = error
+            }
+
+            if (attempt == SessionRefreshPolicy.MAX_ATTEMPTS) {
+                _account.value = _account.value.copy(
+                    error = "BeeKeep couldn't refresh your cloud session. Your local records remain available; reconnect and retry."
+                )
+                return
+            }
+            delay(SessionRefreshPolicy.retryDelayMillis(attempt) ?: return)
+        }
+    }
+
+    private suspend fun restoreCachedWorkspaceForAccount(userId: String) {
+        val prefs = appContext.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
+        val workspaceId = prefs.getString("active_team_workspace_id", "").orEmpty().trim()
+        val ownerId = prefs.getString("active_team_workspace_user_id", null)
+            ?.trim()?.takeIf { it.isNotEmpty() }
+        if (workspaceId.isBlank()) {
+            if (repository.activeWorkspaceId.value != null) repository.switchWorkspace(null)
+            return
+        }
+        if (ownerId != null && ActiveWorkspaceSessionPolicy.ownerMatches(userId, ownerId)) {
+            repository.switchWorkspace(
+                workspaceId = workspaceId,
+                readOnly = prefs.getBoolean("active_team_workspace_read_only", true),
+                ownerUserId = userId
+            )
+        } else {
+            // A legacy selection without an account owner cannot be trusted offline.
+            repository.switchWorkspace(null)
+        }
+    }
+
+    private fun scheduleAccountVerification(supabase: SupabaseClient, userId: String) {
+        scope.launch {
+            try {
+                syncMutex.withLock {
+                    if (supabase.auth.currentSessionOrNull()?.user?.id != userId) return@withLock
+                    try {
+                        withTimeout(35_000L) {
+                            refreshVerifiedPlanForUser(userId)
+                            refreshHiveLimitOverrideForUser(userId)
+                            restoreWorkspaceForAccount(supabase, userId)
+                            refreshAccountSetupState(supabase, userId)
+                        }
+                    } catch (timeout: TimeoutCancellationException) {
+                        if (_account.value.userId == userId) {
+                            _accountSetupState.value = cachedAccountSetupState(userId)
+                                ?: BeeKeepAccountSetupState.Offline
+                            _account.value = _account.value.copy(
+                                error = "Cloud verification is taking too long. BeeKeep is keeping your local data available."
+                            )
+                        }
+                    }
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Throwable) {
+                if (_account.value.userId == userId) {
+                    _accountSetupState.value = cachedAccountSetupState(userId)
+                        ?: BeeKeepAccountSetupState.Offline
+                    _account.value = _account.value.copy(
+                        error = "Cloud verification is unavailable. Your local data is still available."
+                    )
+                }
+            }
+        }
+    }
+
+    private fun isTransientNetworkFailure(error: Throwable): Boolean =
+        error is IOException ||
+            error is HttpRequestException ||
+            error is HttpRequestTimeoutException ||
+            (error is RestException &&
+                (error.statusCode == 408 || error.statusCode == 429 || error.statusCode >= 500))
+
+    /**
      * Restore a selected team only for the account that selected it. A legacy selection without
      * an owner ID is restored only after a successful membership lookup; offline, the app stays
      * on private/local data until the identity can be verified.
@@ -190,8 +354,8 @@ class SupabaseGateway(
             return
         }
         try {
-            // Wait until stored credentials have been restored before showing signed-out UI.
-            supabase.auth.awaitInitialization()
+            // Restore the saved auth state from local storage only. Network refresh runs separately.
+            ensureAuthStorageInitialized(supabase)
             val session = supabase.auth.currentSessionOrNull()
             val userId = session?.user?.id?.trim()?.takeIf { it.isNotEmpty() }
             _passwordRecoveryRequired.value = appContext
@@ -249,7 +413,6 @@ class SupabaseGateway(
                     _account.value = CloudAccountState(configured = true, signedIn = false)
                 }
             } else {
-                _accountSetupState.value = BeeKeepAccountSetupState.Checking
                 val accountPrefs = appContext.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
                 // This dedicated marker survives explicit sign-out, which clears the active
                 // session identity but must not make the same account look new on this device.
@@ -260,8 +423,7 @@ class SupabaseGateway(
                     )?.trim()?.takeIf { it.isNotEmpty() }
                 if (previousUserId != userId) {
                     // A first login on this device (or a switch to another account) must not
-                    // upload the device's pre-existing personal dataset automatically. Stage 6
-                    // will replace this hold with an explicit, non-destructive attach workflow.
+                    // upload the device's pre-existing personal dataset automatically.
                     accountPrefs.edit()
                         .putString(CLOUD_DATA_ATTACHMENT_PENDING_USER_PREF, userId)
                         .apply()
@@ -273,13 +435,17 @@ class SupabaseGateway(
                     .putString("last_cloud_user_id", userId)
                     .putString("last_cloud_user_email", session?.user?.email.orEmpty())
                     .apply()
-                // Load only this account's previously server-verified plan before trying the network.
-                // Release ViewModel creation checks use the same cached entitlement as the plan UI.
+
+                // Seed the first screen from this account's local entitlement/profile cache.
+                // Workspace and profile discovery must not block the local Room database.
                 BeeKeepEntitlements.activateCloudHiveLimitOverride(appContext, userId)
-                refreshVerifiedPlanForUser(userId)
-                refreshHiveLimitOverrideForUser(userId)
-                restoreWorkspaceForAccount(supabase, userId)
-                refreshAccountSetupState(supabase, userId)
+                _hiveLimitOverride.value =
+                    BeeKeepEntitlements.cachedCloudHiveLimitOverride(appContext, userId)
+                _verifiedPlan.value = BeeKeepEntitlements.currentPlan(appContext)
+                verifiedPlanUserId = userId
+                restoreCachedWorkspaceForAccount(userId)
+                _accountSetupState.value = cachedAccountSetupState(userId)
+                    ?: BeeKeepAccountSetupState.Offline
             }
             repository.completeStartupWorkspaceAccessResolution()
             _account.value = CloudAccountState(
@@ -289,8 +455,24 @@ class SupabaseGateway(
                 userId = userId
             )
             _accountInitialized.value = true
-            if (enableRealtime && userId != null) startRealtime() else stopRealtime()
+            if (session != null && userId != null) {
+                scheduleSessionRefresh(supabase, session)
+                scheduleAccountVerification(supabase, userId)
+                if (enableRealtime) startRealtime() else stopRealtime()
+            } else {
+                sessionRefreshJob?.cancel()
+                stopRealtime()
+            }
         } catch (cancelled: CancellationException) {
+            repository.completeStartupWorkspaceAccessResolution()
+            val lastKnownUserId = _account.value.userId?.trim()?.takeIf { it.isNotEmpty() }
+            if (lastKnownUserId != null) {
+                _accountSetupState.value = cachedAccountSetupState(lastKnownUserId)
+                    ?: BeeKeepAccountSetupState.Offline
+            } else {
+                _accountSetupState.value = BeeKeepAccountSetupState.SignedOut
+            }
+            _accountInitialized.value = true
             throw cancelled
         } catch (error: Throwable) {
             // A failed auth/network refresh is not a sign-out. Keep the last account-bound team
@@ -362,7 +544,6 @@ class SupabaseGateway(
      * the auth.users trigger and the existing workspace migration.
      */
     private suspend fun refreshAccountSetupState(supabase: SupabaseClient, userId: String) {
-        _accountSetupState.value = BeeKeepAccountSetupState.Checking
         try {
             val workspaces = supabase.postgrest.rpc("beekeep_list_workspaces")
                 .decodeList<BeeKeepWorkspace>()
@@ -390,11 +571,15 @@ class SupabaseGateway(
             throw cancelled
         } catch (error: Throwable) {
             _accountSetupState.value = cachedAccountSetupState(userId)
-                ?: BeeKeepAccountSetupState.Unavailable(
-                    TeamWorkspaceSyncError.userFacing(
-                        error.message ?: "BeeKeep couldn't verify your profile. Reconnect and retry."
+                ?: if (isTransientNetworkFailure(error)) {
+                    BeeKeepAccountSetupState.Offline
+                } else {
+                    BeeKeepAccountSetupState.Unavailable(
+                        TeamWorkspaceSyncError.userFacing(
+                            error.message ?: "BeeKeep couldn't verify your profile. Reconnect and retry."
+                        )
                     )
-                )
+                }
         }
     }
 
@@ -436,6 +621,63 @@ class SupabaseGateway(
         }
     }
 
+    /** The offline action is available only for the matching saved account with actual local records. */
+    suspend fun canContinueOffline(): Boolean {
+        val supabase = client ?: return false
+        return try {
+            withTimeout(5_000L) {
+                ensureAuthStorageInitialized(supabase)
+                val userId = supabase.auth.currentSessionOrNull()?.user?.id
+                    ?.trim()?.takeIf { it.isNotEmpty() } ?: return@withTimeout false
+                val prefs = appContext.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
+                if (prefs.getString("last_cloud_user_id", null) != userId) return@withTimeout false
+                repository.hasLocalData()
+            }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Throwable) {
+            false
+        }
+    }
+
+    /** Publish the matching local dataset without waiting for cloud discovery or initial sync. */
+    suspend fun continueOffline(): Boolean {
+        val supabase = client ?: return false
+        return try {
+            withTimeout(5_000L) {
+                ensureAuthStorageInitialized(supabase)
+                val session = supabase.auth.currentSessionOrNull() ?: return@withTimeout false
+                val userId = session.user?.id?.trim()?.takeIf { it.isNotEmpty() }
+                    ?: return@withTimeout false
+                val prefs = appContext.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
+                if (prefs.getString("last_cloud_user_id", null) != userId || !repository.hasLocalData()) {
+                    return@withTimeout false
+                }
+                restoreCachedWorkspaceForAccount(userId)
+                _localDataAttachmentRequired.value =
+                    prefs.getString(CLOUD_DATA_ATTACHMENT_PENDING_USER_PREF, null) == userId
+                _accountSetupState.value = cachedAccountSetupState(userId)
+                    ?: BeeKeepAccountSetupState.Offline
+                _account.value = CloudAccountState(
+                    configured = true,
+                    signedIn = true,
+                    email = session.user?.email.orEmpty(),
+                    userId = userId,
+                    error = "Offline mode. Your local hive records remain available and cloud sync will resume when connected."
+                )
+                repository.completeStartupWorkspaceAccessResolution()
+                _accountInitialized.value = true
+                scheduleSessionRefresh(supabase, session)
+                scheduleAccountVerification(supabase, userId)
+                true
+            }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Throwable) {
+            false
+        }
+    }
+
     /** Re-checks profile/workspace setup after a temporary network or database failure. */
     suspend fun retryAccountSetup() {
         val supabase = client
@@ -446,13 +688,14 @@ class SupabaseGateway(
             return
         }
         try {
-            supabase.auth.awaitInitialization()
+            ensureAuthStorageInitialized(supabase)
             val userId = supabase.auth.currentSessionOrNull()?.user?.id
                 ?.trim()?.takeIf { it.isNotEmpty() }
             if (userId == null) {
                 _accountSetupState.value = BeeKeepAccountSetupState.SignedOut
                 return
             }
+            _accountSetupState.value = BeeKeepAccountSetupState.Checking
             refreshAccountSetupState(supabase, userId)
         } catch (cancelled: CancellationException) {
             throw cancelled
@@ -792,7 +1035,7 @@ class SupabaseGateway(
     ): CloudResult {
         if (!configured || client == null) return CloudResult.NotConfigured
         return try {
-            client.auth.awaitInitialization()
+            ensureAuthStorageInitialized(client)
             block(client)
             CloudResult.Success
         } catch (cancelled: CancellationException) {
@@ -839,7 +1082,7 @@ class SupabaseGateway(
     suspend fun resetWorkspace(): CloudResult = syncMutex.withLock {
         val supabase = client ?: return@withLock CloudResult.NotConfigured
         try {
-            supabase.auth.awaitInitialization()
+            ensureAuthStorageInitialized(supabase)
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (error: Throwable) {
@@ -1361,7 +1604,7 @@ class SupabaseGateway(
         val supabase = client
             ?: return WorkspaceOperationResult(error = "BeeKeep Cloud is not configured.")
         return try {
-            supabase.auth.awaitInitialization()
+            ensureAuthStorageInitialized(supabase)
             val session = supabase.auth.currentSessionOrNull()
                 ?: return WorkspaceOperationResult(error = "Sign in before reviewing this device's data.")
             val userId = session.user?.id?.trim()?.takeIf { it.isNotEmpty() }
@@ -1426,7 +1669,7 @@ class SupabaseGateway(
         val supabase = client
             ?: return WorkspaceOperationResult(error = "BeeKeep Cloud is not configured.")
         return try {
-            supabase.auth.awaitInitialization()
+            ensureAuthStorageInitialized(supabase)
             val session = supabase.auth.currentSessionOrNull()
                 ?: return WorkspaceOperationResult(error = "Sign in before building a merge plan.")
             val userId = session.user?.id?.trim()?.takeIf { it.isNotEmpty() }
@@ -1476,7 +1719,7 @@ class SupabaseGateway(
         val supabase = client
             ?: return@withLock WorkspaceOperationResult(error = "BeeKeep Cloud is not configured.")
         try {
-            supabase.auth.awaitInitialization()
+            ensureAuthStorageInitialized(supabase)
             val session = supabase.auth.currentSessionOrNull()
                 ?: return@withLock WorkspaceOperationResult(error = "Sign in before attaching local data.")
             val userId = session.user?.id?.trim()?.takeIf { it.isNotEmpty() }
@@ -1981,7 +2224,7 @@ class SupabaseGateway(
     private suspend fun syncNowUnlocked(): CloudResult {
         if (!configured || client == null) return CloudResult.NotConfigured
         try {
-            client.auth.awaitInitialization()
+            ensureAuthStorageInitialized(client)
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (error: Throwable) {
@@ -2209,7 +2452,7 @@ class SupabaseGateway(
         var copiedCount: Int? = null
 
         try {
-            supabase.auth.awaitInitialization()
+            ensureAuthStorageInitialized(supabase)
             val session = supabase.auth.currentSessionOrNull()
                 ?: return@withLock WorkspaceOperationResult(error = "Sign in before copying personal records.")
             val userId = session.user?.id?.trim()?.takeIf { it.isNotEmpty() }
@@ -2316,7 +2559,7 @@ class SupabaseGateway(
                 return@withLock WorkspaceOperationResult(error = "BeeKeep Cloud is not configured.")
             }
             try {
-                supabase.auth.awaitInitialization()
+                ensureAuthStorageInitialized(supabase)
                 val session = supabase.auth.currentSessionOrNull()
                 if (session == null) {
                     refreshAccountUnlocked()
@@ -2707,7 +2950,7 @@ class SupabaseGateway(
         // callback can enable password changes; an expired link cannot reuse an older session.
         scope.launch {
             try {
-                supabase.auth.awaitInitialization()
+                ensureAuthStorageInitialized(supabase)
                 supabase.handleDeeplinks(
                     intent = intent,
                     onSessionSuccess = { userSession ->
@@ -2904,7 +3147,7 @@ class SupabaseGateway(
         val supabase = client
             ?: return WorkspaceOperationResult(error = "BeeKeep Cloud is not configured.")
         return try {
-            supabase.auth.awaitInitialization()
+            ensureAuthStorageInitialized(supabase)
             if (supabase.auth.currentSessionOrNull() == null) {
                 return WorkspaceOperationResult(value = false)
             }
@@ -2939,7 +3182,7 @@ class SupabaseGateway(
             return WorkspaceOperationResult(error = "Unsupported support-admin action.")
         }
         return try {
-            supabase.auth.awaitInitialization()
+            ensureAuthStorageInitialized(supabase)
             if (supabase.auth.currentSessionOrNull() == null) {
                 refreshAccount()
                 return WorkspaceOperationResult(error = "Sign in before using support-admin tools.")
@@ -3161,7 +3404,7 @@ class SupabaseGateway(
         // Compose screen cannot cancel the operation and strand accountInitialized=false.
         return authOperationRunner.run {
             try {
-                client?.auth?.awaitInitialization()
+                ensureAuthStorageInitialized(client ?: return CloudResult.NotConfigured)
                 // Authentication can replace the signed-in account. Return to private/local data
                 // before that transition so a cached team dataset is not displayed to the next account.
                 // Serialize account transitions with sync so a background worker cannot
