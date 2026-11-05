@@ -40,6 +40,12 @@ class AuthRecoveryCallbackPolicyTest {
                 recoveryRequestPending = false
             )
         )
+        assertFalse(
+            AuthRecoveryCallbackPolicy.isPasswordRecoveryCallback(
+                "com.beekeep.app://auth-callback?type=signup&code=one-time",
+                recoveryRequestPending = true
+            )
+        )
     }
 
     @Test
