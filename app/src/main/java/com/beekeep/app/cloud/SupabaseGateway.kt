@@ -732,6 +732,7 @@ class SupabaseGateway(
             )
             return
         }
+        var startupUserId: String? = null
         try {
             ensureAuthStorageInitialized(supabase)
             val userId = supabase.auth.currentSessionOrNull()?.user?.id
@@ -740,18 +741,32 @@ class SupabaseGateway(
                 _accountSetupState.value = BeeKeepAccountSetupState.SignedOut
                 return
             }
+            startupUserId = userId
             _accountSetupState.value = BeeKeepAccountSetupState.Checking
             refreshAccountSetupState(supabase, userId)
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (error: Throwable) {
-            _accountSetupState.value = cachedAccountSetupState(
-                supabase.auth.currentSessionOrNull()?.user?.id.orEmpty()
-            ) ?: BeeKeepAccountSetupState.Unavailable(
-                TeamWorkspaceSyncError.userFacing(
-                    error.message ?: "BeeKeep couldn't verify your profile. Reconnect and retry."
+            val userId = startupUserId
+                ?: supabase.auth.currentSessionOrNull()?.user?.id?.trim().orEmpty()
+            _accountSetupState.value = cachedAccountSetupState(userId)
+                ?: BeeKeepAccountSetupState.Unavailable(
+                    TeamWorkspaceSyncError.userFacing(
+                        error.message ?: "BeeKeep couldn't verify your profile. Reconnect and retry."
+                    )
                 )
-            )
+        } finally {
+            // A screen/lifecycle cancellation must not leave the global account gate in Checking.
+            if (_accountSetupState.value is BeeKeepAccountSetupState.Checking) {
+                val userId = startupUserId
+                    ?: supabase.auth.currentSessionOrNull()?.user?.id?.trim().orEmpty()
+                _accountSetupState.value = cachedAccountSetupState(userId)
+                    ?: if (userId.isBlank()) {
+                        BeeKeepAccountSetupState.SignedOut
+                    } else {
+                        BeeKeepAccountSetupState.Offline
+                    }
+            }
         }
     }
 
