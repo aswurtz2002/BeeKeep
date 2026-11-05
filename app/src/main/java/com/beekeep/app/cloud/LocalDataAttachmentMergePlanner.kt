@@ -120,6 +120,7 @@ internal object LocalDataAttachmentMergePlanner {
         val items = mutableListOf<LocalDataAttachmentMergeItem>()
         val apiaryIdMap = mutableMapOf<Long, Long>()
         val hiveIdMap = mutableMapOf<Long, Long>()
+        val hiveApiaryIdMap = mutableMapOf<Long, Long?>()
         val localRowsByType = localRows.map { it.second }.groupBy { it.type }
 
         fun allocateId(type: String, sourceId: Long): Long {
@@ -249,10 +250,13 @@ internal object LocalDataAttachmentMergePlanner {
 
         localRowsByType["hive"].orEmpty().sortedBy { it.sourceId }.forEach { local ->
             val payload = JSONObject(local.payload.toString())
+            val apiaryName = normalized(payload.optString("apiary"))
             val sourceApiaryId = payload.optLong("apiary_id", -1L).takeIf { it > 0L }
+                ?: localRowsByType["apiary"].orEmpty().firstOrNull {
+                    normalized(it.payload.optString("name")) == apiaryName
+                }?.sourceId
             val targetApiaryId = sourceApiaryId?.let { apiaryIdMap[it] ?: it }
             if (targetApiaryId != null) payload.put("apiary_id", targetApiaryId)
-            val apiaryName = normalized(payload.optString("apiary"))
             val number = normalized(payload.optString("number"))
             require(number.isNotEmpty()) { "A local hive is missing its hive number." }
             val remoteHives = cloudByType["hive"].orEmpty()
@@ -360,6 +364,7 @@ internal object LocalDataAttachmentMergePlanner {
                 )
             }
             hiveIdMap[local.sourceId] = item.targetId
+            hiveApiaryIdMap[local.sourceId] = item.targetApiaryId
             if (item.disposition == LocalDataAttachmentDisposition.PRESERVE_LOCAL_ONLY) {
                 localOnlyHiveIds += local.sourceId
             }
@@ -385,8 +390,9 @@ internal object LocalDataAttachmentMergePlanner {
                     ?: throw IllegalArgumentException("A local ${local.type} record refers to an invalid hive.")
                 payload.put("hive_id", targetHiveId)
                 val sourceApiaryId = payload.optLong("apiary_id", -1L).takeIf { it > 0L }
+                    ?: hiveApiaryIdMap[sourceHiveId]
                 val targetApiaryId = sourceApiaryId?.let { apiaryIdMap[it] ?: it }
-                if (targetApiaryId != null && payload.has("apiary_id")) payload.put("apiary_id", targetApiaryId)
+                if (targetApiaryId != null) payload.put("apiary_id", targetApiaryId)
 
                 val remote = cloudByType[local.type].orEmpty()
                 val remoteById = remote.firstOrNull { it.id == local.sourceId }
@@ -514,21 +520,24 @@ internal object LocalDataAttachmentMergePlanner {
     ): List<CloudRow> {
         return remoteRows.filter { row ->
             val payload = row.payload
-            val remoteHiveId = payload.optLong("hive_id", -1L)
-            if (remoteHiveId != targetHiveId) return@filter false
+            val sameHive = payload.optLong("hive_id", -1L) == targetHiveId
             when (type) {
-                "nfc_assignment" ->
-                    normalized(payload.optString("tag_uid")) == normalized(local.optString("tag_uid")) &&
-                        payload.optLong("assigned_at", -1L) == local.optLong("assigned_at", -2L)
                 "feeding", "treatment", "harvest" -> {
+                    // Stable UUIDs identify history globally within an account, not just under
+                    // one hive. A UUID found under another hive is a conflict, not a new record.
                     val uuid = normalized(local.optString("record_uuid"))
                     if (uuid.isNotEmpty()) normalized(payload.optString("record_uuid")) == uuid
-                    else payload.optLong("created_at", -1L) == local.optLong("created_at", -2L)
+                    else sameHive && payload.optLong("created_at", -1L) == local.optLong("created_at", -2L)
                 }
+                "nfc_assignment" ->
+                    sameHive &&
+                        normalized(payload.optString("tag_uid")) == normalized(local.optString("tag_uid")) &&
+                        payload.optLong("assigned_at", -1L) == local.optLong("assigned_at", -2L)
                 "inspection" ->
-                    payload.optLong("created_at", -1L) == local.optLong("created_at", -2L)
+                    sameHive && payload.optLong("created_at", -1L) == local.optLong("created_at", -2L)
                 "event" ->
-                    payload.optLong("created_at", -1L) == local.optLong("created_at", -2L) &&
+                    sameHive &&
+                        payload.optLong("created_at", -1L) == local.optLong("created_at", -2L) &&
                         normalized(payload.optString("type")) == normalized(local.optString("type")) &&
                         normalized(payload.optString("title")) == normalized(local.optString("title"))
                 else -> false

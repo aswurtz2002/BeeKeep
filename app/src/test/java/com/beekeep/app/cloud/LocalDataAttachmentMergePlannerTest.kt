@@ -358,6 +358,40 @@ class LocalDataAttachmentMergePlannerTest {
     }
 
     @Test
+    fun legacyHiveWithoutApiaryIdInheritsTheMappedLocalApiaryId() {
+        val localApiary = apiary(10L, "North Yard")
+        val remoteApiary = apiary(999L, "North Yard")
+        val legacyHive = hive(20L, "H-1", "North Yard", apiaryId = null)
+
+        val plan = LocalDataAttachmentMergePlanner.plan(
+            snapshot("apiary" to localApiary, "hive" to legacyHive),
+            listOf(cloud("apiary", 999L, remoteApiary))
+        )
+
+        val hiveItem = plan.items.single { it.entityType == "hive" }
+        assertEquals(999L, hiveItem.targetApiaryId)
+    }
+
+    @Test
+    fun stableHistoryUuidCollisionAcrossDifferentHivesRequiresReview() {
+        val localHive = hive(20L, "H-1", "Yard")
+        val otherCloudHive = hive(99L, "H-99", "Other Yard")
+        val localFeeding = feeding(30L, 20L, "globally-unique-feed-uuid")
+        val otherHiveFeeding = feeding(900L, 99L, "globally-unique-feed-uuid")
+
+        val plan = LocalDataAttachmentMergePlanner.plan(
+            snapshot("hive" to localHive, "feeding" to localFeeding),
+            listOf(
+                cloud("hive", 99L, otherCloudHive),
+                cloud("feeding", 900L, otherHiveFeeding)
+            )
+        )
+
+        val item = plan.items.single { it.entityType == "feeding" }
+        assertEquals(LocalDataAttachmentDisposition.REVIEW_REQUIRED, item.disposition)
+    }
+
+    @Test
     fun invalidSnapshotFormatIsRejected() {
         try {
             LocalDataAttachmentMergePlanner.plan("""{"format":"other"}""", emptyList())
