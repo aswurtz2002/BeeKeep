@@ -86,6 +86,8 @@ data class BeeKeepUsername(val username: String)
 sealed interface BeeKeepAccountSetupState {
     data object SignedOut : BeeKeepAccountSetupState
     data object Checking : BeeKeepAccountSetupState
+    /** A previously saved session is available; cloud profile verification continues in background. */
+    data object Offline : BeeKeepAccountSetupState
     data class UsernameRequired(
         val personalWorkspaceId: String,
         val personalWorkspaceName: String,

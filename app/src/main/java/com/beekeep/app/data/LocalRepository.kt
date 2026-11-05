@@ -138,6 +138,12 @@ class LocalHiveRepository(context: Context) {
         if (_activeWorkspaceId.value == null) LegacyImporter.importIfNeeded(appContext, db)
     }
 
+    /** Returns whether the currently selected local workspace has records worth continuing offline with. */
+    suspend fun hasLocalData(): Boolean = withContext(Dispatchers.IO) {
+        db.hives().allForBackup().any { !it.deleted } ||
+            db.apiaries().allForBackup().any { !it.deleted }
+    }
+
     /**
      * Wipe the local workspace while preserving cloud deletion tombstones. The tombstones
      * prevent data from returning on a later sync, and this runs as one Room transaction.
