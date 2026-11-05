@@ -93,7 +93,14 @@ internal fun BeeKeepAuthScreen(cloud: SupabaseGateway) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val account by cloud.account.collectAsStateWithLifecycle()
+    val passwordRecoveryRequired by cloud.passwordRecoveryRequired.collectAsStateWithLifecycle()
+    if (passwordRecoveryRequired) {
+        BeeKeepPasswordRecoveryScreen(cloud)
+        return
+    }
     var createAccount by rememberSaveable { mutableStateOf(false) }
+    var forgotPasswordMode by rememberSaveable { mutableStateOf(false) }
+    var canResendConfirmation by rememberSaveable { mutableStateOf(false) }
     var email by rememberSaveable { mutableStateOf("") }
     var username by rememberSaveable { mutableStateOf("") }
     var password by rememberSaveable { mutableStateOf("") }
@@ -120,8 +127,10 @@ internal fun BeeKeepAuthScreen(cloud: SupabaseGateway) {
         passwordScore == 3 -> "Good password"
         else -> "Strong password"
     }
-    val canSubmit = !busy && validEmail && password.isNotEmpty() &&
-        (!createAccount || (validUsername && password.length >= 8))
+    val canSubmit = !busy && validEmail && (
+        forgotPasswordMode ||
+            (password.isNotEmpty() && (!createAccount || (validUsername && password.length >= 8)))
+        )
 
     fun showMessage(value: String, isError: Boolean = false) {
         message = value
@@ -134,11 +143,11 @@ internal fun BeeKeepAuthScreen(cloud: SupabaseGateway) {
             showMessage("Enter a valid email address.", true)
             return
         }
-        if (createAccount && !validUsername) {
+        if (!forgotPasswordMode && createAccount && !validUsername) {
             showMessage("Choose a username with 3–20 letters, numbers, or underscores.", true)
             return
         }
-        if (createAccount && password.length < 8) {
+        if (!forgotPasswordMode && createAccount && password.length < 8) {
             showMessage("Use a password with at least 8 characters.", true)
             return
         }
@@ -147,7 +156,9 @@ internal fun BeeKeepAuthScreen(cloud: SupabaseGateway) {
             busy = true
             showMessage("")
             try {
-                val result = if (createAccount) {
+                val result = if (forgotPasswordMode) {
+                    cloud.requestPasswordReset(cleanEmail)
+                } else if (createAccount) {
                     val availability = cloud.isUsernameAvailable(username.trim())
                     when {
                         !availability.isSuccess -> {
@@ -170,21 +181,58 @@ internal fun BeeKeepAuthScreen(cloud: SupabaseGateway) {
                 when (result) {
                     null -> Unit
                     CloudResult.Success -> {
-                        if (createAccount && !cloud.account.value.signedIn) {
-                            showMessage("Check your email to verify your BeeKeep account. Then return here to sign in.")
-                        } else {
-                            showMessage("You're signed in. Your device data remains protected while setup is completed.")
-                            if (!cloud.localDataAttachmentRequired.value) {
-                                CloudSyncScheduler.runNow(context)
+                        when {
+                            forgotPasswordMode -> {
+                                forgotPasswordMode = false
+                                showMessage("If an account exists for that address, a password reset link has been sent. Check your inbox.")
+                            }
+                            createAccount && !cloud.account.value.signedIn -> {
+                                canResendConfirmation = true
+                                showMessage("Check your email to verify your BeeKeep account. Then return here to sign in.")
+                            }
+                            else -> {
+                                showMessage("You're signed in. Your device data remains protected while setup is completed.")
+                                if (!cloud.localDataAttachmentRequired.value) {
+                                    CloudSyncScheduler.runNow(context)
+                                }
                             }
                         }
                     }
                     CloudResult.NotConfigured -> showMessage("BeeKeep Cloud is not configured for this app build.", true)
-                    CloudResult.NotSignedIn -> showMessage("Your account is not signed in yet. Check your email for a verification link.", true)
-                    is CloudResult.Failure -> showMessage(result.message, true)
+                    CloudResult.NotSignedIn -> {
+                        canResendConfirmation = true
+                        showMessage("Your account is not signed in yet. Check your email for a verification link.", true)
+                    }
+                    is CloudResult.Failure -> {
+                        showMessage(result.message, true)
+                        val errorText = result.message.lowercase()
+                        if ("not confirmed" in errorText || "not verified" in errorText) {
+                            canResendConfirmation = true
+                        }
+                    }
                 }
             } catch (_: Throwable) {
                 showMessage("BeeKeep couldn't complete that request. Check your connection and try again.", true)
+            } finally {
+                busy = false
+            }
+        }
+    }
+
+    fun resendConfirmation() {
+        if (busy || !validEmail) return
+        scope.launch {
+            busy = true
+            showMessage("")
+            try {
+                when (val result = cloud.resendSignupConfirmation(cleanEmail)) {
+                    CloudResult.Success -> showMessage("A new confirmation email has been requested. Check your inbox.")
+                    CloudResult.NotConfigured -> showMessage("BeeKeep Cloud is not configured for this app build.", true)
+                    CloudResult.NotSignedIn -> showMessage("Sign in after confirming your email address.", true)
+                    is CloudResult.Failure -> showMessage(result.message, true)
+                }
+            } catch (_: Throwable) {
+                showMessage("BeeKeep couldn't resend the confirmation email. Check your connection and try again.", true)
             } finally {
                 busy = false
             }
@@ -267,41 +315,43 @@ internal fun BeeKeepAuthScreen(cloud: SupabaseGateway) {
                             )
                         }
 
-                        Button(
-                            onClick = { showMessage("Google sign-in is being connected in the next step.") },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .heightIn(min = 54.dp),
-                            shape = RoundedCornerShape(16.dp),
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = MaterialTheme.colorScheme.onSurface,
-                                contentColor = MaterialTheme.colorScheme.surface
-                            )
-                        ) {
-                            Box(
+                        if (!forgotPasswordMode) {
+                            Button(
+                                onClick = { showMessage("Google sign-in is being connected in the next step.") },
                                 modifier = Modifier
-                                    .size(25.dp)
-                                    .clip(CircleShape)
-                                    .background(Color.White),
-                                contentAlignment = Alignment.Center
+                                    .fillMaxWidth()
+                                    .heightIn(min = 54.dp),
+                                shape = RoundedCornerShape(16.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = MaterialTheme.colorScheme.onSurface,
+                                    contentColor = MaterialTheme.colorScheme.surface
+                                )
                             ) {
-                                Text("G", color = Color(0xFF4285F4), fontWeight = FontWeight.ExtraBold, fontSize = 17.sp)
+                                Box(
+                                    modifier = Modifier
+                                        .size(25.dp)
+                                        .clip(CircleShape)
+                                        .background(Color.White),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text("G", color = Color(0xFF4285F4), fontWeight = FontWeight.ExtraBold, fontSize = 17.sp)
+                                }
+                                Spacer(Modifier.width(12.dp))
+                                Text("Continue with Google", fontWeight = FontWeight.Bold)
                             }
-                            Spacer(Modifier.width(12.dp))
-                            Text("Continue with Google", fontWeight = FontWeight.Bold)
+    
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
+                                HorizontalDivider(modifier = Modifier.weight(1f), color = MaterialTheme.colorScheme.outline)
+                                Text("OR", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium)
+                                HorizontalDivider(modifier = Modifier.weight(1f), color = MaterialTheme.colorScheme.outline)
+                            }
                         }
 
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(12.dp)
-                        ) {
-                            HorizontalDivider(modifier = Modifier.weight(1f), color = MaterialTheme.colorScheme.outline)
-                            Text("OR", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium)
-                            HorizontalDivider(modifier = Modifier.weight(1f), color = MaterialTheme.colorScheme.outline)
-                        }
-
-                        if (createAccount) {
+                        if (createAccount && !forgotPasswordMode) {
                             OutlinedTextField(
                                 value = username,
                                 onValueChange = { value ->
@@ -328,29 +378,31 @@ internal fun BeeKeepAuthScreen(cloud: SupabaseGateway) {
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email)
                         )
 
-                        OutlinedTextField(
-                            value = password,
-                            onValueChange = { password = it; message = "" },
-                            modifier = Modifier.fillMaxWidth(),
-                            enabled = !busy,
-                            singleLine = true,
-                            label = { Text("Password") },
-                            visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
-                            trailingIcon = {
-                                IconButton(
-                                    onClick = { passwordVisible = !passwordVisible },
-                                    enabled = !busy
-                                ) {
-                                    Icon(
-                                        imageVector = if (passwordVisible) Icons.Rounded.VisibilityOff else Icons.Rounded.Visibility,
-                                        contentDescription = if (passwordVisible) "Hide password" else "Show password"
-                                    )
-                                }
-                            },
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password)
-                        )
+                        if (!forgotPasswordMode) {
+                            OutlinedTextField(
+                                value = password,
+                                onValueChange = { password = it; message = "" },
+                                modifier = Modifier.fillMaxWidth(),
+                                enabled = !busy,
+                                singleLine = true,
+                                label = { Text("Password") },
+                                visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                                trailingIcon = {
+                                    IconButton(
+                                        onClick = { passwordVisible = !passwordVisible },
+                                        enabled = !busy
+                                    ) {
+                                        Icon(
+                                            imageVector = if (passwordVisible) Icons.Rounded.VisibilityOff else Icons.Rounded.Visibility,
+                                            contentDescription = if (passwordVisible) "Hide password" else "Show password"
+                                        )
+                                    }
+                                },
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password)
+                            )
+                        }
 
-                        if (createAccount && password.isNotEmpty()) {
+                        if (!forgotPasswordMode && createAccount && password.isNotEmpty()) {
                             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
@@ -377,9 +429,12 @@ internal fun BeeKeepAuthScreen(cloud: SupabaseGateway) {
                             }
                         }
 
-                        if (!createAccount) {
+                        if (!createAccount && !forgotPasswordMode) {
                             TextButton(
-                                onClick = { showMessage("Password recovery will be connected in the next step.") },
+                                onClick = {
+                                    forgotPasswordMode = true
+                                    message = ""
+                                },
                                 enabled = !busy,
                                 modifier = Modifier.align(Alignment.End)
                             ) {
@@ -405,11 +460,22 @@ internal fun BeeKeepAuthScreen(cloud: SupabaseGateway) {
                             }
                             Text(
                                 when {
+                                    forgotPasswordMode -> "SEND RESET LINK"
                                     createAccount -> "CREATE ACCOUNT"
                                     else -> "SIGN IN"
                                 },
                                 fontWeight = FontWeight.ExtraBold
                             )
+                        }
+
+                        if (canResendConfirmation && validEmail && !forgotPasswordMode) {
+                            TextButton(
+                                onClick = { resendConfirmation() },
+                                enabled = !busy,
+                                modifier = Modifier.align(Alignment.CenterHorizontally)
+                            ) {
+                                Text("Resend confirmation email")
+                            }
                         }
 
                         if (message.isNotBlank()) {
@@ -427,23 +493,42 @@ internal fun BeeKeepAuthScreen(cloud: SupabaseGateway) {
                             )
                         }
 
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.Center,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                if (createAccount) "Already have an account?" else "New to BeeKeep?",
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            TextButton(
-                                onClick = {
-                                    createAccount = !createAccount
-                                    message = ""
-                                },
-                                enabled = !busy
+                        if (forgotPasswordMode) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.Center,
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Text(if (createAccount) "Sign in" else "Create account")
+                                Text("Remembered your password?", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                TextButton(
+                                    onClick = {
+                                        forgotPasswordMode = false
+                                        message = ""
+                                    },
+                                    enabled = !busy
+                                ) {
+                                    Text("Back to sign in")
+                                }
+                            }
+                        } else {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.Center,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    if (createAccount) "Already have an account?" else "New to BeeKeep?",
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                TextButton(
+                                    onClick = {
+                                        createAccount = !createAccount
+                                        message = ""
+                                    },
+                                    enabled = !busy
+                                ) {
+                                    Text(if (createAccount) "Sign in" else "Create account")
+                                }
                             }
                         }
                     }
@@ -469,3 +554,182 @@ internal fun BeeKeepAuthScreen(cloud: SupabaseGateway) {
         }
     }
 }
+
+@Composable
+private fun BeeKeepPasswordRecoveryScreen(cloud: SupabaseGateway) {
+    val scope = rememberCoroutineScope()
+    var newPassword by rememberSaveable { mutableStateOf("") }
+    var confirmPassword by rememberSaveable { mutableStateOf("") }
+    var passwordVisible by rememberSaveable { mutableStateOf(false) }
+    var busy by rememberSaveable { mutableStateOf(false) }
+    var message by rememberSaveable { mutableStateOf("") }
+    var messageIsError by rememberSaveable { mutableStateOf(false) }
+
+    val passwordsMatch = newPassword.isNotEmpty() && newPassword == confirmPassword
+    val canSubmit = !busy && newPassword.length >= 8 && passwordsMatch
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(
+                Brush.verticalGradient(
+                    listOf(
+                        MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
+                        MaterialTheme.colorScheme.background,
+                        MaterialTheme.colorScheme.background
+                    )
+                )
+            )
+            .imePadding(),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 22.dp, vertical = 30.dp)
+                .widthIn(max = 460.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(18.dp)
+        ) {
+            androidx.compose.foundation.Image(
+                painter = painterResource(R.drawable.beekeep_header_logo),
+                contentDescription = "BeeKeep logo",
+                modifier = Modifier.size(88.dp)
+            )
+            Text(
+                "Choose a new password",
+                style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.ExtraBold,
+                textAlign = TextAlign.Center
+            )
+            Text(
+                "Your email link is verified. Set a new password for your BeeKeep account.",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center
+            )
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                color = MaterialTheme.colorScheme.surface,
+                shape = RoundedCornerShape(24.dp),
+                tonalElevation = 2.dp,
+                shadowElevation = 6.dp
+            ) {
+                Column(
+                    modifier = Modifier.padding(22.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp)
+                ) {
+                    OutlinedTextField(
+                        value = newPassword,
+                        onValueChange = { newPassword = it; message = "" },
+                        modifier = Modifier.fillMaxWidth(),
+                        enabled = !busy,
+                        singleLine = true,
+                        label = { Text("New password") },
+                        visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                        trailingIcon = {
+                            IconButton(
+                                onClick = { passwordVisible = !passwordVisible },
+                                enabled = !busy
+                            ) {
+                                Icon(
+                                    imageVector = if (passwordVisible) Icons.Rounded.VisibilityOff else Icons.Rounded.Visibility,
+                                    contentDescription = if (passwordVisible) "Hide password" else "Show password"
+                                )
+                            }
+                        },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password)
+                    )
+                    OutlinedTextField(
+                        value = confirmPassword,
+                        onValueChange = { confirmPassword = it; message = "" },
+                        modifier = Modifier.fillMaxWidth(),
+                        enabled = !busy,
+                        singleLine = true,
+                        label = { Text("Confirm new password") },
+                        visualTransformation = PasswordVisualTransformation(),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password)
+                    )
+                    if (confirmPassword.isNotEmpty() && !passwordsMatch) {
+                        Text(
+                            "Passwords do not match.",
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                    if (newPassword.isNotEmpty() && newPassword.length < 8) {
+                        Text(
+                            "Use at least 8 characters.",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                    Button(
+                        onClick = {
+                            if (!canSubmit) return@Button
+                            scope.launch {
+                                busy = true
+                                message = ""
+                                when (val result = cloud.updatePassword(newPassword)) {
+                                    CloudResult.Success -> {
+                                        message = "Your password has been updated."
+                                    }
+                                    CloudResult.NotConfigured -> {
+                                        message = "BeeKeep Cloud is not configured for this app build."
+                                        messageIsError = true
+                                    }
+                                    CloudResult.NotSignedIn -> {
+                                        message = "This recovery link is no longer valid. Request a new password reset link."
+                                        messageIsError = true
+                                    }
+                                    is CloudResult.Failure -> {
+                                        message = result.message
+                                        messageIsError = true
+                                    }
+                                }
+                                busy = false
+                            }
+                        },
+                        enabled = canSubmit,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 54.dp),
+                        shape = RoundedCornerShape(16.dp)
+                    ) {
+                        if (busy) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(19.dp),
+                                strokeWidth = 2.dp,
+                                color = MaterialTheme.colorScheme.onPrimary
+                            )
+                            Spacer(Modifier.width(10.dp))
+                        }
+                        Text("UPDATE PASSWORD", fontWeight = FontWeight.ExtraBold)
+                    }
+                    if (message.isNotBlank()) {
+                        Text(
+                            message,
+                            color = if (messageIsError) MaterialTheme.colorScheme.error
+                            else MaterialTheme.colorScheme.onSurfaceVariant,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                    TextButton(
+                        onClick = {
+                            scope.launch {
+                                busy = true
+                                cloud.signOut()
+                                busy = false
+                            }
+                        },
+                        enabled = !busy,
+                        modifier = Modifier.align(Alignment.CenterHorizontally)
+                    ) {
+                        Text("Cancel and return to sign in")
+                    }
+                }
+            }
+        }
+    }
+}
+
