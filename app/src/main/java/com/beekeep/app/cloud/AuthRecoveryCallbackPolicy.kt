@@ -25,8 +25,8 @@ internal object AuthRecoveryCallbackPolicy {
             val name = part.substringBefore('=')
             val value = part.substringAfter('=', "")
             runCatching {
-                URLDecoder.decode(name, StandardCharsets.UTF_8) to
-                    URLDecoder.decode(value, StandardCharsets.UTF_8)
+                URLDecoder.decode(name, StandardCharsets.UTF_8.name()) to
+                    URLDecoder.decode(value, StandardCharsets.UTF_8.name())
             }.getOrNull()
         }.toMap()
     }
