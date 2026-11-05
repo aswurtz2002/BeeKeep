@@ -114,6 +114,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.first
 import com.beekeep.app.data.IdGenerator
 import com.beekeep.app.cloud.LocalDataAttachmentPreview
 import com.beekeep.app.cloud.LocalDataAttachmentMergePlan
@@ -232,9 +233,12 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
         CloudSyncScheduler.schedule(applicationContext)
         val vm = ViewModelProvider(this, BeeKeepViewModel.Factory(repository, applicationContext))[BeeKeepViewModel::class.java]
         lifecycleScope.launch {
-            // syncNow waits for auth initialization; start live updates only once a
-            // valid cloud session has been confirmed.
-            if (cloud.syncNow() is CloudResult.Success) cloud.startRealtime()
+            // Startup renders the account-bound local Room database first. Do not contend for
+            // the sync mutex until the gateway has published the initial local session state.
+            cloud.accountInitialized.first { it }
+            if (cloud.account.value.signedIn && !cloud.localDataAttachmentRequired.value) {
+                if (cloud.syncNow() is CloudResult.Success) cloud.startRealtime()
+            }
         }
         val prefs = getSharedPreferences(PREFS, MODE_PRIVATE)
         setContent {
