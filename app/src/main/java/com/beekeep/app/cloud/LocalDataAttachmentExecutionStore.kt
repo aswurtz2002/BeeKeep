@@ -120,7 +120,8 @@ internal object LocalDataAttachmentExecutionStore {
                 .put("pendingSyncWriteCount", journal.plan.pendingSyncWriteCount)
                 .put("pendingDeleteCount", journal.plan.pendingDeleteCount)
                 .put("pendingActionBatchCount", journal.plan.pendingActionBatchCount)
-                .put("pendingWorkspaceActionCount", journal.plan.pendingWorkspaceActionCount))
+                .put("pendingWorkspaceActionCount", journal.plan.pendingWorkspaceActionCount)
+                .put("cloudInventorySha256", journal.plan.cloudInventorySha256))
     }
 
     private fun decodeJournal(
@@ -162,7 +163,11 @@ internal object LocalDataAttachmentExecutionStore {
             pendingSyncWriteCount = planJson.getInt("pendingSyncWriteCount"),
             pendingDeleteCount = planJson.getInt("pendingDeleteCount"),
             pendingActionBatchCount = planJson.getInt("pendingActionBatchCount"),
-            pendingWorkspaceActionCount = planJson.getInt("pendingWorkspaceActionCount")
+            pendingWorkspaceActionCount = planJson.getInt("pendingWorkspaceActionCount"),
+            cloudInventorySha256 = planJson.optString(
+                "cloudInventorySha256",
+                payload.optString("baseCloudInventorySha256")
+            )
         )
         val journal = LocalDataAttachmentExecutionJournal(
             accountId = payload.getString("accountId"),
