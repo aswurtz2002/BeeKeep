@@ -77,6 +77,10 @@ private const val PENDING_PASSWORD_RESET_REQUEST_EMAIL_PREF = "pending_password_
 private const val PENDING_PASSWORD_RESET_REQUEST_AT_PREF = "pending_password_reset_request_at"
 private const val PASSWORD_RESET_REQUEST_MAX_AGE_MS = 60L * 60L * 1000L
 private const val PASSWORD_RECOVERY_SESSION_PREF = "password_recovery_session_active"
+private const val ACCOUNT_SETUP_USER_PREF = "account_setup_user_id"
+private const val ACCOUNT_SETUP_USERNAME_PREF = "account_setup_username"
+private const val ACCOUNT_SETUP_WORKSPACE_ID_PREF = "account_setup_personal_workspace_id"
+private const val ACCOUNT_SETUP_WORKSPACE_NAME_PREF = "account_setup_personal_workspace_name"
 
 class SupabaseGateway(
     private val context: Context,
@@ -122,6 +126,11 @@ class SupabaseGateway(
     val localDataAttachmentRequired: StateFlow<Boolean> = _localDataAttachmentRequired.asStateFlow()
     /** True after Supabase has restored the stored session and the account identity is known. */
     val accountInitialized: StateFlow<Boolean> = _accountInitialized.asStateFlow()
+    private val _accountSetupState = MutableStateFlow<BeeKeepAccountSetupState>(
+        BeeKeepAccountSetupState.SignedOut
+    )
+    /** Post-login profile and personal-workspace status for the currently authenticated account. */
+    val accountSetupState: StateFlow<BeeKeepAccountSetupState> = _accountSetupState.asStateFlow()
 
     private val _hiveLimitOverride = MutableStateFlow<Int?>(null)
     /** A verified override for the signed-in account, or null when none is granted. */
@@ -148,6 +157,7 @@ class SupabaseGateway(
         _accountInitialized.value = false
         val supabase = client
         if (!configured || supabase == null) {
+            _accountSetupState.value = BeeKeepAccountSetupState.SignedOut
             stopRealtime()
             val prefs = appContext.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
             val cachedWorkspaceId = prefs.getString("active_team_workspace_id", "").orEmpty().trim()
@@ -181,6 +191,7 @@ class SupabaseGateway(
                 .getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
                 .getBoolean(PASSWORD_RECOVERY_SESSION_PREF, false)
             if (userId == null) {
+                _accountSetupState.value = BeeKeepAccountSetupState.SignedOut
                 _localDataAttachmentRequired.value = false
                 // The auth SDK can have no current session when an expired token cannot refresh
                 // offline. An explicit in-app sign-out clears the active workspace before it gets
@@ -231,6 +242,7 @@ class SupabaseGateway(
                     _account.value = CloudAccountState(configured = true, signedIn = false)
                 }
             } else {
+                _accountSetupState.value = BeeKeepAccountSetupState.Checking
                 val accountPrefs = appContext.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
                 // This dedicated marker survives explicit sign-out, which clears the active
                 // session identity but must not make the same account look new on this device.
@@ -260,6 +272,7 @@ class SupabaseGateway(
                 refreshVerifiedPlanForUser(userId)
                 refreshHiveLimitOverrideForUser(userId)
                 restoreWorkspaceForAccount(supabase, userId)
+                refreshAccountSetupState(supabase, userId)
             }
             repository.completeStartupWorkspaceAccessResolution()
             _account.value = CloudAccountState(
@@ -318,6 +331,13 @@ class SupabaseGateway(
             }
             repository.completeStartupWorkspaceAccessResolution()
             val lastKnownUserId = cachedUserId
+            _accountSetupState.value = if (lastKnownUserId != null) {
+                cachedAccountSetupState(lastKnownUserId) ?: BeeKeepAccountSetupState.Unavailable(
+                    "BeeKeep couldn't verify your profile and personal workspace. Reconnect and retry. Your hive records have not been changed."
+                )
+            } else {
+                BeeKeepAccountSetupState.SignedOut
+            }
             _account.value = CloudAccountState(
                 configured = true,
                 signedIn = lastKnownUserId != null,
@@ -326,6 +346,117 @@ class SupabaseGateway(
                 error = TeamWorkspaceSyncError.userFacing(error.message)
             )
             _accountInitialized.value = true
+        }
+    }
+
+    /**
+     * Confirms the signed-in user has exactly one personal workspace owned by that same account,
+     * then reads the server-managed username. This is read-only: creation/backfill is handled by
+     * the auth.users trigger and the existing workspace migration.
+     */
+    private suspend fun refreshAccountSetupState(supabase: SupabaseClient, userId: String) {
+        _accountSetupState.value = BeeKeepAccountSetupState.Checking
+        try {
+            val workspaces = supabase.postgrest.rpc("beekeep_list_workspaces")
+                .decodeList<BeeKeepWorkspace>()
+            val personalWorkspace = AccountSetupPolicy.personalWorkspaceForAccount(workspaces, userId)
+                ?: error("Your personal BeeKeep workspace couldn't be verified. Try again or contact support.")
+
+            val username = supabase.postgrest.rpc("beekeep_get_username")
+                .decodeList<BeeKeepUsername>()
+                .firstOrNull()?.username.orEmpty().trim()
+
+            cacheAccountSetup(userId, username, personalWorkspace.id, personalWorkspace.name)
+            _accountSetupState.value = if (AccountSetupPolicy.isValidUsername(username)) {
+                BeeKeepAccountSetupState.Ready(
+                    username = username,
+                    personalWorkspaceId = personalWorkspace.id,
+                    personalWorkspaceName = personalWorkspace.name
+                )
+            } else {
+                BeeKeepAccountSetupState.UsernameRequired(
+                    personalWorkspaceId = personalWorkspace.id,
+                    personalWorkspaceName = personalWorkspace.name
+                )
+            }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Throwable) {
+            _accountSetupState.value = cachedAccountSetupState(userId)
+                ?: BeeKeepAccountSetupState.Unavailable(
+                    TeamWorkspaceSyncError.userFacing(
+                        error.message ?: "BeeKeep couldn't verify your profile. Reconnect and retry."
+                    )
+                )
+        }
+    }
+
+    private fun cacheAccountSetup(
+        userId: String,
+        username: String,
+        personalWorkspaceId: String,
+        personalWorkspaceName: String
+    ) {
+        appContext.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE).edit()
+            .putString(ACCOUNT_SETUP_USER_PREF, userId)
+            .putString(ACCOUNT_SETUP_USERNAME_PREF, username)
+            .putString(ACCOUNT_SETUP_WORKSPACE_ID_PREF, personalWorkspaceId)
+            .putString(ACCOUNT_SETUP_WORKSPACE_NAME_PREF, personalWorkspaceName)
+            .apply()
+    }
+
+    private fun cachedAccountSetupState(userId: String): BeeKeepAccountSetupState? {
+        val prefs = appContext.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
+        if (prefs.getString(ACCOUNT_SETUP_USER_PREF, null) != userId) return null
+        val workspaceId = prefs.getString(ACCOUNT_SETUP_WORKSPACE_ID_PREF, null)
+            ?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+        val workspaceName = prefs.getString(ACCOUNT_SETUP_WORKSPACE_NAME_PREF, null)
+            ?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+        val username = prefs.getString(ACCOUNT_SETUP_USERNAME_PREF, "").orEmpty().trim()
+        return if (AccountSetupPolicy.isValidUsername(username)) {
+            BeeKeepAccountSetupState.Ready(
+                username = username,
+                personalWorkspaceId = workspaceId,
+                personalWorkspaceName = workspaceName,
+                isCached = true
+            )
+        } else {
+            BeeKeepAccountSetupState.UsernameRequired(
+                personalWorkspaceId = workspaceId,
+                personalWorkspaceName = workspaceName,
+                isCached = true
+            )
+        }
+    }
+
+    /** Re-checks profile/workspace setup after a temporary network or database failure. */
+    suspend fun retryAccountSetup() {
+        val supabase = client
+        if (!configured || supabase == null) {
+            _accountSetupState.value = BeeKeepAccountSetupState.Unavailable(
+                "BeeKeep Cloud isn't configured for this build."
+            )
+            return
+        }
+        try {
+            supabase.auth.awaitInitialization()
+            val userId = supabase.auth.currentSessionOrNull()?.user?.id
+                ?.trim()?.takeIf { it.isNotEmpty() }
+            if (userId == null) {
+                _accountSetupState.value = BeeKeepAccountSetupState.SignedOut
+                return
+            }
+            refreshAccountSetupState(supabase, userId)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Throwable) {
+            _accountSetupState.value = cachedAccountSetupState(
+                supabase.auth.currentSessionOrNull()?.user?.id.orEmpty()
+            ) ?: BeeKeepAccountSetupState.Unavailable(
+                TeamWorkspaceSyncError.userFacing(
+                    error.message ?: "BeeKeep couldn't verify your profile. Reconnect and retry."
+                )
+            )
         }
     }
 
@@ -2460,14 +2591,36 @@ class SupabaseGateway(
                 .decodeList<BeeKeepUsername>().firstOrNull()?.username.orEmpty()
         }
 
-    suspend fun setUsername(username: String): WorkspaceOperationResult<String> =
-        workspaceOperation {
+    suspend fun setUsername(username: String): WorkspaceOperationResult<String> {
+        val result = workspaceOperation {
             client!!.postgrest.rpc(
                 "beekeep_set_username",
                 WorkspaceUsernameParams(username.trim())
             ).decodeList<BeeKeepUsername>().firstOrNull()?.username
                 ?: error("Username was not returned after saving")
         }
+        val savedUsername = result.value?.trim().orEmpty()
+        val userId = _account.value.userId?.trim().orEmpty()
+        if (result.isSuccess && savedUsername.isNotBlank() && userId.isNotBlank()) {
+            val current = _accountSetupState.value
+            val workspace = when (current) {
+                is BeeKeepAccountSetupState.UsernameRequired ->
+                    current.personalWorkspaceId to current.personalWorkspaceName
+                is BeeKeepAccountSetupState.Ready ->
+                    current.personalWorkspaceId to current.personalWorkspaceName
+                else -> null
+            }
+            if (workspace != null) {
+                cacheAccountSetup(userId, savedUsername, workspace.first, workspace.second)
+                _accountSetupState.value = BeeKeepAccountSetupState.Ready(
+                    username = savedUsername,
+                    personalWorkspaceId = workspace.first,
+                    personalWorkspaceName = workspace.second
+                )
+            }
+        }
+        return result
+    }
 
     suspend fun deleteWorkspace(workspaceId: String): WorkspaceOperationResult<Unit> =
         workspaceOperation {
