@@ -536,8 +536,6 @@ fun BeeKeepApp(
     var pendingAutoTagWriteHiveId by rememberSaveable { mutableStateOf<Long?>(null) }
     var pendingAutoTagWriteIgnoredUid by rememberSaveable { mutableStateOf<String?>(null) }
     var scanning by remember { mutableStateOf(false) }
-    var firstRunPromptVisible by rememberSaveable { mutableStateOf(false) }
-    var firstRunPromptChecked by rememberSaveable { mutableStateOf(false) }
     var pendingResetWarning by rememberSaveable { mutableStateOf<String?>(null) }
     var pendingLocationHive by remember { mutableStateOf<Hive?>(null) }
     var pendingApiaryMove by remember { mutableStateOf<Pair<Hive, Apiary>?>(null) }
@@ -1382,23 +1380,11 @@ fun BeeKeepApp(
         }
     }
 
-    // Offer first-run setup only after every record stream has hydrated. Existing
-    // workspaces are marked as initialized silently so upgrades are never interrupted.
-    androidx.compose.runtime.LaunchedEffect(ready, hives, deadHives, apiaries) {
-        if (!ready || firstRunPromptChecked) return@LaunchedEffect
-        firstRunPromptChecked = true
-        val setupAlreadyCompleted = autoVoicePrefs.getBoolean("initial_setup_completed", false)
-        if (!setupAlreadyCompleted && hives.isEmpty() && deadHives.isEmpty() && apiaries.isEmpty()) {
-            firstRunPromptVisible = true
-        } else if (!setupAlreadyCompleted) {
-            autoVoicePrefs.edit { putBoolean("initial_setup_completed", true) }
-        }
-    }
-
-    // Show any cloud-reset warning after the user dismisses the fresh-start prompt.
-    androidx.compose.runtime.LaunchedEffect(firstRunPromptVisible, pendingResetWarning, screen) {
+    // Show cloud-reset warnings as soon as the user returns to Home. This no longer
+    // depends on the removed first-launch setup prompt.
+    androidx.compose.runtime.LaunchedEffect(pendingResetWarning, screen) {
         val warning = pendingResetWarning ?: return@LaunchedEffect
-        if (!firstRunPromptVisible && screen == Screen.HOME) {
+        if (screen == Screen.HOME) {
             snackbarHostState.showSnackbar(warning)
             pendingResetWarning = null
         }
@@ -2680,7 +2666,6 @@ fun BeeKeepApp(
                     screen = Screen.APIARIES
                 } else {
                     screen = Screen.HOME
-                    firstRunPromptVisible = !autoVoicePrefs.getBoolean("initial_setup_completed", false)
                 }
             },
             onUpgrade = {
@@ -2689,8 +2674,6 @@ fun BeeKeepApp(
                 screen = Screen.PURCHASES
             },
             onComplete = { createdApiaries, createdHives ->
-                autoVoicePrefs.edit { putBoolean("initial_setup_completed", true) }
-                firstRunPromptVisible = false
                 addingApiariesWithHives = false
                 screen = if (isAddingToExistingWorkspace) Screen.APIARIES else Screen.HOME
                 scope.launch {
@@ -3203,8 +3186,6 @@ vm.saveHarvestToApiary(
                     pendingInspectionHiveId = null
                     pendingAutoStartVoiceHiveId = null
                     pendingResetWarning = warning
-                    firstRunPromptChecked = true
-                    firstRunPromptVisible = true
                     screen = Screen.HOME
                 }
             )
@@ -3319,38 +3300,6 @@ vm.saveHarvestToApiary(
         )
     }
 
-    if (firstRunPromptVisible && screen == Screen.HOME) {
-        AlertDialog(
-            onDismissRequest = {},
-            properties = DialogProperties(
-                dismissOnBackPress = false,
-                dismissOnClickOutside = false
-            ),
-            title = { Text("Welcome to BeeKeep", fontWeight = FontWeight.ExtraBold) },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text("How would you like to get started?")
-                    Button(
-                        onClick = {
-                            firstRunPromptVisible = false
-                            screen = Screen.PREMADE_SETUP
-                        },
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(14.dp)
-                    ) { Text("Load Pre-made Hives") }
-                    OutlinedButton(
-                        onClick = {
-                            autoVoicePrefs.edit { putBoolean("initial_setup_completed", true) }
-                            firstRunPromptVisible = false
-                        },
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(14.dp)
-                    ) { Text("Start from Scratch") }
-                }
-            },
-            confirmButton = {}
-        )
-    }
 }
 
 @Composable
