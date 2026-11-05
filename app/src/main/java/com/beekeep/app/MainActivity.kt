@@ -230,12 +230,14 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
         val cloud = SupabaseGateway(applicationContext, repository)
         cloudGateway = cloud
         cloud.handleAuthDeepLink(intent)
-        CloudSyncScheduler.schedule(applicationContext)
         val vm = ViewModelProvider(this, BeeKeepViewModel.Factory(repository, applicationContext))[BeeKeepViewModel::class.java]
         lifecycleScope.launch {
             // Startup renders the account-bound local Room database first. Do not contend for
             // the sync mutex until the gateway has published the initial local session state.
             cloud.accountInitialized.first { it }
+            // Schedule background sync only after local-first session and workspace selection
+            // have been published, so a worker cannot hold the shared sync mutex ahead of startup.
+            CloudSyncScheduler.schedule(applicationContext)
             if (cloud.account.value.signedIn && !cloud.localDataAttachmentRequired.value) {
                 if (cloud.syncNow() is CloudResult.Success) cloud.startRealtime()
             }
