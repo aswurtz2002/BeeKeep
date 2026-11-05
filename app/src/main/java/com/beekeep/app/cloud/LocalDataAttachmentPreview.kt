@@ -19,3 +19,15 @@ internal data class LocalDataAttachmentPreview(
     val cloudRecordsTotal: Int get() = cloudRecordCounts.values.sum()
     val cloudDeletedTotal: Int get() = cloudDeletedCounts.values.sum()
 }
+
+
+/** A successful, verified local-account attachment. Counts exclude preserved local-only data. */
+internal data class LocalDataAttachmentExecutionResult(
+    val accountId: String,
+    val uploadedRecordCount: Int,
+    val alreadyPresentRecordCount: Int,
+    val remappedRecordCount: Int,
+    val preservedLocalOnlyCount: Int,
+    val resumed: Boolean,
+    val verifiedAt: Long
+)
