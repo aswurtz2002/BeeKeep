@@ -433,9 +433,11 @@ fun BeeKeepApp(
 ) {
     val account by cloud.account.collectAsStateWithLifecycle()
     val accountInitialized by cloud.accountInitialized.collectAsStateWithLifecycle()
+    val passwordRecoveryRequired by cloud.passwordRecoveryRequired.collectAsStateWithLifecycle()
 
     when {
         !accountInitialized -> BeeKeepAuthLoadingScreen()
+        passwordRecoveryRequired -> BeeKeepAuthScreen(cloud)
         !account.signedIn -> BeeKeepAuthScreen(cloud)
         else -> BeeKeepAuthenticatedApp(
             vm = vm,

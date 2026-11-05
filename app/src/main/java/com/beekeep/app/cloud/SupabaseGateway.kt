@@ -11,6 +11,7 @@ import com.beekeep.app.data.WorkspaceActionSettingsEntity
 import com.beekeep.app.data.workspaceActionSettingsScopeKey
 import io.github.jan.supabase.SupabaseClient
 import io.github.jan.supabase.auth.auth
+import io.github.jan.supabase.auth.OtpType
 import io.github.jan.supabase.auth.handleDeeplinks
 import io.github.jan.supabase.auth.providers.builtin.Email
 import io.github.jan.supabase.functions.functions
@@ -70,6 +71,10 @@ private const val SYNC_CONFLICT_LOOKUP_BATCH_SIZE = 100
 private const val CLOUD_DATA_ATTACHMENT_PENDING_USER_PREF = "cloud_data_attachment_pending_user_id"
 private const val CLOUD_DATA_ATTACHMENT_LAST_USER_PREF = "cloud_data_attachment_last_user_id"
 private const val CLOUD_DATA_ATTACHMENT_PAUSED_MESSAGE = "Cloud sync is paused while this device's existing records wait for review. Nothing will be uploaded or deleted yet."
+private const val PENDING_PASSWORD_RESET_REQUEST_EMAIL_PREF = "pending_password_reset_request_email"
+private const val PENDING_PASSWORD_RESET_REQUEST_AT_PREF = "pending_password_reset_request_at"
+private const val PASSWORD_RESET_REQUEST_MAX_AGE_MS = 60L * 60L * 1000L
+private const val PASSWORD_RECOVERY_SESSION_PREF = "password_recovery_session_active"
 
 class SupabaseGateway(
     private val context: Context,
@@ -107,6 +112,9 @@ class SupabaseGateway(
     /** Emits after any configured sync attempt completes, including WorkManager syncs. */
     val workspaceActionLogRefreshVersion: StateFlow<Long> = WorkspaceActionLogRefreshSignal.version
     private val _accountInitialized = MutableStateFlow(false)
+    private val _passwordRecoveryRequired = MutableStateFlow(false)
+    /** True only after a password-recovery link has been returned to and processed by this app. */
+    val passwordRecoveryRequired: StateFlow<Boolean> = _passwordRecoveryRequired.asStateFlow()
     /** True when this signed-in account has not yet reviewed this device's pre-existing local data. */
     private val _localDataAttachmentRequired = MutableStateFlow(false)
     val localDataAttachmentRequired: StateFlow<Boolean> = _localDataAttachmentRequired.asStateFlow()
@@ -167,6 +175,9 @@ class SupabaseGateway(
             supabase.auth.awaitInitialization()
             val session = supabase.auth.currentSessionOrNull()
             val userId = session?.user?.id?.trim()?.takeIf { it.isNotEmpty() }
+            _passwordRecoveryRequired.value = appContext
+                .getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
+                .getBoolean(PASSWORD_RECOVERY_SESSION_PREF, false)
             if (userId == null) {
                 _localDataAttachmentRequired.value = false
                 // The auth SDK can have no current session when an expired token cannot refresh
@@ -514,22 +525,128 @@ class SupabaseGateway(
         }
     }
 
-    suspend fun signIn(email: String, password: String): CloudResult = authCall(restoreWorkspaceId = repository.activeWorkspaceId.value) {
-        val supabase = client ?: return@authCall
-        supabase.auth.signInWith(Email) {
-            this.email = email.trim()
-            this.password = password
+    suspend fun signIn(email: String, password: String): CloudResult {
+        val result = authCall(restoreWorkspaceId = repository.activeWorkspaceId.value) {
+            val supabase = client ?: return@authCall
+            supabase.auth.signInWith(Email) {
+                this.email = email.trim()
+                this.password = password
+            }
+        }
+        if (result == CloudResult.Success) clearPendingPasswordResetRequestUnlessEmailMatches(email)
+        return result
+    }
+
+    suspend fun signUp(email: String, password: String, username: String = ""): CloudResult {
+        val result = authCall {
+            val supabase = client ?: return@authCall
+            supabase.auth.signUpWith(Email) {
+                this.email = email.trim()
+                this.password = password
+                data = buildJsonObject {
+                    if (username.isNotBlank()) put("username", username.trim())
+                }
+            }
+        }
+        if (result == CloudResult.Success) clearPendingPasswordResetRequest()
+        return result
+    }
+
+    /** Resends the confirmation email for a signup that has not yet been verified. */
+    suspend fun resendSignupConfirmation(email: String): CloudResult = authEmailRequest { supabase ->
+        supabase.auth.resendEmail(
+            OtpType.Email.SIGNUP,
+            email.trim(),
+            redirectUrl = authRedirectUrl()
+        )
+    }
+
+    /**
+     * Requests a recovery link without revealing whether the email address belongs to an account.
+     * The recovery-pending marker is only used to recognize a PKCE callback that has no type field.
+     */
+    suspend fun requestPasswordReset(email: String): CloudResult {
+        val result = authEmailRequest { supabase ->
+            supabase.auth.resetPasswordForEmail(
+                email = email.trim(),
+                redirectUrl = authRedirectUrl()
+            )
+        }
+        if (result == CloudResult.Success) {
+            appContext.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE).edit()
+                .putString(PENDING_PASSWORD_RESET_REQUEST_EMAIL_PREF, email.trim())
+                .putLong(PENDING_PASSWORD_RESET_REQUEST_AT_PREF, System.currentTimeMillis())
+                .apply()
+        }
+        return result
+    }
+
+    /** Updates the password only after a recovery callback has established an authenticated session. */
+    suspend fun updatePassword(newPassword: String): CloudResult {
+        if (!_passwordRecoveryRequired.value) {
+            return CloudResult.Failure("Open the password-reset link from your email before choosing a new password.")
+        }
+        if (newPassword.length < 8) {
+            return CloudResult.Failure("Use a password with at least 8 characters.")
+        }
+        val result = authEmailRequest { supabase ->
+            supabase.auth.updateUser {
+                password = newPassword
+            }
+        }
+        if (result == CloudResult.Success) {
+            // Keep the recovery screen active until the user acknowledges success.
+            clearPendingPasswordResetRequest()
+        }
+        return result
+    }
+
+    private fun clearPendingPasswordResetRequestUnlessEmailMatches(email: String) {
+        val pendingEmail = appContext.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
+            .getString(PENDING_PASSWORD_RESET_REQUEST_EMAIL_PREF, null)
+        if (!pendingEmail.equals(email.trim(), ignoreCase = true)) {
+            clearPendingPasswordResetRequest()
         }
     }
 
-    suspend fun signUp(email: String, password: String, username: String = ""): CloudResult = authCall {
-        val supabase = client ?: return@authCall
-        supabase.auth.signUpWith(Email) {
-            this.email = email.trim()
-            this.password = password
-            data = buildJsonObject {
-                if (username.isNotBlank()) put("username", username.trim())
+    private fun clearPendingPasswordResetRequest() {
+        appContext.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE).edit()
+            .remove(PENDING_PASSWORD_RESET_REQUEST_EMAIL_PREF)
+            .remove(PENDING_PASSWORD_RESET_REQUEST_AT_PREF)
+            .apply()
+    }
+
+    /** Leaves the recovery-only screen after the user acknowledges the successful password change. */
+    suspend fun finishPasswordRecovery() {
+        appContext.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE).edit()
+            .remove(PENDING_PASSWORD_RESET_REQUEST_EMAIL_PREF)
+            .remove(PENDING_PASSWORD_RESET_REQUEST_AT_PREF)
+            .remove(PASSWORD_RECOVERY_SESSION_PREF)
+            .apply()
+        _passwordRecoveryRequired.value = false
+        refreshAccount()
+    }
+
+    private fun authRedirectUrl(): String =
+        BuildConfig.AUTH_REDIRECT_SCHEME + "://" + BuildConfig.AUTH_REDIRECT_HOST
+    private suspend fun authEmailRequest(
+        block: suspend (SupabaseClient) -> Unit
+    ): CloudResult {
+        if (!configured || client == null) return CloudResult.NotConfigured
+        return try {
+            client.auth.awaitInitialization()
+            block(client)
+            CloudResult.Success
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Throwable) {
+            val rawMessage = error.message.orEmpty().trim()
+            val message = if (rawMessage.isBlank() || rawMessage.length > 240) {
+                "BeeKeep couldn't complete that email request. Check your connection and try again."
+            } else {
+                TeamWorkspaceSyncError.userFacing(rawMessage)
             }
+            CloudResult.Failure(message)
         }
     }
 
@@ -538,6 +655,12 @@ class SupabaseGateway(
     private suspend fun signOutUnlocked(): CloudResult = try {
         val supabase = client ?: return CloudResult.NotConfigured
         stopRealtime()
+        appContext.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE).edit()
+            .remove(PENDING_PASSWORD_RESET_REQUEST_EMAIL_PREF)
+            .remove(PENDING_PASSWORD_RESET_REQUEST_AT_PREF)
+            .remove(PASSWORD_RECOVERY_SESSION_PREF)
+            .apply()
+        _passwordRecoveryRequired.value = false
         // Never leave another account viewing the previously selected team's local cache.
         repository.switchWorkspace(null)
         supabase.auth.signOut()
@@ -1989,13 +2112,71 @@ class SupabaseGateway(
             uri.host != BuildConfig.AUTH_REDIRECT_HOST
         ) return
 
-        try {
-            supabase.handleDeeplinks(intent)
-            scope.launch { refreshAccount() }
-        } catch (t: Throwable) {
-            _account.value = _account.value.copy(
-                error = TeamWorkspaceSyncError.userFacing(t.message ?: "Could not complete email verification")
-            )
+        val prefs = appContext.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
+        val pendingResetEmail = prefs.getString(PENDING_PASSWORD_RESET_REQUEST_EMAIL_PREF, null)
+        val pendingResetAt = prefs.getLong(PENDING_PASSWORD_RESET_REQUEST_AT_PREF, 0L)
+        val pendingResetAge = System.currentTimeMillis() - pendingResetAt
+        val pendingResetIsFresh = pendingResetAt > 0L &&
+            pendingResetAge in 0L..PASSWORD_RESET_REQUEST_MAX_AGE_MS
+        val explicitRecoveryType = AuthRecoveryCallbackPolicy.isPasswordRecoveryCallback(
+            callbackUrl = uri.toString(),
+            recoveryRequestPending = false
+        )
+        val isPasswordRecovery = explicitRecoveryType || AuthRecoveryCallbackPolicy.isPasswordRecoveryCallback(
+            callbackUrl = uri.toString(),
+            recoveryRequestPending = pendingResetIsFresh
+        )
+
+        // Wait for stored credentials before processing the link. Only a successful session
+        // callback can enable password changes; an expired link cannot reuse an older session.
+        scope.launch {
+            try {
+                supabase.auth.awaitInitialization()
+                supabase.handleDeeplinks(
+                    intent = intent,
+                    onSessionSuccess = { userSession ->
+                        if (isPasswordRecovery) {
+                            val recoveredEmail = userSession.user?.email?.trim()
+                            val requestedEmailMatches = !pendingResetEmail.isNullOrBlank() &&
+                                !recoveredEmail.isNullOrBlank() &&
+                                pendingResetEmail.equals(recoveredEmail, ignoreCase = true)
+                            if (explicitRecoveryType || requestedEmailMatches) {
+                                prefs.edit()
+                                    .putBoolean(PASSWORD_RECOVERY_SESSION_PREF, true)
+                                    .remove(PENDING_PASSWORD_RESET_REQUEST_EMAIL_PREF)
+                                    .remove(PENDING_PASSWORD_RESET_REQUEST_AT_PREF)
+                                    .apply()
+                                _passwordRecoveryRequired.value = true
+                            } else {
+                                clearPendingPasswordResetRequest()
+                                _account.value = _account.value.copy(
+                                    error = "This password-reset link is invalid or expired. Request a new link and try again."
+                                )
+                            }
+                        } else {
+                            clearPendingPasswordResetRequest()
+                        }
+                        scope.launch { refreshAccount() }
+                    },
+                    onError = { error ->
+                        if (isPasswordRecovery) clearPendingPasswordResetRequest()
+                        _account.value = _account.value.copy(
+                            error = TeamWorkspaceSyncError.userFacing(
+                                error.message ?: "Could not complete email verification"
+                            )
+                        )
+                        scope.launch { refreshAccount() }
+                    }
+                )
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (t: Throwable) {
+                if (isPasswordRecovery) clearPendingPasswordResetRequest()
+                _account.value = _account.value.copy(
+                    error = TeamWorkspaceSyncError.userFacing(t.message ?: "Could not complete email verification")
+                )
+                refreshAccount()
+            }
         }
     }
 
