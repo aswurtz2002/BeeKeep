@@ -69,7 +69,7 @@ internal object LocalDataAttachmentSnapshotStore {
                 "The local recovery snapshot could not be verified after saving."
             }
 
-            return LocalDataAttachmentSnapshotInfo(
+            val info = LocalDataAttachmentSnapshotInfo(
                 fileName = fileName,
                 createdAt = createdAt,
                 sizeBytes = savedBytes.size.toLong(),
@@ -81,9 +81,84 @@ internal object LocalDataAttachmentSnapshotStore {
                 noteDrafts = noteDrafts,
                 formDrafts = formDrafts
             )
+            writeManifest(directory, info)
+            return info
         } catch (error: Throwable) {
             destination.takeIf { it.exists() }?.delete()
+            File(directory, "$fileName.manifest").takeIf { it.exists() }?.delete()
             throw error
+        } finally {
+            temporary.takeIf { it.exists() }?.delete()
+        }
+    }
+
+    /** Lists recoverable snapshots after an app restart and verifies each file against its manifest. */
+    fun listVerifiedSnapshots(filesDirectory: File): List<LocalDataAttachmentSnapshotInfo> {
+        val directory = File(filesDirectory, DIRECTORY_NAME).canonicalFile
+        if (!directory.isDirectory) return emptyList()
+        return directory.listFiles()
+            .orEmpty()
+            .asSequence()
+            .filter { it.isFile && it.name.matches(Regex("^attachment-[0-9]+-[a-f0-9-]+\\.json$")) }
+            .mapNotNull { snapshotFile ->
+                runCatching {
+                    val manifest = File(directory, "${snapshotFile.name}.manifest")
+                    val lines = manifest.readLines(StandardCharsets.UTF_8)
+                    require(lines.size >= 9 && lines[0] == "1") { "Snapshot manifest is invalid." }
+                    val createdAt = lines[1].toLong()
+                    val sizeBytes = lines[2].toLong()
+                    val checksum = lines[3]
+                    val counts = lines.drop(9).associate { line ->
+                        val separator = line.indexOf('=')
+                        require(separator > 0) { "Snapshot manifest count is invalid." }
+                        line.substring(0, separator) to line.substring(separator + 1).toInt()
+                    }
+                    val bytes = snapshotFile.readBytes()
+                    require(bytes.size.toLong() == sizeBytes && sha256(bytes) == checksum) {
+                        "Snapshot file failed integrity verification."
+                    }
+                    LocalDataAttachmentSnapshotInfo(
+                        fileName = snapshotFile.name,
+                        createdAt = createdAt,
+                        sizeBytes = sizeBytes,
+                        sha256 = checksum,
+                        recordCounts = counts,
+                        pendingSyncWrites = lines[4].toInt(),
+                        pendingActionBatches = lines[5].toInt(),
+                        pendingWorkspaceActions = lines[6].toInt(),
+                        noteDrafts = lines[7].toInt(),
+                        formDrafts = lines[8].toInt()
+                    )
+                }.getOrNull()
+            }
+            .sortedByDescending { it.createdAt }
+            .toList()
+    }
+
+    private fun writeManifest(directory: File, info: LocalDataAttachmentSnapshotInfo) {
+        val manifest = File(directory, "${info.fileName}.manifest")
+        val temporary = File.createTempFile("attachment-meta-", ".tmp", directory)
+        try {
+            val lines = buildList {
+                add("1")
+                add(info.createdAt.toString())
+                add(info.sizeBytes.toString())
+                add(info.sha256)
+                add(info.pendingSyncWrites.toString())
+                add(info.pendingActionBatches.toString())
+                add(info.pendingWorkspaceActions.toString())
+                add(info.noteDrafts.toString())
+                add(info.formDrafts.toString())
+                info.recordCounts.toSortedMap().forEach { (key, value) -> add("$key=$value") }
+            }
+            FileOutputStream(temporary).use { output ->
+                output.write(lines.joinToString("\n", postfix = "\n").toByteArray(StandardCharsets.UTF_8))
+                output.flush()
+                output.fd.sync()
+            }
+            if (!temporary.renameTo(manifest)) {
+                throw IllegalStateException("BeeKeep could not finalize the recovery snapshot manifest.")
+            }
         } finally {
             temporary.takeIf { it.exists() }?.delete()
         }

@@ -52,6 +52,34 @@ class LocalDataAttachmentSnapshotStoreTest {
     }
 
     @Test
+    fun verifiedSnapshotCanBeDiscoveredAfterThePreviewStateIsGone() {
+        val original = """{"format":"beekeep-local-attachment-snapshot","records":[]}"""
+        val saved = LocalDataAttachmentSnapshotStore.save(
+            filesDirectory = temporaryFolder.root,
+            createdAt = 1234L,
+            snapshotJson = original,
+            recordCounts = mapOf("apiary" to 2, "hive" to 7),
+            pendingSyncWrites = 4,
+            pendingActionBatches = 1,
+            pendingWorkspaceActions = 0,
+            noteDrafts = 3,
+            formDrafts = 2
+        )
+
+        // Re-discover from disk rather than relying on the original in-memory preview object.
+        val restored = LocalDataAttachmentSnapshotStore.listVerifiedSnapshots(temporaryFolder.root).single()
+
+        assertEquals(saved.fileName, restored.fileName)
+        assertEquals(saved.sha256, restored.sha256)
+        assertEquals(saved.recordCounts, restored.recordCounts)
+        assertEquals(4, restored.pendingSyncWrites)
+        assertEquals(1, restored.pendingActionBatches)
+        assertEquals(3, restored.noteDrafts)
+        assertEquals(2, restored.formDrafts)
+        assertEquals(original, LocalDataAttachmentSnapshotStore.readVerified(temporaryFolder.root, restored))
+    }
+
+    @Test
     fun readRejectsSnapshotWhenItsContentsHaveChanged() {
         val info = LocalDataAttachmentSnapshotStore.save(
             temporaryFolder.root, 77L, """{"safe":true}""", emptyMap(), 0, 0, 0, 0, 0
@@ -65,6 +93,9 @@ class LocalDataAttachmentSnapshotStoreTest {
         assertThrows(IllegalArgumentException::class.java) {
             LocalDataAttachmentSnapshotStore.readVerified(temporaryFolder.root, info)
         }
+        org.junit.Assert.assertTrue(
+            LocalDataAttachmentSnapshotStore.listVerifiedSnapshots(temporaryFolder.root).isEmpty()
+        )
     }
 
     @Test
