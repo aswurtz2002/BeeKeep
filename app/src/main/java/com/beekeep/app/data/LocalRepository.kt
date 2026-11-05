@@ -313,7 +313,7 @@ class LocalHiveRepository(context: Context) {
                 .put("createdAt", createdAt)
                 .put("targetAccountId", cleanAccountId)
                 .put("deviceId", prefs.getString("device_id", null))
-                .put("databaseVersion", 14)
+                .put("databaseVersion", 15)
                 .put("recordCounts", countJson)
                 .put("records", records)
                 .put("tasks", taskJson)
@@ -428,12 +428,13 @@ class LocalHiveRepository(context: Context) {
         val moves = mutableMapOf<String, List<Pair<Long, Long>>>()
         for ((type, table) in supportedTables) {
             val mappings = idMaps[type].orEmpty().toList()
+            val sourceIdsBeingMoved = mappings.map { it.first }.toSet()
             val pendingMoves = mutableListOf<Pair<Long, Long>>()
             for ((sourceId, targetId) in mappings) {
                 val sourceExists = exists(table, sourceId)
                 val targetExists = exists(table, targetId)
                 when {
-                    sourceExists && targetExists ->
+                    sourceExists && targetExists && targetId !in sourceIdsBeingMoved ->
                         throw IllegalStateException(
                             "Both local $type IDs $sourceId and $targetId exist. No local records were changed; refresh the plan."
                         )
