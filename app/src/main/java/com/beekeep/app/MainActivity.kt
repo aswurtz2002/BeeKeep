@@ -431,10 +431,53 @@ fun BeeKeepApp(
     onCompactHiveRowsChange: (Boolean) -> Unit,
     onDarkModeChange: (Boolean) -> Unit
 ) {
+    val account by cloud.account.collectAsStateWithLifecycle()
+    val accountInitialized by cloud.accountInitialized.collectAsStateWithLifecycle()
+
+    when {
+        !accountInitialized -> BeeKeepAuthLoadingScreen()
+        !account.signedIn -> BeeKeepAuthScreen(cloud)
+        else -> BeeKeepAuthenticatedApp(
+            vm = vm,
+            nfc = nfc,
+            activity = activity,
+            locationController = locationController,
+            cloud = cloud,
+            darkMode = darkMode,
+            incomingNfc = incomingNfc,
+            repository = repository,
+            onSpeakHiveNumber = onSpeakHiveNumber,
+            largeFieldText = largeFieldText,
+            onLargeFieldTextChange = onLargeFieldTextChange,
+            compactHiveRows = compactHiveRows,
+            onCompactHiveRowsChange = onCompactHiveRowsChange,
+            onDarkModeChange = onDarkModeChange
+        )
+    }
+}
+
+@Composable
+private fun BeeKeepAuthenticatedApp(
+    vm: BeeKeepViewModel,
+    nfc: NfcController,
+    activity: ComponentActivity,
+    locationController: LocationController,
+    cloud: SupabaseGateway,
+    darkMode: Boolean,
+    incomingNfc: NfcResult.Read?,
+    repository: LocalHiveRepository,
+    onSpeakHiveNumber: (String) -> Unit,
+    largeFieldText: Boolean,
+    onLargeFieldTextChange: (Boolean) -> Unit,
+    compactHiveRows: Boolean,
+    onCompactHiveRowsChange: (Boolean) -> Unit,
+    onDarkModeChange: (Boolean) -> Unit
+) {
     val context = LocalContext.current
     val cloudHiveLimitOverride by cloud.hiveLimitOverride.collectAsStateWithLifecycle()
     val serverVerifiedPlan by cloud.verifiedPlan.collectAsStateWithLifecycle()
     val cloudAccountInitialized by cloud.accountInitialized.collectAsStateWithLifecycle()
+    val localDataAttachmentRequired by cloud.localDataAttachmentRequired.collectAsStateWithLifecycle()
     val commercialEntitlementResolved = BuildConfig.DEBUG || cloudAccountInitialized
     val autoVoicePrefs = remember(context) {
         context.getSharedPreferences(PREFS, android.content.Context.MODE_PRIVATE)
@@ -2942,7 +2985,22 @@ vm.saveHarvestToApiary(
     }
     Scaffold(
         snackbarHost = { androidx.compose.material3.SnackbarHost(snackbarHostState) },
-        topBar = {},
+        topBar = {
+            if (localDataAttachmentRequired) {
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    color = MaterialTheme.colorScheme.tertiaryContainer
+                ) {
+                    Text(
+                        "Cloud sync is paused until you review this device's existing data. Nothing will be uploaded or deleted yet.",
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
+                        color = MaterialTheme.colorScheme.onTertiaryContainer,
+                        style = MaterialTheme.typography.bodySmall,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                    )
+                }
+            }
+        },
         bottomBar = {
             Column {
             NavigationBar(
