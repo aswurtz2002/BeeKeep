@@ -91,6 +91,150 @@ internal fun BeeKeepAuthLoadingScreen() {
 }
 
 @Composable
+internal fun BeeKeepStartupRecoveryScreen(cloud: SupabaseGateway) {
+    BackHandler(enabled = true) { /* Startup recovery actions are presented below. */ }
+
+    val scope = rememberCoroutineScope()
+    var canContinueOffline by remember { mutableStateOf(false) }
+    var retrying by remember { mutableStateOf(false) }
+    var continuingOffline by remember { mutableStateOf(false) }
+    var signingOut by remember { mutableStateOf(false) }
+    var message by remember { mutableStateOf("") }
+
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        canContinueOffline = cloud.canContinueOffline()
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
+            .padding(24.dp),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        androidx.compose.foundation.Image(
+            painter = painterResource(R.drawable.beekeep_header_logo),
+            contentDescription = "BeeKeep",
+            modifier = Modifier.size(82.dp)
+        )
+        Spacer(Modifier.height(18.dp))
+        Text(
+            "BeeKeep is taking longer than expected",
+            style = MaterialTheme.typography.headlineSmall,
+            fontWeight = FontWeight.ExtraBold,
+            textAlign = TextAlign.Center
+        )
+        Spacer(Modifier.height(10.dp))
+        Text(
+            "Account startup hasn't finished. Your local hive records have not been changed.",
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center
+        )
+        Spacer(Modifier.height(22.dp))
+        Button(
+            onClick = {
+                scope.launch {
+                    retrying = true
+                    message = ""
+                    try {
+                        cloud.refreshAccount()
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (_: Throwable) {
+                        message = "BeeKeep couldn't retry startup. Check your connection and try again."
+                    } finally {
+                        retrying = false
+                    }
+                }
+            },
+            enabled = !retrying && !continuingOffline && !signingOut,
+            modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)
+        ) {
+            if (retrying) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(18.dp),
+                    strokeWidth = 2.dp,
+                    color = MaterialTheme.colorScheme.onPrimary
+                )
+                Spacer(Modifier.size(8.dp))
+            }
+            Text(if (retrying) "RETRYING..." else "RETRY")
+        }
+        if (canContinueOffline) {
+            Spacer(Modifier.height(10.dp))
+            Button(
+                onClick = {
+                    scope.launch {
+                        continuingOffline = true
+                        message = ""
+                        try {
+                            if (!cloud.continueOffline()) {
+                                message = "Offline mode isn't available for this account. Reconnect and retry."
+                            }
+                        } catch (cancelled: CancellationException) {
+                            throw cancelled
+                        } catch (_: Throwable) {
+                            message = "BeeKeep couldn't open the local workspace. Your records remain unchanged."
+                        } finally {
+                            continuingOffline = false
+                        }
+                    }
+                },
+                enabled = !retrying && !continuingOffline && !signingOut,
+                modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)
+            ) {
+                if (continuingOffline) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(18.dp),
+                        strokeWidth = 2.dp,
+                        color = MaterialTheme.colorScheme.onPrimary
+                    )
+                    Spacer(Modifier.size(8.dp))
+                }
+                Text(if (continuingOffline) "OPENING LOCAL DATA..." else "CONTINUE OFFLINE")
+            }
+        }
+        Spacer(Modifier.height(10.dp))
+        androidx.compose.material3.OutlinedButton(
+            onClick = {
+                scope.launch {
+                    signingOut = true
+                    message = ""
+                    try {
+                        when (val result = cloud.signOut()) {
+                            CloudResult.Success -> Unit
+                            CloudResult.NotConfigured -> message = "BeeKeep Cloud isn't configured for this build."
+                            CloudResult.NotSignedIn -> Unit
+                            is CloudResult.Failure -> message = result.message
+                        }
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (_: Throwable) {
+                        message = "BeeKeep couldn't complete sign out. Your local records remain unchanged."
+                    } finally {
+                        signingOut = false
+                    }
+                }
+            },
+            enabled = !retrying && !continuingOffline && !signingOut,
+            modifier = Modifier.fillMaxWidth().heightIn(min = 50.dp)
+        ) {
+            Text(if (signingOut) "SIGNING OUT..." else "SIGN OUT")
+        }
+        if (message.isNotBlank()) {
+            Spacer(Modifier.height(12.dp))
+            Text(
+                message,
+                color = MaterialTheme.colorScheme.error,
+                textAlign = TextAlign.Center,
+                style = MaterialTheme.typography.bodySmall
+            )
+        }
+    }
+}
+
+@Composable
 internal fun BeeKeepAuthScreen(cloud: SupabaseGateway) {
     BackHandler(enabled = true) { /* Authentication is required; there is no guest route. */ }
 
