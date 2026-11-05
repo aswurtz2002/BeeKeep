@@ -666,8 +666,7 @@ class SupabaseGateway(
     private fun isLocalDataAttachmentPending(userId: String): Boolean {
         val prefs = appContext.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
         val previousUserId = prefs.getString("last_cloud_user_id", null)
-            ?.trim()?.takeIf { it.isNotEmpty() }
-        if (previousUserId != userId) {
+        if (previousUserId?.trim() != userId.trim()) {
             // Do this check inside sync and Realtime entry points as well as account restore.
             // A worker can win the startup race and reach sync before refreshAccount completes.
             prefs.edit()
@@ -675,8 +674,11 @@ class SupabaseGateway(
                 .apply()
         }
         val pendingUserId = prefs.getString(CLOUD_DATA_ATTACHMENT_PENDING_USER_PREF, null)
-            ?.trim()?.takeIf { it.isNotEmpty() }
-        val pending = pendingUserId == userId
+        val pending = LocalDataAttachmentPolicy.requiresReview(
+            previousUserId = previousUserId,
+            pendingUserId = pendingUserId,
+            currentUserId = userId
+        )
         _localDataAttachmentRequired.value = pending
         return pending
     }
