@@ -109,9 +109,6 @@ class SupabaseGateway(
     )
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val authOperationRunner = GatewayOwnedOperationRunner(scope)
-    private val authInitializationMutex = Mutex()
-    @Volatile
-    private var authStorageInitialized = false
     @Volatile
     private var sessionRefreshJob: Job? = null
     private val deviceId = appContext.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
@@ -176,20 +173,8 @@ class SupabaseGateway(
      * that can leave the SDK in Initializing forever. A local restore is bounded and never needs
      * network access. The actual refresh is scheduled separately with a capped retry budget.
      */
-    @OptIn(SupabaseInternal::class)
     private suspend fun ensureAuthStorageInitialized(supabase: SupabaseClient) {
-        authInitializationMutex.withLock {
-            if (authStorageInitialized) return
-            val found = withTimeout(5_000L) {
-                supabase.auth.loadFromStorage(autoRefresh = false)
-            }
-            if (!found && supabase.auth.sessionStatus.value is SessionStatus.Initializing) {
-                // Mark only the in-memory auth state as signed out. Do not delete a stored session
-                // or any Room data; a later successful sign-in replaces the local session.
-                supabase.auth.setSessionStatus(SessionStatus.NotAuthenticated())
-            }
-            authStorageInitialized = true
-        }
+        BeeKeepSupabaseRuntime.ensureAuthStorageInitialized(supabase)
     }
 
     private fun scheduleSessionRefresh(supabase: SupabaseClient, session: UserSession) {
