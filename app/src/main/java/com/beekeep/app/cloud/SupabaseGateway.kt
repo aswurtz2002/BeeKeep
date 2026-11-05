@@ -608,19 +608,21 @@ class SupabaseGateway(
         } catch (_: TimeoutCancellationException) {
             _accountSetupState.value = cachedAccountSetupState(userId)
                 ?: BeeKeepAccountSetupState.Offline
+            _account.value = _account.value.copy(
+                error = "Cloud profile and workspace checks timed out. Your local BeeKeep data is still available."
+            )
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (error: Throwable) {
+            // A remote workspace/profile lookup failure must never block the local app. Keep a
+            // previously verified profile when available; otherwise let the user work offline.
             _accountSetupState.value = cachedAccountSetupState(userId)
-                ?: if (isTransientNetworkFailure(error)) {
-                    BeeKeepAccountSetupState.Offline
-                } else {
-                    BeeKeepAccountSetupState.Unavailable(
-                        TeamWorkspaceSyncError.userFacing(
-                            error.message ?: "BeeKeep couldn't verify your profile. Reconnect and retry."
-                        )
-                    )
-                }
+                ?: BeeKeepAccountSetupState.Offline
+            _account.value = _account.value.copy(
+                error = TeamWorkspaceSyncError.userFacing(
+                    error.message ?: "BeeKeep couldn't verify your cloud profile. Your local data is still available."
+                )
+            )
         }
     }
 
@@ -750,11 +752,13 @@ class SupabaseGateway(
             val userId = startupUserId
                 ?: supabase.auth.currentSessionOrNull()?.user?.id?.trim().orEmpty()
             _accountSetupState.value = cachedAccountSetupState(userId)
-                ?: BeeKeepAccountSetupState.Unavailable(
-                    TeamWorkspaceSyncError.userFacing(
-                        error.message ?: "BeeKeep couldn't verify your profile. Reconnect and retry."
-                    )
+                ?: if (userId.isBlank()) BeeKeepAccountSetupState.SignedOut
+                else BeeKeepAccountSetupState.Offline
+            _account.value = _account.value.copy(
+                error = TeamWorkspaceSyncError.userFacing(
+                    error.message ?: "BeeKeep couldn't verify your cloud profile. Your local data is still available."
                 )
+            )
         } finally {
             // A screen/lifecycle cancellation must not leave the global account gate in Checking.
             if (_accountSetupState.value is BeeKeepAccountSetupState.Checking) {
