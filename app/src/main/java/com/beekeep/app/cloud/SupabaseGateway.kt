@@ -575,25 +575,35 @@ class SupabaseGateway(
         if (!_passwordRecoveryRequired.value) {
             return CloudResult.Failure("Open the password-reset link from your email before choosing a new password.")
         }
+        if (newPassword.length < 8) {
+            return CloudResult.Failure("Use a password with at least 8 characters.")
+        }
         val result = authEmailRequest { supabase ->
             supabase.auth.updateUser {
                 password = newPassword
             }
         }
         if (result == CloudResult.Success) {
+            // Keep the recovery screen active until the user acknowledges success.
             appContext.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE).edit()
                 .remove(PENDING_PASSWORD_RESET_REQUEST_PREF)
-                .remove(PASSWORD_RECOVERY_SESSION_PREF)
                 .apply()
-            _passwordRecoveryRequired.value = false
-            refreshAccount()
         }
         return result
     }
 
-    private fun authRedirectUrl(): String =
-        "\${BuildConfig.AUTH_REDIRECT_SCHEME}://\${BuildConfig.AUTH_REDIRECT_HOST}"
+    /** Leaves the recovery-only screen after the user acknowledges the successful password change. */
+    suspend fun finishPasswordRecovery() {
+        appContext.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE).edit()
+            .remove(PENDING_PASSWORD_RESET_REQUEST_PREF)
+            .remove(PASSWORD_RECOVERY_SESSION_PREF)
+            .apply()
+        _passwordRecoveryRequired.value = false
+        refreshAccount()
+    }
 
+    private fun authRedirectUrl(): String =
+        BuildConfig.AUTH_REDIRECT_SCHEME + "://" + BuildConfig.AUTH_REDIRECT_HOST
     private suspend fun authEmailRequest(
         block: suspend (SupabaseClient) -> Unit
     ): CloudResult {
@@ -2082,21 +2092,42 @@ class SupabaseGateway(
             callbackUrl = uri.toString(),
             recoveryRequestPending = recoveryRequestPending
         )
-        if (isPasswordRecovery) {
-            prefs.edit()
-                .putBoolean(PASSWORD_RECOVERY_SESSION_PREF, true)
-                .remove(PENDING_PASSWORD_RESET_REQUEST_PREF)
-                .apply()
-            _passwordRecoveryRequired.value = true
-        }
 
-        try {
-            supabase.handleDeeplinks(intent)
-            scope.launch { refreshAccount() }
-        } catch (t: Throwable) {
-            _account.value = _account.value.copy(
-                error = TeamWorkspaceSyncError.userFacing(t.message ?: "Could not complete email verification")
-            )
+        // Wait until persisted credentials have loaded before checking the callback result. A
+        // malformed/expired recovery URL must never unlock password changes using an older session.
+        scope.launch {
+            try {
+                supabase.auth.awaitInitialization()
+                val previousAccessToken = supabase.auth.currentSessionOrNull()?.accessToken
+                supabase.handleDeeplinks(intent)
+                if (isPasswordRecovery) {
+                    val updatedAccessToken = supabase.auth.currentSessionOrNull()?.accessToken
+                    val recoverySessionEstablished = !updatedAccessToken.isNullOrBlank() &&
+                        updatedAccessToken != previousAccessToken
+                    if (recoverySessionEstablished) {
+                        prefs.edit()
+                            .putBoolean(PASSWORD_RECOVERY_SESSION_PREF, true)
+                            .remove(PENDING_PASSWORD_RESET_REQUEST_PREF)
+                            .apply()
+                        _passwordRecoveryRequired.value = true
+                    } else {
+                        prefs.edit().remove(PENDING_PASSWORD_RESET_REQUEST_PREF).apply()
+                        _account.value = _account.value.copy(
+                            error = "This password-reset link is invalid or expired. Request a new link and try again."
+                        )
+                    }
+                }
+                refreshAccount()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (t: Throwable) {
+                if (isPasswordRecovery) {
+                    prefs.edit().remove(PENDING_PASSWORD_RESET_REQUEST_PREF).apply()
+                }
+                _account.value = _account.value.copy(
+                    error = TeamWorkspaceSyncError.userFacing(t.message ?: "Could not complete email verification")
+                )
+            }
         }
     }
 
