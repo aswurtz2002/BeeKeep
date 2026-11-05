@@ -9,6 +9,7 @@ import io.github.jan.supabase.postgrest.Postgrest
 import io.github.jan.supabase.realtime.Realtime
 import io.github.jan.supabase.storage.Storage
 import kotlinx.coroutines.sync.Mutex
+import kotlin.time.Duration.Companion.seconds
 
 /**
  * Small, thread-safe process singleton used so client creation remains testable without starting
@@ -52,12 +53,17 @@ internal object BeeKeepSupabaseRuntime {
                 supabaseUrl = BuildConfig.SUPABASE_URL,
                 supabaseKey = BuildConfig.SUPABASE_PUBLISHABLE_KEY
             ) {
+                // Every Supabase HTTP request (including Auth refresh and RPC) is bounded.
+                requestTimeout = 12.seconds
                 install(Auth) {
                     scheme = BuildConfig.AUTH_REDIRECT_SCHEME
                     host = BuildConfig.AUTH_REDIRECT_HOST
-                    autoLoadFromStorage = true
+                    // Restore the persisted session locally in SupabaseGateway. The SDK's
+                    // auto-load joins its refresh job, whose network retry loop can be unbounded.
+                    autoLoadFromStorage = false
                     autoSaveToStorage = true
-                    alwaysAutoRefresh = true
+                    // BeeKeep schedules bounded refresh attempts in its gateway-owned scope.
+                    alwaysAutoRefresh = false
                 }
                 install(Postgrest)
                 install(Realtime)
