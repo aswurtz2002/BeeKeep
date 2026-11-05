@@ -221,6 +221,10 @@ interface EventDao {
 interface OutboxDao {
     @Query("SELECT * FROM sync_outbox WHERE state = 'pending' ORDER BY created_at, id")
     suspend fun allPendingForReset(): List<SyncOutboxEntity>
+
+    /** Full local-only copy for a recovery snapshot; this does not acknowledge or mutate rows. */
+    @Query("SELECT * FROM sync_outbox ORDER BY created_at, id")
+    suspend fun allForAttachmentSnapshot(): List<SyncOutboxEntity>
     @Query("DELETE FROM sync_outbox")
     suspend fun clearAll()
     @Query("""
@@ -256,6 +260,10 @@ interface OutboxDao {
 
 @Dao
 interface WorkspaceActionOutboxDao {
+    /** Full local-only copy for a recovery snapshot; rows remain in the outbox. */
+    @Query("SELECT * FROM workspace_action_outbox ORDER BY id")
+    suspend fun allForAttachmentSnapshot(): List<WorkspaceActionOutboxEntity>
+
     @Query("""
         SELECT * FROM workspace_action_outbox
         WHERE workspace_id = :workspaceId AND state = 'pending'
@@ -293,6 +301,10 @@ interface WorkspaceActionOutboxDao {
 
 @Dao
 interface ActionBatchOutboxDao {
+    /** Full local-only copy for a recovery snapshot; rows remain in the outbox. */
+    @Query("SELECT * FROM action_batch_outbox ORDER BY created_at, batch_id")
+    suspend fun allForAttachmentSnapshot(): List<ActionBatchOutboxEntity>
+
     @Query("SELECT * FROM action_batch_outbox WHERE state = 'pending' ORDER BY created_at, batch_id LIMIT :limit")
     suspend fun pending(limit: Int = 20): List<ActionBatchOutboxEntity>
 
@@ -316,6 +328,9 @@ interface ActionBatchOutboxDao {
 
 @Dao
 interface WorkspaceActionSettingsDao {
+    @Query("SELECT * FROM workspace_action_settings ORDER BY scope_key")
+    suspend fun allForAttachmentSnapshot(): List<WorkspaceActionSettingsEntity>
+
     @Query("SELECT * FROM workspace_action_settings WHERE scope_key = :scopeKey LIMIT 1")
     suspend fun get(scopeKey: String): WorkspaceActionSettingsEntity?
 
@@ -331,6 +346,9 @@ interface WorkspaceActionSettingsDao {
 
 @Dao
 interface TaskDao {
+    @Query("SELECT * FROM tasks ORDER BY id")
+    suspend fun allForBackup(): List<TaskEntity>
+
     @Query("SELECT * FROM tasks ORDER BY due_at DESC")
     fun observeAll(): Flow<List<TaskEntity>>
 

@@ -115,6 +115,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.flow.MutableStateFlow
 import com.beekeep.app.data.IdGenerator
+import com.beekeep.app.cloud.LocalDataAttachmentPreview
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -495,6 +496,10 @@ private fun BeeKeepAuthenticatedApp(
     val serverVerifiedPlan by cloud.verifiedPlan.collectAsStateWithLifecycle()
     val cloudAccountInitialized by cloud.accountInitialized.collectAsStateWithLifecycle()
     val localDataAttachmentRequired by cloud.localDataAttachmentRequired.collectAsStateWithLifecycle()
+    var attachmentPreviewDialogOpen by rememberSaveable { mutableStateOf(false) }
+    var attachmentPreviewLoading by rememberSaveable { mutableStateOf(false) }
+    var attachmentPreviewError by rememberSaveable { mutableStateOf<String?>(null) }
+    var attachmentPreview by remember { mutableStateOf<LocalDataAttachmentPreview?>(null) }
     val commercialEntitlementResolved = BuildConfig.DEBUG || cloudAccountInitialized
     val autoVoicePrefs = remember(context) {
         context.getSharedPreferences(PREFS, android.content.Context.MODE_PRIVATE)
@@ -608,6 +613,19 @@ private fun BeeKeepAuthenticatedApp(
     var locationCheckCallback by remember { mutableStateOf<(() -> Unit)?>(null) }
     val scope = rememberCoroutineScope()
     val snackbarHostState = androidx.compose.material3.SnackbarHostState()
+
+    fun requestLocalDataAttachmentPreview() {
+        attachmentPreviewDialogOpen = true
+        attachmentPreviewLoading = true
+        attachmentPreviewError = null
+        attachmentPreview = null
+        scope.launch {
+            val result = cloud.previewLocalDataAttachment()
+            attachmentPreview = result.value
+            attachmentPreviewError = result.error
+            attachmentPreviewLoading = false
+        }
+    }
 
     fun clearApiaryBatchAction() {
         apiaryBatchTargetPickerVisible = false
@@ -3000,6 +3018,15 @@ vm.saveHarvestToApiary(
         }
         return
     }
+    if (attachmentPreviewDialogOpen) {
+        LocalDataAttachmentPreviewDialog(
+            preview = attachmentPreview,
+            loading = attachmentPreviewLoading,
+            error = attachmentPreviewError,
+            onRefresh = { requestLocalDataAttachmentPreview() },
+            onDismiss = { attachmentPreviewDialogOpen = false }
+        )
+    }
     Scaffold(
         snackbarHost = { androidx.compose.material3.SnackbarHost(snackbarHostState) },
         topBar = {
@@ -3008,13 +3035,24 @@ vm.saveHarvestToApiary(
                     modifier = Modifier.fillMaxWidth(),
                     color = MaterialTheme.colorScheme.tertiaryContainer
                 ) {
-                    Text(
-                        "Cloud sync is paused until you review this device's existing data. Nothing will be uploaded or deleted yet.",
+                    Column(
                         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
-                        color = MaterialTheme.colorScheme.onTertiaryContainer,
-                        style = MaterialTheme.typography.bodySmall,
-                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
-                    )
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Text(
+                            "Cloud sync is paused until you review this device's existing data. Nothing will be uploaded or deleted yet.",
+                            color = MaterialTheme.colorScheme.onTertiaryContainer,
+                            style = MaterialTheme.typography.bodySmall,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                        )
+                        Button(
+                            onClick = { requestLocalDataAttachmentPreview() },
+                            enabled = !attachmentPreviewLoading
+                        ) {
+                            Text(if (attachmentPreviewLoading) "PREPARING PREVIEW…" else "REVIEW EXISTING DATA")
+                        }
+                    }
                 }
             }
         },
