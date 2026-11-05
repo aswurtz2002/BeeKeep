@@ -253,6 +253,9 @@ interface OutboxDao {
     suspend fun setState(id: Long, state: String, error: String? = null)
     @Query("UPDATE sync_outbox SET state = 'done', last_error = NULL WHERE id IN (:ids)")
     suspend fun markDone(ids: List<Long>)
+
+    @Query("UPDATE sync_outbox SET state = 'attachment_held', last_error = 'Preserved during account attachment; never replayed automatically.' WHERE state = 'pending'")
+    suspend fun holdPendingForAttachment()
     @Query("DELETE FROM sync_outbox WHERE state = 'done' AND created_at < :cutoff")
     suspend fun pruneDone(cutoff: Long)
 }
@@ -295,6 +298,9 @@ interface WorkspaceActionOutboxDao {
     @Query("DELETE FROM workspace_action_outbox WHERE state = 'done' AND created_at < :cutoff")
     suspend fun pruneDone(cutoff: Long)
 
+    @Query("UPDATE workspace_action_outbox SET state = 'attachment_held', last_error = 'Preserved during account attachment; never replayed automatically.' WHERE state = 'pending'")
+    suspend fun holdPendingForAttachment()
+
     @Query("DELETE FROM workspace_action_outbox")
     suspend fun clearAll()
 }
@@ -322,6 +328,9 @@ interface ActionBatchOutboxDao {
 
     @Query("SELECT COUNT(*) FROM action_batch_outbox WHERE state = 'pending'")
     fun observePendingCount(): Flow<Int>
+    @Query("UPDATE action_batch_outbox SET state = 'attachment_held', last_error = 'Preserved during account attachment; never replayed automatically.' WHERE state = 'pending'")
+    suspend fun holdPendingForAttachment()
+
     @Query("DELETE FROM action_batch_outbox")
     suspend fun clearAll()
 }
