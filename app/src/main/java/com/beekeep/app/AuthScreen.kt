@@ -65,6 +65,8 @@ import com.beekeep.app.cloud.CloudSyncScheduler
 import com.beekeep.app.cloud.SupabaseGateway
 import com.beekeep.app.auth.GoogleCredentialSignIn
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.launch
 
 @Composable
@@ -138,7 +140,9 @@ internal fun BeeKeepStartupRecoveryScreen(cloud: SupabaseGateway) {
                     retrying = true
                     message = ""
                     try {
-                        cloud.refreshAccount()
+                        withTimeout(20_000L) { cloud.refreshAccount() }
+                    } catch (_: TimeoutCancellationException) {
+                        message = "Startup is still busy. Continue offline or try again after the current sync finishes."
                     } catch (cancelled: CancellationException) {
                         throw cancelled
                     } catch (_: Throwable) {
@@ -202,7 +206,7 @@ internal fun BeeKeepStartupRecoveryScreen(cloud: SupabaseGateway) {
                     signingOut = true
                     message = ""
                     try {
-                        when (val result = cloud.signOut()) {
+                        when (val result = withTimeout(20_000L) { cloud.signOut() }) {
                             CloudResult.Success -> Unit
                             CloudResult.NotConfigured -> message = "BeeKeep Cloud isn't configured for this build."
                             CloudResult.NotSignedIn -> Unit
