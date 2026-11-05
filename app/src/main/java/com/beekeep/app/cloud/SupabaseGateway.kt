@@ -13,8 +13,6 @@ import com.beekeep.app.data.HarvestQuantityMode
 import com.beekeep.app.data.WorkspaceActionSettingsEntity
 import com.beekeep.app.data.workspaceActionSettingsScopeKey
 import io.github.jan.supabase.SupabaseClient
-import io.github.jan.supabase.annotations.SupabaseInternal
-import io.github.jan.supabase.auth.status.SessionStatus
 import io.github.jan.supabase.auth.user.UserSession
 import io.github.jan.supabase.exceptions.HttpRequestException
 import io.github.jan.supabase.exceptions.RestException
@@ -38,7 +36,6 @@ import io.github.jan.supabase.storage.storage
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.TimeoutCancellationException
-import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withTimeout
@@ -177,57 +174,89 @@ class SupabaseGateway(
         BeeKeepSupabaseRuntime.ensureAuthStorageInitialized(supabase)
     }
 
-    private fun scheduleSessionRefresh(supabase: SupabaseClient, session: UserSession) {
-        sessionRefreshJob?.cancel()
+    private fun scheduleSessionRefresh(
+        supabase: SupabaseClient,
+        session: UserSession,
+        cancelExisting: Boolean = true
+    ) {
+        if (cancelExisting) sessionRefreshJob?.cancel()
         val expectedUserId = session.user?.id?.trim()?.takeIf { it.isNotEmpty() }
-        sessionRefreshJob = scope.launch {
-            val refreshAtMillis = session.expiresAt.toEpochMilliseconds() -
+        val expectedExpiryMillis = session.expiresAt.toEpochMilliseconds()
+        val nextJob = scope.launch {
+            val refreshAtMillis = expectedExpiryMillis -
                 (session.expiresIn.coerceAtLeast(0L) * 200L)
             val waitMillis = (refreshAtMillis - System.currentTimeMillis()).coerceAtLeast(0L)
             if (waitMillis > 0L) delay(waitMillis)
-            refreshSessionWithBoundedRetries(supabase, expectedUserId)
+            refreshSessionWithBoundedRetries(supabase, expectedUserId, expectedExpiryMillis)
         }
+        sessionRefreshJob = nextJob
     }
 
+    /**
+     * The shared sync mutex makes auth refresh single-flight across the foreground gateway and
+     * WorkManager. An older queued refresh exits when another caller has already renewed the token.
+     */
     private suspend fun refreshSessionWithBoundedRetries(
         supabase: SupabaseClient,
-        expectedUserId: String?
+        expectedUserId: String?,
+        expectedExpiryMillis: Long
     ) {
         for (attempt in 1..SessionRefreshPolicy.MAX_ATTEMPTS) {
-            val activeUserId = supabase.auth.currentSessionOrNull()?.user?.id
-                ?.trim()?.takeIf { it.isNotEmpty() } ?: return
-            if (expectedUserId != null && activeUserId != expectedUserId) return
-
+            var stop = false
             try {
-                withTimeout(15_000L) {
-                    supabase.auth.refreshCurrentSession()
+                syncMutex.withLock {
+                    val currentSession = supabase.auth.currentSessionOrNull()
+                    val currentUserId = currentSession?.user?.id?.trim()?.takeIf { it.isNotEmpty() }
+                    if (currentSession == null || (expectedUserId != null && currentUserId != expectedUserId) ||
+                        currentSession.expiresAt.toEpochMilliseconds() > expectedExpiryMillis
+                    ) {
+                        stop = true
+                        return@withLock
+                    }
+
+                    try {
+                        withTimeout(15_000L) {
+                            supabase.auth.refreshCurrentSession()
+                        }
+                        val refreshedSession = supabase.auth.currentSessionOrNull()
+                        if (refreshedSession != null && refreshedSession.user?.id == expectedUserId) {
+                            // Schedule the next refresh without cancelling the job that is completing.
+                            scheduleSessionRefresh(supabase, refreshedSession, cancelExisting = false)
+                        }
+                        stop = true
+                    } catch (timeout: TimeoutCancellationException) {
+                        // Treat our own request timeout as a transient network failure.
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (error: Throwable) {
+                        if (error is RestException &&
+                            SessionRefreshPolicy.isRejectedRefreshCredential(error.statusCode)
+                        ) {
+                            // This clears only the invalid Supabase credential. Room records,
+                            // drafts, and pending sync outbox data remain untouched.
+                            if (supabase.auth.currentSessionOrNull()?.user?.id == expectedUserId) {
+                                supabase.auth.clearSession()
+                                _account.value = CloudAccountState(
+                                    configured = true,
+                                    signedIn = false,
+                                    error = "Your session has expired. Sign in again. Your local hive records are still on this device."
+                                )
+                                _accountSetupState.value = BeeKeepAccountSetupState.SignedOut
+                                _localDataAttachmentRequired.value = false
+                                _accountInitialized.value = true
+                                stopRealtime()
+                            }
+                            stop = true
+                        }
+                    }
                 }
-                return
-            } catch (timeout: TimeoutCancellationException) {
             } catch (cancelled: CancellationException) {
                 throw cancelled
-            } catch (error: Throwable) {
-                if (error is RestException &&
-                    SessionRefreshPolicy.isRejectedRefreshCredential(error.statusCode)
-                ) {
-                    // Clearing an invalid refresh credential does not touch the hive databases,
-                    // pending outbox rows, or inspection drafts.
-                    if (supabase.auth.currentSessionOrNull()?.user?.id == expectedUserId) {
-                        supabase.auth.clearSession()
-                        _account.value = CloudAccountState(
-                            configured = true,
-                            signedIn = false,
-                            error = "Your session has expired. Sign in again. Your local hive records are still on this device."
-                        )
-                        _accountSetupState.value = BeeKeepAccountSetupState.SignedOut
-                        _localDataAttachmentRequired.value = false
-                        _accountInitialized.value = true
-                        stopRealtime()
-                    }
-                    return
-                }
+            } catch (_: Throwable) {
+                // A lock or client failure consumes one bounded refresh attempt.
             }
 
+            if (stop) return
             if (attempt == SessionRefreshPolicy.MAX_ATTEMPTS) {
                 _account.value = _account.value.copy(
                     error = "BeeKeep couldn't refresh your cloud session. Your local records remain available; reconnect and retry."
