@@ -340,29 +340,44 @@ class SupabaseGateway(
         _accountInitialized.value = false
         val supabase = client
         if (!configured || supabase == null) {
-            _accountSetupState.value = BeeKeepAccountSetupState.SignedOut
-            stopRealtime()
-            val prefs = appContext.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
-            val cachedWorkspaceId = prefs.getString("active_team_workspace_id", "").orEmpty().trim()
-            val cachedOwnerId = prefs.getString("active_team_workspace_user_id", null)
-                ?.trim()?.takeIf { it.isNotEmpty() }
-            if (ActiveWorkspaceSessionPolicy.canKeepCachedWorkspace(
-                    cachedWorkspaceId, cachedOwnerId, cachedOwnerId
+            try {
+                _accountSetupState.value = BeeKeepAccountSetupState.SignedOut
+                stopRealtime()
+                val prefs = appContext.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
+                val cachedWorkspaceId = prefs.getString("active_team_workspace_id", "").orEmpty().trim()
+                val cachedOwnerId = prefs.getString("active_team_workspace_user_id", null)
+                    ?.trim()?.takeIf { it.isNotEmpty() }
+                if (ActiveWorkspaceSessionPolicy.canKeepCachedWorkspace(
+                        cachedWorkspaceId, cachedOwnerId, cachedOwnerId
+                    )
+                ) {
+                    repository.switchWorkspace(
+                        cachedWorkspaceId,
+                        readOnly = prefs.getBoolean("active_team_workspace_read_only", false),
+                        ownerUserId = cachedOwnerId
+                    )
+                } else {
+                    repository.switchWorkspace(null)
+                }
+                // A build without a cloud connection can still display a previously account-bound
+                // team cache, but it cannot grant writes until the owner and role are verified again.
+                _account.value = CloudAccountState(configured = false, signedIn = false)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Throwable) {
+                _accountSetupState.value = BeeKeepAccountSetupState.Unavailable(
+                    "BeeKeep couldn't open its local workspace. Your records have not been deleted. " +
+                        TeamWorkspaceSyncError.userFacing(error.message)
                 )
-            ) {
-                repository.switchWorkspace(
-                    cachedWorkspaceId,
-                    readOnly = prefs.getBoolean("active_team_workspace_read_only", false),
-                    ownerUserId = cachedOwnerId
+                _account.value = CloudAccountState(
+                    configured = false,
+                    signedIn = false,
+                    error = TeamWorkspaceSyncError.userFacing(error.message)
                 )
-            } else {
-                repository.switchWorkspace(null)
+            } finally {
+                repository.completeStartupWorkspaceAccessResolution()
+                _accountInitialized.value = true
             }
-            // A build without a cloud connection can still display a previously account-bound
-            // team cache, but it cannot grant writes until the owner and role are verified again.
-            repository.completeStartupWorkspaceAccessResolution()
-            _account.value = CloudAccountState(configured = false, signedIn = false)
-            _accountInitialized.value = true
             return
         }
         try {
@@ -550,6 +565,11 @@ class SupabaseGateway(
                 userId = lastKnownUserId,
                 error = TeamWorkspaceSyncError.userFacing(error.message)
             )
+            _accountInitialized.value = true
+        } finally {
+            // No startup outcome, including cancellation during fallback restoration, may strand
+            // the auth gate or the repository's startup write barrier.
+            repository.completeStartupWorkspaceAccessResolution()
             _accountInitialized.value = true
         }
     }
