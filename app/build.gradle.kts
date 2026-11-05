@@ -17,6 +17,18 @@ val defaultDebugSupabaseKey = (
         ?: "sb_publishable_74dplURrV6VbGnQHKGTbLw_lpX-pS20"
 ).replace("\\", "\\\\").replace("\"", "\\\"")
 
+val googleWebClientIdFromLocalProperties = java.util.Properties().apply {
+    rootProject.file("local.properties").takeIf { it.isFile }
+        ?.inputStream()?.use { load(it) }
+}.getProperty("googleWebClientId")
+
+val googleWebClientId = (
+    (project.findProperty("googleWebClientId") as String?)?.takeIf { it.isNotBlank() }
+        ?: System.getenv("GOOGLE_WEB_CLIENT_ID")?.takeIf { it.isNotBlank() }
+        ?: googleWebClientIdFromLocalProperties?.takeIf { it.isNotBlank() }
+        ?: ""
+).replace("\\", "\\\\").replace("\"", "\\\"")
+
 android {
     namespace = "com.beekeep.app"
     compileSdk = 37
@@ -33,6 +45,7 @@ android {
         val supabaseKey = ((project.findProperty("supabaseKey") as String?) ?: "").replace("\\", "\\\\").replace("\"", "\\\"")
         buildConfigField("String", "SUPABASE_URL", "\"$supabaseUrl\"")
         buildConfigField("String", "SUPABASE_PUBLISHABLE_KEY", "\"$supabaseKey\"")
+        buildConfigField("String", "GOOGLE_WEB_CLIENT_ID", "\"$googleWebClientId\"")
         buildConfigField("String", "AUTH_REDIRECT_SCHEME", "\"com.beekeep.app\"")
         buildConfigField("String", "AUTH_REDIRECT_HOST", "\"auth-callback\"")
     }
@@ -63,6 +76,9 @@ dependencies {
     androidTestImplementation(composeBom)
 
     implementation("androidx.activity:activity-compose:1.13.0")
+    implementation("androidx.credentials:credentials:1.6.0")
+    implementation("androidx.credentials:credentials-play-services-auth:1.6.0")
+    implementation("com.google.android.libraries.identity.googleid:googleid:1.2.1")
     implementation("androidx.core:core-ktx:1.19.0")
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material:material-icons-extended")

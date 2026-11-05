@@ -1,6 +1,8 @@
 package com.beekeep.app
 
 import androidx.activity.compose.BackHandler
+import androidx.credentials.exceptions.GetCredentialCancellationException
+import androidx.credentials.exceptions.GetCredentialException
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -61,6 +63,8 @@ import androidx.compose.ui.unit.sp
 import com.beekeep.app.cloud.CloudResult
 import com.beekeep.app.cloud.CloudSyncScheduler
 import com.beekeep.app.cloud.SupabaseGateway
+import com.beekeep.app.auth.GoogleCredentialSignIn
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
 @Composable
@@ -317,7 +321,60 @@ internal fun BeeKeepAuthScreen(cloud: SupabaseGateway) {
 
                         if (!forgotPasswordMode) {
                             Button(
-                                onClick = { showMessage("Google sign-in is being connected in the next step.") },
+                                onClick = {
+                                    val webClientId = BuildConfig.GOOGLE_WEB_CLIENT_ID.trim()
+                                    if (webClientId.isBlank()) {
+                                        showMessage(
+                                            "Google sign-in is not configured for this build. Add googleWebClientId to local.properties and enable Google in Supabase Auth settings.",
+                                            true
+                                        )
+                                    } else if (!busy) {
+                                        scope.launch {
+                                            busy = true
+                                            showMessage("")
+                                            try {
+                                                val googleToken = GoogleCredentialSignIn.request(context, webClientId)
+                                                when (val result = cloud.signInWithGoogle(
+                                                    idToken = googleToken.idToken,
+                                                    nonce = googleToken.nonce
+                                                )) {
+                                                    CloudResult.Success -> {
+                                                        showMessage("You're signed in. Your device data remains protected while setup is completed.")
+                                                        if (!cloud.localDataAttachmentRequired.value) {
+                                                            CloudSyncScheduler.runNow(context)
+                                                        }
+                                                    }
+                                                    CloudResult.NotConfigured -> showMessage(
+                                                        "BeeKeep Cloud is not configured for this app build.",
+                                                        true
+                                                    )
+                                                    CloudResult.NotSignedIn -> showMessage(
+                                                        "Google sign-in did not create an active BeeKeep session. Please try again.",
+                                                        true
+                                                    )
+                                                    is CloudResult.Failure -> showMessage(result.message, true)
+                                                }
+                                            } catch (cancelled: CancellationException) {
+                                                throw cancelled
+                                            } catch (_: GetCredentialCancellationException) {
+                                                showMessage("Google sign-in was cancelled.")
+                                            } catch (_: GetCredentialException) {
+                                                showMessage(
+                                                    "Google couldn't provide an account on this device. Check that a Google account is available, then try again.",
+                                                    true
+                                                )
+                                            } catch (_: Exception) {
+                                                showMessage(
+                                                    "BeeKeep couldn't complete Google sign-in. Check your connection and try again.",
+                                                    true
+                                                )
+                                            } finally {
+                                                busy = false
+                                            }
+                                        }
+                                    }
+                                },
+                                enabled = !busy,
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .heightIn(min = 54.dp),
@@ -327,17 +384,25 @@ internal fun BeeKeepAuthScreen(cloud: SupabaseGateway) {
                                     contentColor = MaterialTheme.colorScheme.surface
                                 )
                             ) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(25.dp)
-                                        .clip(CircleShape)
-                                        .background(Color.White),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Text("G", color = Color(0xFF4285F4), fontWeight = FontWeight.ExtraBold, fontSize = 17.sp)
+                                if (busy) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(20.dp),
+                                        color = MaterialTheme.colorScheme.surface,
+                                        strokeWidth = 2.dp
+                                    )
+                                } else {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(25.dp)
+                                            .clip(CircleShape)
+                                            .background(Color.White),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text("G", color = Color(0xFF4285F4), fontWeight = FontWeight.ExtraBold, fontSize = 17.sp)
+                                    }
                                 }
                                 Spacer(Modifier.width(12.dp))
-                                Text("Continue with Google", fontWeight = FontWeight.Bold)
+                                Text(if (busy) "Signing in..." else "Continue with Google", fontWeight = FontWeight.Bold)
                             }
     
                             Row(
