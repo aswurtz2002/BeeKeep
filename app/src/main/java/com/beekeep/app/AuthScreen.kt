@@ -32,7 +32,6 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -59,6 +58,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.beekeep.app.cloud.CloudResult
+import com.beekeep.app.cloud.CloudSyncScheduler
 import com.beekeep.app.cloud.SupabaseGateway
 import kotlinx.coroutines.launch
 
@@ -172,6 +172,9 @@ internal fun BeeKeepAuthScreen(cloud: SupabaseGateway) {
                             showMessage("Check your email to verify your BeeKeep account. Then return here to sign in.")
                         } else {
                             showMessage("You're signed in. Your device data remains protected while setup is completed.")
+                            if (!cloud.localDataAttachmentRequired.value) {
+                                CloudSyncScheduler.runNow(context)
+                            }
                         }
                     }
                     CloudResult.NotConfigured -> showMessage("BeeKeep Cloud is not configured for this app build.", true)
