@@ -2115,8 +2115,9 @@ class SupabaseGateway(
         val prefs = appContext.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
         val pendingResetEmail = prefs.getString(PENDING_PASSWORD_RESET_REQUEST_EMAIL_PREF, null)
         val pendingResetAt = prefs.getLong(PENDING_PASSWORD_RESET_REQUEST_AT_PREF, 0L)
+        val pendingResetAge = System.currentTimeMillis() - pendingResetAt
         val pendingResetIsFresh = pendingResetAt > 0L &&
-            System.currentTimeMillis() - pendingResetAt in 0..PASSWORD_RESET_REQUEST_MAX_AGE_MS
+            pendingResetAge in 0L..PASSWORD_RESET_REQUEST_MAX_AGE_MS
         val explicitRecoveryType = AuthRecoveryCallbackPolicy.isPasswordRecoveryCallback(
             callbackUrl = uri.toString(),
             recoveryRequestPending = false
@@ -2126,48 +2127,55 @@ class SupabaseGateway(
             recoveryRequestPending = pendingResetIsFresh
         )
 
-        // Wait until persisted credentials have loaded before checking the callback result. A
-        // malformed/expired recovery URL must never unlock password changes using an older session.
+        // Wait for stored credentials before processing the link. Only a successful session
+        // callback can enable password changes; an expired link cannot reuse an older session.
         scope.launch {
             try {
                 supabase.auth.awaitInitialization()
-                val previousAccessToken = supabase.auth.currentSessionOrNull()?.accessToken
-                supabase.handleDeeplinks(intent)
-                if (isPasswordRecovery) {
-                    val updatedAccessToken = supabase.auth.currentSessionOrNull()?.accessToken
-                    val recoveredEmail = supabase.auth.currentSessionOrNull()?.user?.email?.trim()
-                    val requestedEmailMatches = !pendingResetEmail.isNullOrBlank() &&
-                        !recoveredEmail.isNullOrBlank() &&
-                        pendingResetEmail.equals(recoveredEmail, ignoreCase = true)
-                    val recoverySessionEstablished = !updatedAccessToken.isNullOrBlank() &&
-                        updatedAccessToken != previousAccessToken &&
-                        (explicitRecoveryType || requestedEmailMatches)
-                    if (recoverySessionEstablished) {
-                        prefs.edit()
-                            .putBoolean(PASSWORD_RECOVERY_SESSION_PREF, true)
-                            .remove(PENDING_PASSWORD_RESET_REQUEST_EMAIL_PREF)
-                            .remove(PENDING_PASSWORD_RESET_REQUEST_AT_PREF)
-                            .apply()
-                        _passwordRecoveryRequired.value = true
-                    } else {
-                        clearPendingPasswordResetRequest()
+                supabase.handleDeeplinks(
+                    intent = intent,
+                    onSessionSuccess = { userSession ->
+                        if (isPasswordRecovery) {
+                            val recoveredEmail = userSession.user?.email?.trim()
+                            val requestedEmailMatches = !pendingResetEmail.isNullOrBlank() &&
+                                !recoveredEmail.isNullOrBlank() &&
+                                pendingResetEmail.equals(recoveredEmail, ignoreCase = true)
+                            if (explicitRecoveryType || requestedEmailMatches) {
+                                prefs.edit()
+                                    .putBoolean(PASSWORD_RECOVERY_SESSION_PREF, true)
+                                    .remove(PENDING_PASSWORD_RESET_REQUEST_EMAIL_PREF)
+                                    .remove(PENDING_PASSWORD_RESET_REQUEST_AT_PREF)
+                                    .apply()
+                                _passwordRecoveryRequired.value = true
+                            } else {
+                                clearPendingPasswordResetRequest()
+                                _account.value = _account.value.copy(
+                                    error = "This password-reset link is invalid or expired. Request a new link and try again."
+                                )
+                            }
+                        } else {
+                            clearPendingPasswordResetRequest()
+                        }
+                        scope.launch { refreshAccount() }
+                    },
+                    onError = { error ->
+                        if (isPasswordRecovery) clearPendingPasswordResetRequest()
                         _account.value = _account.value.copy(
-                            error = "This password-reset link is invalid or expired. Request a new link and try again."
+                            error = TeamWorkspaceSyncError.userFacing(
+                                error.message ?: "Could not complete email verification"
+                            )
                         )
+                        scope.launch { refreshAccount() }
                     }
-                } else {
-                    clearPendingPasswordResetRequest()
-                }
-                refreshAccount()
+                )
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (t: Throwable) {
-                if (isPasswordRecovery) {
-                    clearPendingPasswordResetRequest()
-                }
+                if (isPasswordRecovery) clearPendingPasswordResetRequest()
                 _account.value = _account.value.copy(
                     error = TeamWorkspaceSyncError.userFacing(t.message ?: "Could not complete email verification")
                 )
+                refreshAccount()
             }
         }
     }
