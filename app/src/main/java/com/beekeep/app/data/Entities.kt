@@ -368,3 +368,11 @@ data class Harvest(
 data class Apiary(val id: Long, val name: String, val notes: String, val latitude: Double?, val longitude: Double?, val forageNotes: String, val waterNotes: String)
 data class ActivityEvent(val id: Long, val hiveId: Long, val createdAt: Long, val type: String, val title: String, val detail: String)
 data class Task(val id: Long, val hiveId: Long?, val title: String, val dueAt: Long, val completed: Boolean, val kind: String, val reminderEnabled: Boolean)
+
+/** Local-only proof that the Room side of one account attachment committed atomically. */
+@Entity(tableName = "local_data_attachment_markers")
+data class LocalDataAttachmentMarkerEntity(
+    @PrimaryKey @ColumnInfo(name = "snapshot_sha256") val snapshotSha256: String,
+    @ColumnInfo(name = "account_id") val accountId: String,
+    @ColumnInfo(name = "applied_at") val appliedAt: Long
+)

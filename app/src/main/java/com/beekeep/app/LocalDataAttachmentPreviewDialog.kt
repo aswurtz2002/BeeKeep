@@ -9,11 +9,13 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
@@ -21,6 +23,7 @@ import androidx.compose.ui.unit.dp
 import com.beekeep.app.cloud.LocalDataAttachmentPreview
 import com.beekeep.app.cloud.LocalDataAttachmentMergePlan
 import com.beekeep.app.cloud.LocalDataAttachmentDisposition
+import com.beekeep.app.cloud.LocalDataAttachmentExecutionResult
 import java.text.DateFormat
 import java.util.Date
 import java.util.Locale
@@ -45,10 +48,15 @@ internal fun LocalDataAttachmentPreviewDialog(
     mergePlan: LocalDataAttachmentMergePlan?,
     mergePlanLoading: Boolean,
     mergePlanError: String?,
+    executionLoading: Boolean,
+    executionError: String?,
+    executionResult: LocalDataAttachmentExecutionResult?,
     onBuildMergePlan: () -> Unit,
+    onExecuteAttachment: () -> Unit,
     onRefresh: () -> Unit,
     onDismiss: () -> Unit
 ) {
+    val showAttachmentConfirmation = rememberSaveable { androidx.compose.runtime.mutableStateOf(false) }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Review existing device data", fontWeight = FontWeight.ExtraBold) },
@@ -227,21 +235,108 @@ internal fun LocalDataAttachmentPreviewDialog(
                         )
                     }
 
-                    Text(
-                        "Nothing was uploaded, imported, merged, modified, or deleted. Cloud sync remains paused.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontWeight = FontWeight.SemiBold
-                    )
+                    mergePlan?.takeIf { it.isSafeToProceed && executionResult == null }?.let {
+                        Text(
+                            "A safe plan is ready. The final action adds only new local records, skips exact duplicates, and keeps tasks, drafts and pending queues on this device.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Button(
+                            onClick = { showAttachmentConfirmation.value = true },
+                            enabled = !executionLoading && !mergePlanLoading,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(if (executionLoading) "ATTACHING LOCAL DATA…" else "ATTACH LOCAL DATA")
+                        }
+                    }
+                    if (executionLoading) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.Center,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            CircularProgressIndicator()
+                            Text("  Uploading insert-only batches and verifying the merged account…")
+                        }
+                    }
+                    executionError?.takeIf { it.isNotBlank() }?.let {
+                        Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                        Text(
+                            "The attachment checkpoint is retained. Cloud sync remains paused; refresh the preview and review the plan before retrying.",
+                            style = MaterialTheme.typography.bodySmall,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                    executionResult?.let { result ->
+                        Text(
+                            "ATTACHMENT VERIFIED",
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Text(
+                            "${result.uploadedRecordCount} records uploaded, ${result.alreadyPresentRecordCount} already present, " +
+                                "${result.remappedRecordCount} IDs remapped, and ${result.preservedLocalOnlyCount} records retained locally.",
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                        Text(
+                            "Cloud sync has been released after cloud and local verification.",
+                            style = MaterialTheme.typography.bodySmall,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                    if (executionResult == null && executionError.isNullOrBlank()) {
+                        Text(
+                            "Nothing has been attached yet. Cloud sync remains paused.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
                 }
             }
         },
         confirmButton = {
-            TextButton(onClick = onDismiss) { Text("CLOSE") }
+            TextButton(onClick = onDismiss, enabled = !executionLoading) { Text("CLOSE") }
         },
         dismissButton = {
-            TextButton(onClick = onRefresh, enabled = !loading) { Text("REFRESH PREVIEW") }
+            TextButton(onClick = onRefresh, enabled = !loading && !executionLoading) { Text("REFRESH PREVIEW") }
         }
     )
+
+    if (showAttachmentConfirmation.value) {
+        val plan = mergePlan
+        AlertDialog(
+            onDismissRequest = { showAttachmentConfirmation.value = false },
+            title = { Text("Attach local data to this account?") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        "BeeKeep will insert ${plan?.let { it.newRecordCount + it.remapCount } ?: 0} local records into this account and skip exact duplicates."
+                    )
+                    Text("No existing cloud record will be replaced or deleted.")
+                    Text(
+                        "Tasks, unfinished drafts and ${plan?.pendingSyncWriteCount ?: 0} pending sync writes will remain on this device. Pending delete requests and action queues will not be replayed."
+                    )
+                    Text(
+                        "Cloud sync will resume only after the cloud rows and the local database are verified.",
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showAttachmentConfirmation.value = false
+                        onExecuteAttachment()
+                    },
+                    enabled = !executionLoading && plan?.isSafeToProceed == true
+                ) { Text("CONFIRM ATTACHMENT") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showAttachmentConfirmation.value = false }) { Text("CANCEL") }
+            }
+        )
+    }
 }
 
 @Composable

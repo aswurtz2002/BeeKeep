@@ -8,6 +8,7 @@ import com.beekeep.app.BeeKeepEntitlements
 import com.beekeep.app.data.LocalHiveRepository
 import com.beekeep.app.data.LocalDataAttachmentSnapshotInfo
 import com.beekeep.app.data.LocalDataAttachmentSnapshotStore
+import com.beekeep.app.data.LocalDataAttachmentMarkerEntity
 import com.beekeep.app.data.HarvestQuantityMode
 import com.beekeep.app.data.WorkspaceActionSettingsEntity
 import com.beekeep.app.data.workspaceActionSettingsScopeKey
@@ -43,7 +44,10 @@ import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.launch
 import io.ktor.client.call.body
 import java.util.UUID
+import java.nio.charset.StandardCharsets
+import java.security.MessageDigest
 import org.json.JSONObject
+import org.json.JSONArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.put
@@ -1444,6 +1448,7 @@ class SupabaseGateway(
             // RLS scopes this full paginated SELECT to the currently authenticated user.
             val remoteRows = loadAllPersonalDocuments().filter { it.user_id == userId }
             val plan = LocalDataAttachmentMergePlanner.plan(snapshotJson, remoteRows)
+                .copy(cloudInventorySha256 = cloudInventoryFingerprint(remoteRows))
             WorkspaceOperationResult(value = plan)
         } catch (cancelled: CancellationException) {
             throw cancelled
@@ -1455,6 +1460,314 @@ class SupabaseGateway(
             )
         }
     }
+
+    /**
+     * Executes an explicitly approved local-to-personal-account attachment.
+     *
+     * Cloud writes are INSERT-only and checkpointed. A retry discovers already inserted rows,
+     * validates their exact payload, and resumes only the missing rows. No existing cloud row is
+     * upserted, and the sync hold is cleared only after both sides are verified.
+     */
+    internal suspend fun executeLocalDataAttachment(
+        snapshotInfo: LocalDataAttachmentSnapshotInfo,
+        approvedPlan: LocalDataAttachmentMergePlan
+    ): WorkspaceOperationResult<LocalDataAttachmentExecutionResult> = syncMutex.withLock {
+        val supabase = client
+            ?: return@withLock WorkspaceOperationResult(error = "BeeKeep Cloud is not configured.")
+        try {
+            supabase.auth.awaitInitialization()
+            val session = supabase.auth.currentSessionOrNull()
+                ?: return@withLock WorkspaceOperationResult(error = "Sign in before attaching local data.")
+            val userId = session.user?.id?.trim()?.takeIf { it.isNotEmpty() }
+                ?: return@withLock WorkspaceOperationResult(error = "The signed-in account could not be verified.")
+            if (userId != approvedPlan.accountId) {
+                return@withLock WorkspaceOperationResult(
+                    error = "The signed-in account changed. Refresh the preview and build a new merge plan."
+                )
+            }
+            if (!isLocalDataAttachmentPending(userId)) {
+                return@withLock WorkspaceOperationResult(
+                    error = "There is no pending local-data review for this signed-in account."
+                )
+            }
+            if (repository.activeWorkspaceId.value != null) {
+                return@withLock WorkspaceOperationResult(
+                    error = "Switch to your personal data before attaching local records. Team workspaces are never combined."
+                )
+            }
+            require(approvedPlan.isSafeToProceed) {
+                "Resolve every item requiring manual review before attaching local data."
+            }
+            require(approvedPlan.cloudInventorySha256.matches(Regex("^[a-f0-9]{64}$"))) {
+                "Refresh the cloud inventory and build a new merge plan before attaching."
+            }
+
+            stopRealtime()
+            val snapshotJson = LocalDataAttachmentSnapshotStore.readVerified(
+                appContext.filesDir,
+                snapshotInfo
+            )
+            require(JSONObject(snapshotJson).optString("targetAccountId").trim() == userId) {
+                "This recovery snapshot belongs to a different account."
+            }
+
+            var journal = LocalDataAttachmentExecutionStore.read(
+                appContext.filesDir,
+                snapshotInfo,
+                userId
+            )
+            val remoteBefore = loadAllPersonalDocuments().filter { it.user_id == userId }
+            val liveFingerprint = cloudInventoryFingerprint(remoteBefore)
+            val resumed = journal != null
+
+            if (journal == null) {
+                // Confirm the local database has not changed since the user reviewed it.
+                val latestSnapshot = repository.createLocalDataAttachmentSnapshot(userId)
+                val latestJson = LocalDataAttachmentSnapshotStore.readVerified(
+                    appContext.filesDir,
+                    latestSnapshot
+                )
+                require(snapshotContentFingerprint(latestJson) == snapshotContentFingerprint(snapshotJson)) {
+                    "Local records changed after the preview. Nothing was attached. Refresh the preview and build a new plan."
+                }
+
+                val freshPlan = LocalDataAttachmentMergePlanner.plan(snapshotJson, remoteBefore)
+                    .copy(cloudInventorySha256 = liveFingerprint)
+                require(freshPlan.isSafeToProceed && freshPlan.items == approvedPlan.items &&
+                    freshPlan.cloudInventorySha256 == approvedPlan.cloudInventorySha256
+                ) {
+                    "The cloud account changed after the merge plan was built. Refresh the preview and review a new plan."
+                }
+                journal = LocalDataAttachmentExecutionJournal(
+                    accountId = userId,
+                    snapshotFileName = snapshotInfo.fileName,
+                    snapshotSha256 = snapshotInfo.sha256,
+                    baseCloudInventorySha256 = liveFingerprint,
+                    plan = freshPlan,
+                    createdAt = System.currentTimeMillis()
+                )
+                LocalDataAttachmentExecutionStore.save(appContext.filesDir, journal)
+            } else {
+                require(attachmentTargetMapping(journal.plan) == attachmentTargetMapping(approvedPlan)) {
+                    "The saved attachment checkpoint has different ID mappings. Do not continue with this plan; refresh and review it."
+                }
+                // Before Room commits, the source snapshot must remain unchanged. After the
+                // marker commits, local IDs and queue state intentionally differ from the source.
+                val roomCommitted = repository.isLocalAttachmentRoomApplyCommitted(
+                    snapshotInfo.sha256,
+                    userId
+                )
+                if (!roomCommitted) {
+                    val latestSnapshot = repository.createLocalDataAttachmentSnapshot(userId)
+                    val latestJson = LocalDataAttachmentSnapshotStore.readVerified(
+                        appContext.filesDir,
+                        latestSnapshot
+                    )
+                    require(snapshotContentFingerprint(latestJson) == snapshotContentFingerprint(snapshotJson)) {
+                        "Local records changed while an earlier attachment attempt was paused. The checkpoint remains held; refresh the preview and resolve the new changes before retrying."
+                    }
+                }
+            }
+
+            val frozenJournal = journal
+                ?: throw IllegalStateException("BeeKeep could not create the attachment checkpoint.")
+            val uploadDocuments = buildLocalAttachmentUploadDocuments(
+                snapshotJson,
+                frozenJournal.plan,
+                userId
+            )
+            val expectedByKey = uploadDocuments.associateBy { "${it.entity_type}:${it.entity_id}" }
+            require(expectedByKey.size == uploadDocuments.size) {
+                "The attachment plan contains duplicate upload IDs. No cloud rows were written."
+            }
+
+            fun matchingUploadedRows(rows: List<CloudDocumentRow>): Set<String> {
+                val byKey = rows.groupBy { "${it.entity_type}:${it.entity_id}" }
+                val alreadyPresent = mutableSetOf<String>()
+                expectedByKey.forEach { (key, expected) ->
+                    val matches = byKey[key].orEmpty()
+                    require(matches.size <= 1) {
+                        "The cloud account returned duplicate rows for $key. Attachment has been paused."
+                    }
+                    val existing = matches.singleOrNull()
+                    if (existing != null) {
+                        require(!existing.deleted && existing.payload == expected.payload) {
+                            "Cloud record $key changed or now belongs to different data. Nothing will be overwritten; manual review is required."
+                        }
+                        alreadyPresent += key
+                    }
+                }
+                return alreadyPresent
+            }
+
+            val alreadyPresentKeys = matchingUploadedRows(remoteBefore)
+            val baseRows = remoteBefore.filter {
+                "${it.entity_type}:${it.entity_id}" !in expectedByKey
+            }
+            require(cloudInventoryFingerprint(baseRows) == frozenJournal.baseCloudInventorySha256) {
+                "Other cloud records changed after this attachment was checkpointed. The remaining upload is paused for a fresh review."
+            }
+
+            val missingDocuments = uploadDocuments.filter {
+                "${it.entity_type}:${it.entity_id}" !in alreadyPresentKeys
+            }
+            missingDocuments.chunked(100).forEach { batch ->
+                // Deliberately INSERT, never UPSERT: a primary-key collision must fail rather
+                // than replace a record owned by the signed-in account.
+                supabase.from("beekeep_documents").insert(batch)
+            }
+
+            val remoteAfterInsert = loadAllPersonalDocuments().filter { it.user_id == userId }
+            val confirmedKeys = matchingUploadedRows(remoteAfterInsert)
+            require(confirmedKeys.size == uploadDocuments.size) {
+                "Cloud verification found missing attachment rows. The checkpoint is retained and sync stays paused."
+            }
+            val verifiedBaseRows = remoteAfterInsert.filter {
+                "${it.entity_type}:${it.entity_id}" !in expectedByKey
+            }
+            require(cloudInventoryFingerprint(verifiedBaseRows) == frozenJournal.baseCloudInventorySha256) {
+                "The cloud account changed during attachment. The uploaded rows are retained, but sync stays paused for review."
+            }
+
+            repository.applyLocalDataAttachmentRemap(
+                frozenJournal.plan,
+                snapshotJson,
+                snapshotInfo.sha256
+            )
+            repository.applyCloudDocuments(CloudDocumentOrder.personal(remoteAfterInsert))
+            repository.holdPendingAttachmentQueues()
+            require(repository.verifyPersonalAttachmentDocuments(remoteAfterInsert)) {
+                "The cloud data could not be fully verified on this device. The attachment checkpoint is retained and cloud sync stays paused."
+            }
+
+            val currentHead = loadPersonalSyncHead()
+            saveSyncCursor(personalSyncCursorKey(userId), currentHead)
+            LocalDataAttachmentExecutionStore.save(
+                appContext.filesDir,
+                frozenJournal.copy(localDatabaseApplied = true)
+            )
+
+            val prefs = appContext.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
+            check(prefs.edit().remove(CLOUD_DATA_ATTACHMENT_PENDING_USER_PREF).commit()) {
+                "The records were verified, but BeeKeep could not safely release the sync hold. Reopen this review to finish."
+            }
+            _localDataAttachmentRequired.value = false
+            _account.value = _account.value.copy(syncing = false, error = null, signedIn = true)
+            startRealtime()
+
+            WorkspaceOperationResult(
+                value = LocalDataAttachmentExecutionResult(
+                    accountId = userId,
+                    uploadedRecordCount = missingDocuments.size,
+                    alreadyPresentRecordCount = alreadyPresentKeys.size,
+                    remappedRecordCount = frozenJournal.plan.remapCount,
+                    preservedLocalOnlyCount = frozenJournal.plan.localOnlyCount,
+                    resumed = resumed,
+                    verifiedAt = System.currentTimeMillis()
+                )
+            )
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Throwable) {
+            stopRealtime()
+            _localDataAttachmentRequired.value = true
+            val message = TeamWorkspaceSyncError.userFacing(
+                error.message ?: "BeeKeep could not complete the local-data attachment."
+            )
+            _account.value = _account.value.copy(syncing = false, error = message)
+            WorkspaceOperationResult(error = message)
+        }
+    }
+
+    private fun buildLocalAttachmentUploadDocuments(
+        snapshotJson: String,
+        plan: LocalDataAttachmentMergePlan,
+        userId: String
+    ): List<CloudDocumentRow> {
+        val records = JSONObject(snapshotJson).optJSONArray("records") ?: JSONArray()
+        val localRows = (0 until records.length()).associate { index ->
+            val row = records.getJSONObject(index)
+            "${row.optString("type")}:${row.optLong("id")}" to row
+        }
+        return plan.items
+            .filter {
+                it.entityType in setOf(
+                    "apiary", "hive", "nfc_assignment", "inspection",
+                    "feeding", "treatment", "harvest", "event"
+                ) && it.disposition in setOf(
+                    LocalDataAttachmentDisposition.UPLOAD_NEW,
+                    LocalDataAttachmentDisposition.REMAP_ID
+                )
+            }
+            .sortedWith(compareBy<LocalDataAttachmentMergeItem> {
+                when (it.entityType) {
+                    "apiary" -> 0
+                    "hive" -> 1
+                    "nfc_assignment" -> 2
+                    "inspection" -> 3
+                    "feeding" -> 4
+                    "treatment" -> 5
+                    "harvest" -> 6
+                    else -> 7
+                }
+            }.thenBy { it.targetId })
+            .map { item ->
+                val row = localRows["${item.entityType}:${item.sourceId}"]
+                    ?: throw IllegalArgumentException(
+                        "The recovery snapshot is missing ${item.entityType} #${item.sourceId}."
+                    )
+                val payload = JSONObject(row.getJSONObject("payload").toString())
+                    .put("id", item.targetId)
+                item.targetHiveId?.let { payload.put("hive_id", it) }
+                item.targetApiaryId?.let { payload.put("apiary_id", it) }
+                val updatedAt = row.optLong(
+                    "updatedAt",
+                    payload.optLong("updated_at", System.currentTimeMillis())
+                )
+                CloudDocumentRow(
+                    user_id = userId,
+                    entity_type = item.entityType,
+                    entity_id = item.targetId,
+                    payload = payload.toString(),
+                    updated_at = updatedAt,
+                    deleted = false,
+                    device_id = payload.optString("device_id", deviceId)
+                )
+            }
+    }
+
+    private fun attachmentTargetMapping(plan: LocalDataAttachmentMergePlan): String =
+        plan.items
+            .sortedWith(compareBy<LocalDataAttachmentMergeItem> { it.entityType }.thenBy { it.sourceId })
+            .joinToString("\n") {
+                "${it.entityType}:${it.sourceId}->${it.targetId}:${it.targetHiveId}:${it.targetApiaryId}"
+            }
+
+    private fun snapshotContentFingerprint(snapshotJson: String): String {
+        val root = JSONObject(snapshotJson)
+        root.remove("createdAt")
+        return sha256(root.toString().toByteArray(StandardCharsets.UTF_8))
+    }
+
+    private fun cloudInventoryFingerprint(rows: Collection<CloudDocumentRow>): String {
+        val canonical = rows.sortedWith(
+            compareBy<CloudDocumentRow> { it.entity_type }.thenBy { it.entity_id }
+        ).joinToString("\n") { row ->
+            listOf(
+                row.user_id,
+                row.entity_type,
+                row.entity_id.toString(),
+                row.payload,
+                row.updated_at.toString(),
+                row.deleted.toString(),
+                row.device_id
+            ).joinToString("|")
+        }
+        return sha256(canonical.toByteArray(StandardCharsets.UTF_8))
+    }
+
+    private fun sha256(bytes: ByteArray): String =
+        MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
 
     suspend fun syncNow(): CloudResult = syncMutex.withLock {
         val result = syncNowUnlocked()

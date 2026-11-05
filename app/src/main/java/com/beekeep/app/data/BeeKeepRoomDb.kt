@@ -8,8 +8,8 @@ import androidx.room.Room
 import androidx.room.RoomDatabase
 
 @Database(
-    entities = [ApiaryEntity::class, HiveEntity::class, InspectionEntity::class, FeedingEntity::class, TreatmentEntity::class, HarvestEntity::class, ActivityEventEntity::class, SyncOutboxEntity::class, TaskEntity::class, NfcTagAssignmentEntity::class, ActionBatchOutboxEntity::class, WorkspaceActionSettingsEntity::class, WorkspaceActionOutboxEntity::class],
-    version = 14,
+    entities = [ApiaryEntity::class, HiveEntity::class, InspectionEntity::class, FeedingEntity::class, TreatmentEntity::class, HarvestEntity::class, ActivityEventEntity::class, SyncOutboxEntity::class, TaskEntity::class, NfcTagAssignmentEntity::class, ActionBatchOutboxEntity::class, WorkspaceActionSettingsEntity::class, WorkspaceActionOutboxEntity::class, LocalDataAttachmentMarkerEntity::class],
+    version = 15,
     exportSchema = false
 )
 abstract class BeeKeepRoomDb : RoomDatabase() {
@@ -26,6 +26,7 @@ abstract class BeeKeepRoomDb : RoomDatabase() {
     abstract fun workspaceActionSettings(): WorkspaceActionSettingsDao
     abstract fun nfcTagAssignments(): NfcTagAssignmentDao
     abstract fun tasks(): TaskDao
+    abstract fun localDataAttachmentMarkers(): LocalDataAttachmentMarkerDao
 
     companion object {
         val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -375,6 +376,18 @@ abstract class BeeKeepRoomDb : RoomDatabase() {
             }
         }
 
+        val MIGRATION_14_15 = object : Migration(14, 15) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS local_data_attachment_markers (
+                        snapshot_sha256 TEXT NOT NULL PRIMARY KEY,
+                        account_id TEXT NOT NULL,
+                        applied_at INTEGER NOT NULL
+                    )
+                """.trimIndent())
+            }
+        }
+
         private val instances = mutableMapOf<String, BeeKeepRoomDb>()
 
         fun get(context: Context): BeeKeepRoomDb = getNamed(context, "beekeep_room.db")
@@ -399,7 +412,8 @@ abstract class BeeKeepRoomDb : RoomDatabase() {
                     .addMigrations(
                         MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5,
                         MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9,
-                        MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14
+                        MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14,
+                        MIGRATION_14_15
                     )
                     .setJournalMode(RoomDatabase.JournalMode.WRITE_AHEAD_LOGGING)
                     .build()
