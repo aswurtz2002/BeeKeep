@@ -567,8 +567,9 @@ class SupabaseGateway(
      */
     suspend fun requestPasswordReset(email: String): CloudResult {
         val result = authEmailRequest { supabase ->
-            supabase.auth.sendRecoveryEmail(
-                email = email.trim()
+            supabase.auth.resetPasswordForEmail(
+                email = email.trim(),
+                redirectUrl = authRedirectUrl()
             )
         }
         if (result == CloudResult.Success) {
