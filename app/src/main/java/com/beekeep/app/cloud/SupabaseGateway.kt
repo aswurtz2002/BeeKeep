@@ -98,6 +98,7 @@ class SupabaseGateway(
         "beekeep_cloud_sync_cursors_v1", Context.MODE_PRIVATE
     )
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val authOperationRunner = GatewayOwnedOperationRunner(scope)
     private val deviceId = appContext.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
         .getString("device_id", null)
         ?: UUID.randomUUID().toString().also {
@@ -3154,50 +3155,56 @@ class SupabaseGateway(
         block: suspend () -> Unit
     ): CloudResult {
         if (!configured || client == null) return CloudResult.NotConfigured
-        return try {
-            client?.auth?.awaitInitialization()
-            // Authentication can replace the signed-in account. Return to private/local data
-            // before that transition so a cached team dataset is not displayed to the next account.
-            // Serialize account transitions with sync so a background worker cannot
-            // keep applying documents while the active database is being changed.
-            syncMutex.withLock {
-                repository.switchWorkspace(null)
-                block()
-                refreshAccountUnlocked()
-            }
-            val workspaceToRestore = restoreWorkspaceId?.trim()?.takeIf { it.isNotEmpty() }
-            if (_account.value.signedIn && workspaceToRestore != null) {
-                // Authentication first switches to private data for account isolation. Restore
-                // the previous team only after the newly authenticated user passes membership checks.
-                val restored = activateWorkspace(workspaceToRestore)
-                if (!restored.isSuccess) {
-                    _account.value = _account.value.copy(
-                        error = "Signed in, but the previous team workspace could not be restored: " +
-                            (restored.error ?: "you may no longer be a member")
-                    )
+
+        // The login/signup screen is replaced as soon as refreshAccountUnlocked marks startup
+        // as pending. Run the session transition in this gateway-owned scope so disposing that
+        // Compose screen cannot cancel the operation and strand accountInitialized=false.
+        return authOperationRunner.run {
+            try {
+                client?.auth?.awaitInitialization()
+                // Authentication can replace the signed-in account. Return to private/local data
+                // before that transition so a cached team dataset is not displayed to the next account.
+                // Serialize account transitions with sync so a background worker cannot
+                // keep applying documents while the active database is being changed.
+                syncMutex.withLock {
+                    repository.switchWorkspace(null)
+                    block()
+                    refreshAccountUnlocked()
                 }
+                val workspaceToRestore = restoreWorkspaceId?.trim()?.takeIf { it.isNotEmpty() }
+                if (_account.value.signedIn && workspaceToRestore != null) {
+                    // Authentication first switches to private data for account isolation. Restore
+                    // the previous team only after the newly authenticated user passes membership checks.
+                    val restored = activateWorkspace(workspaceToRestore)
+                    if (!restored.isSuccess) {
+                        _account.value = _account.value.copy(
+                            error = "Signed in, but the previous team workspace could not be restored: " +
+                                (restored.error ?: "you may no longer be a member")
+                        )
+                    }
+                }
+                if (enableRealtime && _account.value.signedIn) startRealtime()
+                CloudResult.Success
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (t: Throwable) {
+                val rawMessage = t.message.orEmpty().trim()
+                val lowerMessage = rawMessage.lowercase()
+                val message = when {
+                    "beekeep_profiles_username_lower_idx" in lowerMessage ||
+                        ("username" in lowerMessage && "already taken" in lowerMessage) ->
+                        "That username is already taken. Please choose another."
+                    rawMessage.isBlank() ||
+                        "unknown error" in lowerMessage ||
+                        "headers:" in lowerMessage ||
+                        "url:" in lowerMessage ||
+                        rawMessage.length > 240 ->
+                        "BeeKeep couldn't complete authentication. Check your connection and account details, then try again."
+                    else -> TeamWorkspaceSyncError.userFacing(rawMessage)
+                }
+                _account.value = _account.value.copy(error = message)
+                CloudResult.Failure(message)
             }
-            if (enableRealtime && _account.value.signedIn) startRealtime()
-            CloudResult.Success
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (t: Throwable) {
-            val rawMessage = t.message.orEmpty().trim()
-            val lowerMessage = rawMessage.lowercase()
-            val message = when {
-                "beekeep_profiles_username_lower_idx" in lowerMessage ||
-                    ("username" in lowerMessage && "already taken" in lowerMessage) ->
-                    "That username is already taken. Please choose another."
-                rawMessage.isBlank() ||
-                    "unknown error" in lowerMessage ||
-                    "headers:" in lowerMessage ||
-                    "url:" in lowerMessage ||
-                    rawMessage.length > 240 ->
-                    "BeeKeep couldn't complete authentication. Check your connection and account details, then try again."
-                else -> TeamWorkspaceSyncError.userFacing(rawMessage)
-            }
-            _account.value = _account.value.copy(error = message)
-            CloudResult.Failure(message)
         }
     }
 }
