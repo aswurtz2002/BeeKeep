@@ -13,7 +13,9 @@ import io.github.jan.supabase.SupabaseClient
 import io.github.jan.supabase.auth.auth
 import io.github.jan.supabase.auth.OtpType
 import io.github.jan.supabase.auth.handleDeeplinks
+import io.github.jan.supabase.auth.providers.Google
 import io.github.jan.supabase.auth.providers.builtin.Email
+import io.github.jan.supabase.auth.providers.builtin.IDToken
 import io.github.jan.supabase.functions.functions
 import io.github.jan.supabase.postgrest.from
 import io.github.jan.supabase.postgrest.postgrest
@@ -535,6 +537,24 @@ class SupabaseGateway(
         }
         if (result == CloudResult.Success) clearPendingPasswordResetRequestUnlessEmailMatches(email)
         return result
+    }
+
+    /**
+     * Exchanges a Google Credential Manager ID token for a normal Supabase session.
+     * The raw nonce is supplied so the SDK can verify the SHA-256 nonce claim in Google's token.
+     */
+    suspend fun signInWithGoogle(idToken: String, nonce: String): CloudResult {
+        if (idToken.isBlank() || nonce.isBlank()) {
+            return CloudResult.Failure("Google sign-in could not be verified. Please try again.")
+        }
+        return authCall(restoreWorkspaceId = repository.activeWorkspaceId.value) {
+            val supabase = client ?: return@authCall
+            supabase.auth.signInWith(IDToken) {
+                this.idToken = idToken
+                provider = Google
+                this.nonce = nonce
+            }
+        }
     }
 
     suspend fun signUp(email: String, password: String, username: String = ""): CloudResult {
