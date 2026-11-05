@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.plugin.compose")
@@ -17,7 +19,7 @@ val defaultDebugSupabaseKey = (
         ?: "sb_publishable_74dplURrV6VbGnQHKGTbLw_lpX-pS20"
 ).replace("\\", "\\\\").replace("\"", "\\\"")
 
-val googleWebClientIdFromLocalProperties = java.util.Properties().apply {
+val googleWebClientIdFromLocalProperties = Properties().apply {
     rootProject.file("local.properties").takeIf { it.isFile }
         ?.inputStream()?.use { load(it) }
 }.getProperty("googleWebClientId")
