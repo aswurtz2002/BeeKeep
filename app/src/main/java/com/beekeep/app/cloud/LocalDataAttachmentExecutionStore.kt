@@ -196,6 +196,9 @@ internal object LocalDataAttachmentExecutionStore {
         require(journal.snapshotFileName.matches(Regex("^attachment-[0-9]+-[a-f0-9-]+\\.json$")))
         require(journal.snapshotSha256.matches(Regex("^[a-f0-9]{64}$")))
         require(journal.baseCloudInventorySha256.matches(Regex("^[a-f0-9]{64}$")))
+        require(journal.plan.cloudInventorySha256 == journal.baseCloudInventorySha256) {
+            "The saved merge plan does not match its cloud inventory checkpoint."
+        }
         require(journal.plan.isSafeToProceed) {
             "The attachment plan contains records that still need manual review."
         }
