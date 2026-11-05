@@ -64,7 +64,9 @@ internal object GoogleCredentialSignIn {
     internal fun hashNonceForGoogle(nonce: String): String {
         val digest = MessageDigest.getInstance("SHA-256")
             .digest(nonce.toByteArray(Charsets.UTF_8))
-        return Base64.getUrlEncoder().withoutPadding().encodeToString(digest)
+        return digest.joinToString("") { byte ->
+            (byte.toInt() and 0xff).toString(16).padStart(2, '0')
+        }
     }
 
     private tailrec fun Context.findActivity(): Activity? = when (this) {

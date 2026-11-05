@@ -21,9 +21,9 @@ class GoogleCredentialSignInTest {
     @Test
     fun hashesRawNonceBeforeSendingItToGoogle() {
         val nonce = "beekeep-google-nonce-test"
-        val expected = Base64.getUrlEncoder().withoutPadding().encodeToString(
-            MessageDigest.getInstance("SHA-256").digest(nonce.toByteArray(Charsets.UTF_8))
-        )
+        val expected = MessageDigest.getInstance("SHA-256")
+            .digest(nonce.toByteArray(Charsets.UTF_8))
+            .joinToString("") { byte -> (byte.toInt() and 0xff).toString(16).padStart(2, '0') }
 
         assertEquals(expected, GoogleCredentialSignIn.hashNonceForGoogle(nonce))
     }
