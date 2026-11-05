@@ -533,7 +533,7 @@ class SupabaseGateway(
                 this.password = password
             }
         }
-        if (result == CloudResult.Success) clearPendingPasswordResetRequest()
+        if (result == CloudResult.Success) clearPendingPasswordResetRequestUnlessEmailMatches(email)
         return result
     }
 
@@ -599,6 +599,14 @@ class SupabaseGateway(
             clearPendingPasswordResetRequest()
         }
         return result
+    }
+
+    private fun clearPendingPasswordResetRequestUnlessEmailMatches(email: String) {
+        val pendingEmail = appContext.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
+            .getString(PENDING_PASSWORD_RESET_REQUEST_EMAIL_PREF, null)
+        if (!pendingEmail.equals(email.trim(), ignoreCase = true)) {
+            clearPendingPasswordResetRequest()
+        }
     }
 
     private fun clearPendingPasswordResetRequest() {
@@ -2138,7 +2146,7 @@ class SupabaseGateway(
                         prefs.edit()
                             .putBoolean(PASSWORD_RECOVERY_SESSION_PREF, true)
                             .remove(PENDING_PASSWORD_RESET_REQUEST_EMAIL_PREF)
-            .remove(PENDING_PASSWORD_RESET_REQUEST_AT_PREF)
+                            .remove(PENDING_PASSWORD_RESET_REQUEST_AT_PREF)
                             .apply()
                         _passwordRecoveryRequired.value = true
                     } else {
@@ -2147,6 +2155,8 @@ class SupabaseGateway(
                             error = "This password-reset link is invalid or expired. Request a new link and try again."
                         )
                     }
+                } else {
+                    clearPendingPasswordResetRequest()
                 }
                 refreshAccount()
             } catch (cancelled: CancellationException) {
