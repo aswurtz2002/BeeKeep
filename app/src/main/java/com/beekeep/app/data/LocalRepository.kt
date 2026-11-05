@@ -7,6 +7,7 @@ import com.beekeep.app.BeeKeepEntitlements
 import com.beekeep.app.BeeKeepQuotaLimits
 
 import android.content.Context
+import android.content.SharedPreferences
 import androidx.room.withTransaction
 import com.beekeep.app.cloud.CloudConflictPolicy
 import com.beekeep.app.cloud.CloudDocumentRow
@@ -141,6 +142,259 @@ class LocalHiveRepository(context: Context) {
      * Wipe the local workspace while preserving cloud deletion tombstones. The tombstones
      * prevent data from returning on a later sync, and this runs as one Room transaction.
      */
+    /**
+     * Captures the currently selected personal database and its personal inspection drafts into
+     * an immutable app-private file. It deliberately does not enqueue, upload, apply, or delete
+     * any cloud document. The account-attachment gate remains owned by SupabaseGateway.
+     */
+    internal suspend fun createLocalDataAttachmentSnapshot(
+        targetAccountId: String
+    ): LocalDataAttachmentSnapshotInfo = withContext(Dispatchers.IO) {
+        val cleanAccountId = targetAccountId.trim()
+        require(cleanAccountId.isNotEmpty()) { "Sign in before capturing a local-data snapshot." }
+        check(_activeWorkspaceId.value == null) {
+            "Switch to your personal data before reviewing this device's account attachment."
+        }
+        check(!startupWorkspaceAccessPending.value) {
+            "BeeKeep is still verifying workspace access. Try the data review again shortly."
+        }
+
+        val personalDatabase = db
+        val createdAt = System.currentTimeMillis()
+        val snapshotParts = personalDatabase.withTransaction {
+            val apiaries = personalDatabase.apiaries().allForBackup()
+            val hives = personalDatabase.hives().allForBackup()
+            val assignments = personalDatabase.nfcTagAssignments().allForBackup()
+            val inspections = personalDatabase.inspections().allForBackup()
+            val feedings = personalDatabase.feedings().allForBackup()
+            val treatments = personalDatabase.treatments().allForBackup()
+            val harvests = personalDatabase.harvests().allForBackup()
+            val events = personalDatabase.events().allForBackup()
+            val tasks = personalDatabase.tasks().allForBackup()
+            val syncOutbox = personalDatabase.outbox().allForAttachmentSnapshot()
+            val actionBatches = personalDatabase.actionBatchOutbox().allForAttachmentSnapshot()
+            val workspaceActions = personalDatabase.workspaceActionOutbox().allForAttachmentSnapshot()
+            val workspaceSettings = personalDatabase.workspaceActionSettings().allForAttachmentSnapshot()
+
+            val records = JSONArray()
+            fun addRecord(type: String, id: Long, updatedAt: Long, payload: String) {
+                records.put(
+                    JSONObject()
+                        .put("type", type)
+                        .put("id", id)
+                        .put("updatedAt", updatedAt)
+                        .put("payload", JSONObject(payload))
+                )
+            }
+            apiaries.forEach { addRecord("apiary", it.id, it.updatedAt, apiaryPayload(it)) }
+            hives.forEach { addRecord("hive", it.id, it.updatedAt, hivePayload(it)) }
+            assignments.forEach {
+                addRecord("nfc_assignment", it.id, maxOf(it.assignedAt, it.unassignedAt ?: 0L), nfcAssignmentPayload(it))
+            }
+            inspections.forEach { addRecord("inspection", it.id, it.updatedAt, inspectionPayload(it)) }
+            feedings.forEach { addRecord("feeding", it.id, it.createdAt, feedingPayload(it)) }
+            treatments.forEach { addRecord("treatment", it.id, it.createdAt, treatmentPayload(it)) }
+            harvests.forEach { addRecord("harvest", it.id, it.createdAt, harvestPayload(it)) }
+            events.forEach { addRecord("event", it.id, it.createdAt, eventPayload(it)) }
+
+            val taskJson = JSONArray().apply {
+                tasks.forEach { task ->
+                    put(
+                        JSONObject()
+                            .put("id", task.id)
+                            .put("hive_id", task.hiveId)
+                            .put("title", task.title)
+                            .put("due_at", task.dueAt)
+                            .put("completed", task.completed)
+                            .put("kind", task.kind)
+                            .put("reminder_enabled", task.reminderEnabled)
+                            .put("updated_at", task.updatedAt)
+                    )
+                }
+            }
+            val syncOutboxJson = JSONArray().apply {
+                syncOutbox.forEach { item ->
+                    put(
+                        JSONObject()
+                            .put("id", item.id)
+                            .put("entity_type", item.entityType)
+                            .put("entity_id", item.entityId)
+                            .put("operation", item.operation)
+                            .put("payload", item.payload)
+                            .put("created_at", item.createdAt)
+                            .put("state", item.state)
+                            .put("last_error", item.lastError)
+                    )
+                }
+            }
+            val actionBatchJson = JSONArray().apply {
+                actionBatches.forEach { item ->
+                    put(
+                        JSONObject()
+                            .put("batch_id", item.batchId)
+                            .put("workspace_id", item.workspaceId)
+                            .put("schema_version", item.schemaVersion)
+                            .put("payload", item.payload)
+                            .put("created_at", item.createdAt)
+                            .put("state", item.state)
+                            .put("last_error", item.lastError)
+                    )
+                }
+            }
+            val workspaceActionJson = JSONArray().apply {
+                workspaceActions.forEach { item ->
+                    put(
+                        JSONObject()
+                            .put("id", item.id)
+                            .put("client_action_id", item.clientActionId)
+                            .put("workspace_id", item.workspaceId)
+                            .put("entity_type", item.entityType)
+                            .put("entity_id", item.entityId)
+                            .put("operation", item.operation)
+                            .put("payload", item.payload)
+                            .put("action_at", item.actionAt)
+                            .put("created_at", item.createdAt)
+                            .put("state", item.state)
+                            .put("last_error", item.lastError)
+                    )
+                }
+            }
+            val workspaceSettingsJson = JSONArray().apply {
+                workspaceSettings.forEach { item ->
+                    put(
+                        JSONObject()
+                            .put("scope_key", item.scopeKey)
+                            .put("workspace_id", item.workspaceId)
+                            .put("owner_user_id", item.ownerUserId)
+                            .put("harvest_quantity_mode", item.harvestQuantityMode)
+                            .put("updated_at", item.updatedAt)
+                            .put("updated_by", item.updatedBy)
+                            .put("sync_state", item.syncState)
+                            .put("last_error", item.lastError)
+                    )
+                }
+            }
+
+            fun isPersonalDraftRoot(key: String): Boolean =
+                Regex("^(personal_hive_|hive_)[0-9]+$").matches(key)
+
+            val noteDrafts = personalDraftPreferencesSnapshot(inspectionNoteDraftPrefs) { key ->
+                key.startsWith("personal_hive_") ||
+                    Regex("^hive_[0-9]+(_recorded_at)?$").matches(key)
+            }
+            val formDrafts = personalDraftPreferencesSnapshot(inspectionFormDraftPrefs) { key ->
+                key.startsWith("personal_hive_") ||
+                    Regex("^hive_[0-9]+$").matches(key) ||
+                    Regex("^bee_count_history_start_personal_[0-9]+$").matches(key) ||
+                    Regex("^bee_count_history_start_[0-9]+$").matches(key)
+            }
+            val noteDraftCount = inspectionNoteDraftPrefs.all.keys.count(::isPersonalDraftRoot)
+            val formDraftCount = inspectionFormDraftPrefs.all.keys.count(::isPersonalDraftRoot)
+
+            val counts = linkedMapOf(
+                "apiary" to apiaries.size,
+                "hive" to hives.size,
+                "nfc_assignment" to assignments.size,
+                "inspection" to inspections.size,
+                "feeding" to feedings.size,
+                "treatment" to treatments.size,
+                "harvest" to harvests.size,
+                "event" to events.size,
+                "task" to tasks.size
+            )
+            val pendingSync = syncOutbox.count { it.state == "pending" }
+            val pendingBatches = actionBatches.count { it.state == "pending" }
+            val pendingWorkspace = workspaceActions.count { it.state == "pending" }
+
+            val countJson = JSONObject().apply { counts.forEach { (key, value) -> put(key, value) } }
+            val snapshotJson = JSONObject()
+                .put("format", "beekeep-local-attachment-snapshot")
+                .put("schemaVersion", 1)
+                .put("createdAt", createdAt)
+                .put("targetAccountId", cleanAccountId)
+                .put("deviceId", prefs.getString("device_id", null))
+                .put("databaseVersion", 14)
+                .put("recordCounts", countJson)
+                .put("records", records)
+                .put("tasks", taskJson)
+                .put("syncOutbox", syncOutboxJson)
+                .put("actionBatchOutbox", actionBatchJson)
+                .put("workspaceActionOutbox", workspaceActionJson)
+                .put("workspaceActionSettings", workspaceSettingsJson)
+                .put("inspectionNoteDraftPreferences", noteDrafts)
+                .put("inspectionFormDraftPreferences", formDrafts)
+                .put(
+                    "pendingCounts",
+                    JSONObject()
+                        .put("syncWrites", pendingSync)
+                        .put("actionBatches", pendingBatches)
+                        .put("workspaceActions", pendingWorkspace)
+                )
+
+            AttachmentSnapshotParts(
+                json = snapshotJson.toString(),
+                recordCounts = counts,
+                pendingSyncWrites = pendingSync,
+                pendingActionBatches = pendingBatches,
+                pendingWorkspaceActions = pendingWorkspace,
+                noteDrafts = noteDraftCount,
+                formDrafts = formDraftCount
+            )
+        }
+
+        check(_activeWorkspaceId.value == null && _database.value === personalDatabase) {
+            "The active dataset changed during the local-data snapshot. No attachment was started."
+        }
+        LocalDataAttachmentSnapshotStore.save(
+            filesDirectory = appContext.filesDir,
+            createdAt = createdAt,
+            snapshotJson = snapshotParts.json,
+            recordCounts = snapshotParts.recordCounts,
+            pendingSyncWrites = snapshotParts.pendingSyncWrites,
+            pendingActionBatches = snapshotParts.pendingActionBatches,
+            pendingWorkspaceActions = snapshotParts.pendingWorkspaceActions,
+            noteDrafts = snapshotParts.noteDrafts,
+            formDrafts = snapshotParts.formDrafts
+        )
+    }
+
+    private data class AttachmentSnapshotParts(
+        val json: String,
+        val recordCounts: Map<String, Int>,
+        val pendingSyncWrites: Int,
+        val pendingActionBatches: Int,
+        val pendingWorkspaceActions: Int,
+        val noteDrafts: Int,
+        val formDrafts: Int
+    )
+
+    private fun personalDraftPreferencesSnapshot(
+        preferences: SharedPreferences,
+        includeKey: (String) -> Boolean
+    ): JSONArray = JSONArray().apply {
+        preferences.all.entries.asSequence()
+            .filter { includeKey(it.key) }
+            .sortedBy { it.key }
+            .forEach { (key, value) ->
+                val item = JSONObject().put("key", key)
+                when (value) {
+                    is String -> item.put("type", "string").put("value", value)
+                    is Boolean -> item.put("type", "boolean").put("value", value)
+                    is Int -> item.put("type", "int").put("value", value)
+                    is Long -> item.put("type", "long").put("value", value)
+                    is Float -> item.put("type", "float").put("value", value.toDouble())
+                    is Set<*> -> item.put("type", "string_set").put(
+                        "value",
+                        JSONArray().apply {
+                            value.filterIsInstance<String>().sorted().forEach { put(it) }
+                        }
+                    )
+                    else -> item.put("type", "unsupported").put("value", value.toString())
+                }
+                put(item)
+            }
+    }
+
     suspend fun resetAllData() = withContext(Dispatchers.IO) {
         checkWritable()
         db.withTransaction {

@@ -1345,6 +1345,70 @@ class SupabaseGateway(
         knownMutations
     )
 
+    /**
+     * Builds a read-only account-attachment preview. The local snapshot is saved before the
+     * cloud inventory is queried, and cloud inventory uses SELECT only under the current
+     * authenticated user's RLS scope. This method never clears the attachment hold.
+     */
+    internal suspend fun previewLocalDataAttachment(): WorkspaceOperationResult<LocalDataAttachmentPreview> {
+        val supabase = client
+            ?: return WorkspaceOperationResult(error = "BeeKeep Cloud is not configured.")
+        return try {
+            supabase.auth.awaitInitialization()
+            val session = supabase.auth.currentSessionOrNull()
+                ?: return WorkspaceOperationResult(error = "Sign in before reviewing this device's data.")
+            val userId = session.user?.id?.trim()?.takeIf { it.isNotEmpty() }
+                ?: return WorkspaceOperationResult(error = "The signed-in account could not be verified.")
+            if (!isLocalDataAttachmentPending(userId)) {
+                return WorkspaceOperationResult(
+                    error = "There is no pending local-data review for this signed-in account."
+                )
+            }
+
+            // Capture first. Even if the network inventory request fails, the local snapshot
+            // remains available on this device and the app continues to hold cloud sync.
+            val snapshot = repository.createLocalDataAttachmentSnapshot(userId)
+
+            var cloudCounts: Map<String, Int> = emptyMap()
+            var deletedCounts: Map<String, Int> = emptyMap()
+            var inventoryError: String? = null
+            try {
+                val remoteRows = loadAllPersonalDocuments().filter { it.user_id == userId }
+                cloudCounts = remoteRows.groupingBy { it.entity_type }.eachCount()
+                deletedCounts = remoteRows.asSequence()
+                    .filter { it.deleted }
+                    .groupingBy { it.entity_type }
+                    .eachCount()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Throwable) {
+                inventoryError = TeamWorkspaceSyncError.userFacing(
+                    error.message ?: "The cloud inventory could not be loaded."
+                )
+            }
+
+            WorkspaceOperationResult(
+                value = LocalDataAttachmentPreview(
+                    accountId = userId,
+                    accountEmail = session.user?.email.orEmpty(),
+                    capturedAt = System.currentTimeMillis(),
+                    localSnapshot = snapshot,
+                    cloudRecordCounts = cloudCounts,
+                    cloudDeletedCounts = deletedCounts,
+                    cloudInventoryError = inventoryError
+                )
+            )
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Throwable) {
+            WorkspaceOperationResult(
+                error = TeamWorkspaceSyncError.userFacing(
+                    error.message ?: "The local-data review could not be prepared."
+                )
+            )
+        }
+    }
+
     suspend fun syncNow(): CloudResult = syncMutex.withLock {
         val result = syncNowUnlocked()
         if (result is CloudResult.Success || result is CloudResult.Failure) {
