@@ -194,12 +194,16 @@ internal object LocalDataAttachmentMergePlanner {
                         LocalDataAttachmentDisposition.REVIEW_REQUIRED,
                         "The local apiary is deleted, but an active cloud apiary with the same name exists. The deletion will not be applied automatically."
                     )
-                localDeleted ->
+                localDeleted -> {
+                    // A local-only deleted record must not reuse an ID now owned by a different
+                    // cloud row; the local copy is retained under a deterministic free ID.
+                    val target = if (remoteById != null) allocateId("apiary", local.sourceId) else local.sourceId
                     LocalDataAttachmentMergeItem(
-                        "apiary", local.sourceId, local.sourceId,
+                        "apiary", local.sourceId, target,
                         LocalDataAttachmentDisposition.PRESERVE_LOCAL_ONLY,
-                        "This apiary is already deleted locally. Its deletion marker is retained in the recovery snapshot, not uploaded as a new record."
+                        "This apiary is already deleted locally. Its deletion marker is retained locally and is never uploaded."
                     )
+                }
                 remoteSameName?.deleted == true ->
                     LocalDataAttachmentMergeItem(
                         "apiary", local.sourceId, local.sourceId,
@@ -307,13 +311,17 @@ internal object LocalDataAttachmentMergePlanner {
                         "The local hive is deleted, but an active cloud hive with the same apiary and number exists. The deletion will not be applied automatically.",
                         targetApiaryId = targetApiaryId
                     )
-                localDeleted ->
+                localDeleted -> {
+                    // Keep the locally deleted hive separate if its old numeric ID has been
+                    // taken by a different cloud hive.
+                    val target = if (remoteById != null) allocateId("hive", local.sourceId) else local.sourceId
                     LocalDataAttachmentMergeItem(
-                        "hive", local.sourceId, local.sourceId,
+                        "hive", local.sourceId, target,
                         LocalDataAttachmentDisposition.PRESERVE_LOCAL_ONLY,
-                        "This hive is already deleted locally. Its deletion marker is retained in the recovery snapshot, not uploaded as a new record.",
+                        "This hive is already deleted locally. Its deletion marker is retained locally and is never uploaded.",
                         targetApiaryId = targetApiaryId
                     )
+                }
                 remoteLogical?.deleted == true ->
                     LocalDataAttachmentMergeItem(
                         "hive", local.sourceId, local.sourceId,
@@ -401,13 +409,17 @@ internal object LocalDataAttachmentMergePlanner {
                 val item = when {
                     sourceHiveId in hivesRequiringReview ->
                         collisionReview(local, "The parent hive has an unresolved cloud identity conflict.", targetHiveId, targetApiaryId)
-                    sourceHiveId in localOnlyHiveIds ->
+                    sourceHiveId in localOnlyHiveIds -> {
+                        // History attached to a local-only hive is local-only too. Do not let
+                        // an ID collision overwrite a cloud history row during Room rebuild.
+                        val target = if (remoteById != null) allocateId(local.type, local.sourceId) else local.sourceId
                         LocalDataAttachmentMergeItem(
-                            local.type, local.sourceId, local.sourceId,
+                            local.type, local.sourceId, target,
                             LocalDataAttachmentDisposition.PRESERVE_LOCAL_ONLY,
-                            "The parent hive is being retained locally. Its history remains in the recovery snapshot and will not be attached yet.",
+                            "The parent hive is being retained locally. Its history remains on this device and will not be uploaded.",
                             targetHiveId, targetApiaryId
                         )
+                    }
                     remoteLogicalCandidates.size > 1 ->
                         collisionReview(local, "More than one cloud history entry matches this local identity. Review the cloud records before attaching it.", targetHiveId, targetApiaryId)
                     local.type == "nfc_assignment" &&
