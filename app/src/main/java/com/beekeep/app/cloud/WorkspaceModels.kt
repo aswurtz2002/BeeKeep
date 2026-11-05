@@ -79,6 +79,27 @@ data class WorkspaceInvitationIdParams(val target_invitation_id: String)
 @Serializable
 data class BeeKeepUsername(val username: String)
 
+/**
+ * Post-login profile/workspace gate. The personal workspace is verified server-side before
+ * the app opens; usernames are required for every account, including Google-first accounts.
+ */
+sealed interface BeeKeepAccountSetupState {
+    data object SignedOut : BeeKeepAccountSetupState
+    data object Checking : BeeKeepAccountSetupState
+    data class UsernameRequired(
+        val personalWorkspaceId: String,
+        val personalWorkspaceName: String,
+        val isCached: Boolean = false
+    ) : BeeKeepAccountSetupState
+    data class Ready(
+        val username: String,
+        val personalWorkspaceId: String,
+        val personalWorkspaceName: String,
+        val isCached: Boolean = false
+    ) : BeeKeepAccountSetupState
+    data class Unavailable(val message: String) : BeeKeepAccountSetupState
+}
+
 @Serializable
 data class BeeKeepUsernameAvailability(val available: Boolean)
 

@@ -156,6 +156,7 @@ import com.beekeep.app.data.Treatment
 import com.beekeep.app.cloud.CloudResult
 import com.beekeep.app.cloud.CloudSyncScheduler
 import com.beekeep.app.cloud.SupabaseGateway
+import com.beekeep.app.cloud.BeeKeepAccountSetupState
 import com.beekeep.app.cloud.BeeKeepWorkspaceOwnerQuotaEntitlement
 import com.beekeep.app.location.LocationController
 import com.beekeep.app.nfc.NfcController
@@ -434,12 +435,25 @@ fun BeeKeepApp(
     val account by cloud.account.collectAsStateWithLifecycle()
     val accountInitialized by cloud.accountInitialized.collectAsStateWithLifecycle()
     val passwordRecoveryRequired by cloud.passwordRecoveryRequired.collectAsStateWithLifecycle()
+    val accountSetupState by cloud.accountSetupState.collectAsStateWithLifecycle()
 
     when {
         !accountInitialized -> BeeKeepAuthLoadingScreen()
         passwordRecoveryRequired -> BeeKeepAuthScreen(cloud)
         !account.signedIn -> BeeKeepAuthScreen(cloud)
-        else -> BeeKeepAuthenticatedApp(
+        accountSetupState is BeeKeepAccountSetupState.UsernameRequired -> {
+            BeeKeepAccountSetupScreen(
+                cloud = cloud,
+                setup = accountSetupState as BeeKeepAccountSetupState.UsernameRequired
+            )
+        }
+        accountSetupState is BeeKeepAccountSetupState.Unavailable -> {
+            BeeKeepAccountSetupUnavailableScreen(
+                cloud = cloud,
+                message = (accountSetupState as BeeKeepAccountSetupState.Unavailable).message
+            )
+        }
+        accountSetupState is BeeKeepAccountSetupState.Ready -> BeeKeepAuthenticatedApp(
             vm = vm,
             nfc = nfc,
             activity = activity,
@@ -455,6 +469,7 @@ fun BeeKeepApp(
             onCompactHiveRowsChange = onCompactHiveRowsChange,
             onDarkModeChange = onDarkModeChange
         )
+        else -> BeeKeepAuthLoadingScreen()
     }
 }
 
