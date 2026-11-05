@@ -215,6 +215,8 @@ internal fun BeeKeepAuthScreen(cloud: SupabaseGateway) {
                         }
                     }
                 }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
             } catch (_: Throwable) {
                 showMessage("BeeKeep couldn't complete that request. Check your connection and try again.", true)
             } finally {
@@ -235,6 +237,8 @@ internal fun BeeKeepAuthScreen(cloud: SupabaseGateway) {
                     CloudResult.NotSignedIn -> showMessage("Sign in after confirming your email address.", true)
                     is CloudResult.Failure -> showMessage(result.message, true)
                 }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
             } catch (_: Throwable) {
                 showMessage("BeeKeep couldn't resend the confirmation email. Check your connection and try again.", true)
             } finally {
