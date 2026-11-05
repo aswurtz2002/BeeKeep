@@ -212,6 +212,8 @@ internal fun BeeKeepStartupRecoveryScreen(cloud: SupabaseGateway) {
                             CloudResult.NotSignedIn -> Unit
                             is CloudResult.Failure -> message = result.message
                         }
+                    } catch (_: TimeoutCancellationException) {
+                        message = "Sign out is taking too long. Reconnect and try again."
                     } catch (cancelled: CancellationException) {
                         throw cancelled
                     } catch (_: Throwable) {
