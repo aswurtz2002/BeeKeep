@@ -50,6 +50,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -89,6 +90,7 @@ internal fun BeeKeepAuthLoadingScreen() {
 internal fun BeeKeepAuthScreen(cloud: SupabaseGateway) {
     BackHandler(enabled = true) { /* Authentication is required; there is no guest route. */ }
 
+    val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val account by cloud.account.collectAsStateWithLifecycle()
     var createAccount by rememberSaveable { mutableStateOf(false) }
