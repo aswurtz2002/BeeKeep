@@ -564,6 +564,7 @@ private fun BeeKeepPasswordRecoveryScreen(cloud: SupabaseGateway) {
     var busy by rememberSaveable { mutableStateOf(false) }
     var message by rememberSaveable { mutableStateOf("") }
     var messageIsError by rememberSaveable { mutableStateOf(false) }
+    var passwordUpdated by rememberSaveable { mutableStateOf(false) }
 
     val passwordsMatch = newPassword.isNotEmpty() && newPassword == confirmPassword
     val canSubmit = !busy && newPassword.length >= 8 && passwordsMatch
@@ -619,6 +620,29 @@ private fun BeeKeepPasswordRecoveryScreen(cloud: SupabaseGateway) {
                     modifier = Modifier.padding(22.dp),
                     verticalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
+                    if (passwordUpdated) {
+                        Text(
+                            "Your password has been updated.",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = TextAlign.Center
+                        )
+                        Button(
+                            onClick = {
+                                scope.launch {
+                                    busy = true
+                                    cloud.finishPasswordRecovery()
+                                    busy = false
+                                }
+                            },
+                            enabled = !busy,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = 54.dp),
+                            shape = RoundedCornerShape(16.dp)
+                        ) {
+                            Text("CONTINUE TO BEEKEEP", fontWeight = FontWeight.ExtraBold)
+                        }
+                    } else {
                     OutlinedTextField(
                         value = newPassword,
                         onValueChange = { newPassword = it; message = "" },
@@ -672,7 +696,9 @@ private fun BeeKeepPasswordRecoveryScreen(cloud: SupabaseGateway) {
                                 message = ""
                                 when (val result = cloud.updatePassword(newPassword)) {
                                     CloudResult.Success -> {
-                                        message = "Your password has been updated."
+                                        passwordUpdated = true
+                                        message = ""
+                                        messageIsError = false
                                     }
                                     CloudResult.NotConfigured -> {
                                         message = "BeeKeep Cloud is not configured for this app build."
@@ -726,6 +752,7 @@ private fun BeeKeepPasswordRecoveryScreen(cloud: SupabaseGateway) {
                         modifier = Modifier.align(Alignment.CenterHorizontally)
                     ) {
                         Text("Cancel and return to sign in")
+                    }
                     }
                 }
             }
