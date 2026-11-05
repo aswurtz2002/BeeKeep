@@ -12,7 +12,8 @@ internal object AuthRecoveryCallbackPolicy {
         val query = callbackUrl.substringAfter('?', "").substringBefore('#')
         val fragment = callbackUrl.substringAfter('#', "")
         val parameters = parseParameters(query) + parseParameters(fragment)
-        if (parameters["type"].equals("recovery", ignoreCase = true)) return true
+        val callbackType = parameters["type"]
+        if (!callbackType.isNullOrBlank()) return callbackType.equals("recovery", ignoreCase = true)
         return recoveryRequestPending &&
             (parameters["code"].isNullOrBlank().not() || parameters["access_token"].isNullOrBlank().not())
     }
