@@ -561,28 +561,33 @@ class SupabaseGateway(
      */
     private suspend fun refreshAccountSetupState(supabase: SupabaseClient, userId: String) {
         try {
-            val workspaces = supabase.postgrest.rpc("beekeep_list_workspaces")
-                .decodeList<BeeKeepWorkspace>()
-            val personalWorkspace = AccountSetupPolicy.personalWorkspaceForAccount(workspaces, userId)
-                ?: error("Your personal BeeKeep workspace couldn't be verified. Try again or contact support.")
+            withTimeout(15_000L) {
+                val workspaces = supabase.postgrest.rpc("beekeep_list_workspaces")
+                    .decodeList<BeeKeepWorkspace>()
+                val personalWorkspace = AccountSetupPolicy.personalWorkspaceForAccount(workspaces, userId)
+                    ?: error("Your personal BeeKeep workspace couldn't be verified. Try again or contact support.")
 
-            val username = supabase.postgrest.rpc("beekeep_get_username")
-                .decodeList<BeeKeepUsername>()
-                .firstOrNull()?.username.orEmpty().trim()
+                val username = supabase.postgrest.rpc("beekeep_get_username")
+                    .decodeList<BeeKeepUsername>()
+                    .firstOrNull()?.username.orEmpty().trim()
 
-            cacheAccountSetup(userId, username, personalWorkspace.id, personalWorkspace.name)
-            _accountSetupState.value = if (AccountSetupPolicy.isValidUsername(username)) {
-                BeeKeepAccountSetupState.Ready(
-                    username = username,
-                    personalWorkspaceId = personalWorkspace.id,
-                    personalWorkspaceName = personalWorkspace.name
-                )
-            } else {
-                BeeKeepAccountSetupState.UsernameRequired(
-                    personalWorkspaceId = personalWorkspace.id,
-                    personalWorkspaceName = personalWorkspace.name
-                )
+                cacheAccountSetup(userId, username, personalWorkspace.id, personalWorkspace.name)
+                _accountSetupState.value = if (AccountSetupPolicy.isValidUsername(username)) {
+                    BeeKeepAccountSetupState.Ready(
+                        username = username,
+                        personalWorkspaceId = personalWorkspace.id,
+                        personalWorkspaceName = personalWorkspace.name
+                    )
+                } else {
+                    BeeKeepAccountSetupState.UsernameRequired(
+                        personalWorkspaceId = personalWorkspace.id,
+                        personalWorkspaceName = personalWorkspace.name
+                    )
+                }
             }
+        } catch (_: TimeoutCancellationException) {
+            _accountSetupState.value = cachedAccountSetupState(userId)
+                ?: BeeKeepAccountSetupState.Offline
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (error: Throwable) {
