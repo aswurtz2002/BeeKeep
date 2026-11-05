@@ -116,6 +116,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.flow.MutableStateFlow
 import com.beekeep.app.data.IdGenerator
 import com.beekeep.app.cloud.LocalDataAttachmentPreview
+import com.beekeep.app.cloud.LocalDataAttachmentMergePlan
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -500,6 +501,9 @@ private fun BeeKeepAuthenticatedApp(
     var attachmentPreviewLoading by rememberSaveable { mutableStateOf(false) }
     var attachmentPreviewError by rememberSaveable { mutableStateOf<String?>(null) }
     var attachmentPreview by remember { mutableStateOf<LocalDataAttachmentPreview?>(null) }
+    var attachmentMergePlan by remember { mutableStateOf<LocalDataAttachmentMergePlan?>(null) }
+    var attachmentMergePlanLoading by rememberSaveable { mutableStateOf(false) }
+    var attachmentMergePlanError by rememberSaveable { mutableStateOf<String?>(null) }
     val commercialEntitlementResolved = BuildConfig.DEBUG || cloudAccountInitialized
     val autoVoicePrefs = remember(context) {
         context.getSharedPreferences(PREFS, android.content.Context.MODE_PRIVATE)
@@ -619,11 +623,30 @@ private fun BeeKeepAuthenticatedApp(
         attachmentPreviewLoading = true
         attachmentPreviewError = null
         attachmentPreview = null
+        attachmentMergePlan = null
+        attachmentMergePlanError = null
+        attachmentMergePlanLoading = false
         scope.launch {
             val result = cloud.previewLocalDataAttachment()
             attachmentPreview = result.value
             attachmentPreviewError = result.error
             attachmentPreviewLoading = false
+        }
+    }
+
+    fun requestLocalDataAttachmentMergePlan() {
+        val snapshotInfo = attachmentPreview?.localSnapshot ?: run {
+            attachmentMergePlanError = "Refresh the local-data preview before building a merge plan."
+            return
+        }
+        attachmentMergePlanLoading = true
+        attachmentMergePlanError = null
+        attachmentMergePlan = null
+        scope.launch {
+            val result = cloud.buildLocalDataAttachmentMergePlan(snapshotInfo)
+            attachmentMergePlan = result.value
+            attachmentMergePlanError = result.error
+            attachmentMergePlanLoading = false
         }
     }
 
@@ -3023,6 +3046,10 @@ vm.saveHarvestToApiary(
             preview = attachmentPreview,
             loading = attachmentPreviewLoading,
             error = attachmentPreviewError,
+            mergePlan = attachmentMergePlan,
+            mergePlanLoading = attachmentMergePlanLoading,
+            mergePlanError = attachmentMergePlanError,
+            onBuildMergePlan = { requestLocalDataAttachmentMergePlan() },
             onRefresh = { requestLocalDataAttachmentPreview() },
             onDismiss = { attachmentPreviewDialogOpen = false }
         )

@@ -6,6 +6,8 @@ import com.beekeep.app.BuildConfig
 import com.beekeep.app.BeeKeepPlan
 import com.beekeep.app.BeeKeepEntitlements
 import com.beekeep.app.data.LocalHiveRepository
+import com.beekeep.app.data.LocalDataAttachmentSnapshotInfo
+import com.beekeep.app.data.LocalDataAttachmentSnapshotStore
 import com.beekeep.app.data.HarvestQuantityMode
 import com.beekeep.app.data.WorkspaceActionSettingsEntity
 import com.beekeep.app.data.workspaceActionSettingsScopeKey
@@ -1404,6 +1406,51 @@ class SupabaseGateway(
             WorkspaceOperationResult(
                 error = TeamWorkspaceSyncError.userFacing(
                     error.message ?: "The local-data review could not be prepared."
+                )
+            )
+        }
+    }
+
+    /**
+     * Builds a collision-aware plan from an integrity-verified local snapshot and a fresh
+     * read-only cloud inventory. It never uploads, applies, or acknowledges any record.
+     */
+    internal suspend fun buildLocalDataAttachmentMergePlan(
+        snapshotInfo: LocalDataAttachmentSnapshotInfo
+    ): WorkspaceOperationResult<LocalDataAttachmentMergePlan> {
+        val supabase = client
+            ?: return WorkspaceOperationResult(error = "BeeKeep Cloud is not configured.")
+        return try {
+            supabase.auth.awaitInitialization()
+            val session = supabase.auth.currentSessionOrNull()
+                ?: return WorkspaceOperationResult(error = "Sign in before building a merge plan.")
+            val userId = session.user?.id?.trim()?.takeIf { it.isNotEmpty() }
+                ?: return WorkspaceOperationResult(error = "The signed-in account could not be verified.")
+            if (!isLocalDataAttachmentPending(userId)) {
+                return WorkspaceOperationResult(
+                    error = "The local-data review is no longer pending for this account."
+                )
+            }
+
+            val snapshotJson = LocalDataAttachmentSnapshotStore.readVerified(
+                appContext.filesDir,
+                snapshotInfo
+            )
+            val snapshotAccountId = JSONObject(snapshotJson).optString("targetAccountId").trim()
+            require(snapshotAccountId == userId) {
+                "This recovery snapshot belongs to a different account. Refresh the local-data preview."
+            }
+
+            // RLS scopes this full paginated SELECT to the currently authenticated user.
+            val remoteRows = loadAllPersonalDocuments().filter { it.user_id == userId }
+            val plan = LocalDataAttachmentMergePlanner.plan(snapshotJson, remoteRows)
+            WorkspaceOperationResult(value = plan)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Throwable) {
+            WorkspaceOperationResult(
+                error = TeamWorkspaceSyncError.userFacing(
+                    error.message ?: "BeeKeep could not build a safe merge plan."
                 )
             )
         }

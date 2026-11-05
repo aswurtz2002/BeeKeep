@@ -19,6 +19,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.beekeep.app.cloud.LocalDataAttachmentPreview
+import com.beekeep.app.cloud.LocalDataAttachmentMergePlan
+import com.beekeep.app.cloud.LocalDataAttachmentDisposition
 import java.text.DateFormat
 import java.util.Date
 import java.util.Locale
@@ -40,6 +42,10 @@ internal fun LocalDataAttachmentPreviewDialog(
     preview: LocalDataAttachmentPreview?,
     loading: Boolean,
     error: String?,
+    mergePlan: LocalDataAttachmentMergePlan?,
+    mergePlanLoading: Boolean,
+    mergePlanError: String?,
+    onBuildMergePlan: () -> Unit,
     onRefresh: () -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -142,6 +148,85 @@ internal fun LocalDataAttachmentPreviewDialog(
                             "${result.localSnapshot.formDrafts} inspection form drafts.",
                         style = MaterialTheme.typography.bodySmall
                     )
+                    Text("COLLISION-SAFE MERGE PLAN", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.ExtraBold)
+                    Text(
+                        "Build a read-only plan to identify records that can be added, skipped as duplicates, remapped safely, or require review.",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    androidx.compose.material3.Button(
+                        onClick = onBuildMergePlan,
+                        enabled = !mergePlanLoading && result.cloudInventoryError == null,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(if (mergePlanLoading) "BUILDING MERGE PLAN…" else "BUILD MERGE PLAN")
+                    }
+                    if (mergePlanLoading) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.Center,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            CircularProgressIndicator()
+                            Text("  Comparing record identities and cloud conflicts…")
+                        }
+                    }
+                    mergePlanError?.takeIf { it.isNotBlank() }?.let {
+                        Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                    }
+                    mergePlan?.let { plan ->
+                        Text(
+                            "Plan for this signed-in account",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold
+                        )
+                        MergePlanCount("New records", plan.newRecordCount)
+                        MergePlanCount("Already present (skip)", plan.duplicateCount)
+                        MergePlanCount("ID collisions (remap)", plan.remapCount)
+                        MergePlanCount("Needs manual review", plan.reviewRequiredCount)
+                        MergePlanCount("Preserved locally only", plan.localOnlyCount)
+                        Text(
+                            when {
+                                plan.isSafeToProceed ->
+                                    "No identity conflicts requiring manual review were found. A future merge step will still revalidate the cloud and ask for confirmation."
+                                else ->
+                                    "Some records need a decision before any merge can proceed. Nothing will be overwritten or silently discarded."
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (plan.isSafeToProceed) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        plan.items.filter { it.disposition == LocalDataAttachmentDisposition.REVIEW_REQUIRED }
+                            .take(8)
+                            .forEach { item ->
+                                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                    Text(
+                                        "${item.entityType.replace('_', ' ')} #${item.sourceId}",
+                                        fontWeight = FontWeight.Bold,
+                                        style = MaterialTheme.typography.bodySmall
+                                    )
+                                    Text(item.reason, style = MaterialTheme.typography.bodySmall)
+                                }
+                            }
+                        if (plan.reviewRequiredCount > 8) {
+                            Text(
+                                "And ${plan.reviewRequiredCount - 8} more records requiring review.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Text(
+                            "Tasks: ${plan.taskCount} preserved locally. Drafts: ${plan.noteDraftCount} note and ${plan.formDraftCount} form entries retained in the recovery snapshot.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            "Pending queues preserved: ${plan.pendingSyncWriteCount} sync writes, including ${plan.pendingDeleteCount} delete requests; " +
+                                "${plan.pendingActionBatchCount} action batches and ${plan.pendingWorkspaceActionCount} workspace actions.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+
                     Text(
                         "Nothing was uploaded, imported, merged, modified, or deleted. Cloud sync remains paused.",
                         style = MaterialTheme.typography.bodyMedium,
@@ -157,6 +242,18 @@ internal fun LocalDataAttachmentPreviewDialog(
             TextButton(onClick = onRefresh, enabled = !loading) { Text("REFRESH PREVIEW") }
         }
     )
+}
+
+@Composable
+private fun MergePlanCount(label: String, count: Int) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(label, style = MaterialTheme.typography.bodySmall)
+        Text(count.toString(), style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold)
+    }
 }
 
 @Composable
