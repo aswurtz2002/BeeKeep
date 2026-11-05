@@ -108,6 +108,8 @@ class SupabaseGateway(
     private val authOperationRunner = GatewayOwnedOperationRunner(scope)
     @Volatile
     private var sessionRefreshJob: Job? = null
+    @Volatile
+    private var accountVerificationJob: Job? = null
     private val deviceId = appContext.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
         .getString("device_id", null)
         ?: UUID.randomUUID().toString().also {
@@ -289,7 +291,9 @@ class SupabaseGateway(
     }
 
     private fun scheduleAccountVerification(supabase: SupabaseClient, userId: String) {
-        scope.launch {
+        // Replacing a pending verification is safer than stacking account/workspace RPC batches.
+        accountVerificationJob?.cancel()
+        accountVerificationJob = scope.launch {
             try {
                 syncMutex.withLock {
                     if (supabase.auth.currentSessionOrNull()?.user?.id != userId) return@withLock
