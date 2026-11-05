@@ -489,6 +489,27 @@ internal object LocalDataAttachmentMergePlanner {
         }
         items += taskItems
 
+        // Two different local rows must never converge on one target primary key. This can
+        // happen with duplicated legacy hive identities that both match one cloud hive.
+        // Surface the whole group for manual review rather than relying on apply order.
+        val duplicateTargets = items
+            .filter { it.entityType in supportedTypes }
+            .groupBy { it.entityType to it.targetId }
+            .values
+            .filter { it.size > 1 }
+        duplicateTargets.flatten().distinctBy { it.entityType to it.sourceId }.forEach { collision ->
+            val index = items.indexOfFirst {
+                it.entityType == collision.entityType && it.sourceId == collision.sourceId
+            }
+            if (index >= 0) {
+                items[index] = items[index].copy(
+                    disposition = LocalDataAttachmentDisposition.REVIEW_REQUIRED,
+                    targetId = items[index].sourceId,
+                    reason = "More than one local record resolves to the same cloud ID. Review these records before attaching."
+                )
+            }
+        }
+
         val noteDraftCount = root.optJSONArray("inspectionNoteDraftPreferences")?.length() ?: 0
         val formDraftCount = root.optJSONArray("inspectionFormDraftPreferences")?.length() ?: 0
         val pendingSync = root.optJSONArray("syncOutbox") ?: JSONArray()
