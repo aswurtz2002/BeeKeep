@@ -439,8 +439,20 @@ fun BeeKeepApp(
     val accountInitialized by cloud.accountInitialized.collectAsStateWithLifecycle()
     val passwordRecoveryRequired by cloud.passwordRecoveryRequired.collectAsStateWithLifecycle()
     val accountSetupState by cloud.accountSetupState.collectAsStateWithLifecycle()
+    var startupWatchdogElapsed by rememberSaveable { mutableStateOf(false) }
+
+    androidx.compose.runtime.LaunchedEffect(accountInitialized) {
+        if (!accountInitialized) {
+            startupWatchdogElapsed = false
+            kotlinx.coroutines.delay(15_000L)
+            if (!cloud.accountInitialized.value) startupWatchdogElapsed = true
+        } else {
+            startupWatchdogElapsed = false
+        }
+    }
 
     when {
+        !accountInitialized && startupWatchdogElapsed -> BeeKeepStartupRecoveryScreen(cloud)
         !accountInitialized -> BeeKeepAuthLoadingScreen()
         passwordRecoveryRequired -> BeeKeepAuthScreen(cloud)
         !account.signedIn -> BeeKeepAuthScreen(cloud)
@@ -456,7 +468,8 @@ fun BeeKeepApp(
                 message = (accountSetupState as BeeKeepAccountSetupState.Unavailable).message
             )
         }
-        accountSetupState is BeeKeepAccountSetupState.Ready -> BeeKeepAuthenticatedApp(
+        accountSetupState is BeeKeepAccountSetupState.Ready ||
+            accountSetupState is BeeKeepAccountSetupState.Offline -> BeeKeepAuthenticatedApp(
             vm = vm,
             nfc = nfc,
             activity = activity,
