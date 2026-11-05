@@ -34,7 +34,8 @@ internal data class LocalDataAttachmentMergePlan(
     val pendingSyncWriteCount: Int,
     val pendingDeleteCount: Int,
     val pendingActionBatchCount: Int,
-    val pendingWorkspaceActionCount: Int
+    val pendingWorkspaceActionCount: Int,
+    val cloudInventorySha256: String = ""
 ) {
     fun count(disposition: LocalDataAttachmentDisposition): Int =
         items.count { it.disposition == disposition }
