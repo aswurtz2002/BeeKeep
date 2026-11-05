@@ -571,8 +571,9 @@ class LocalHiveRepository(context: Context) {
         }
         if (moved.isEmpty()) return
         val movedKeys = moved.map { it.second }
+        val oldKeysBeingMoved = moved.map { it.first }.toSet()
         require(movedKeys.distinct().size == movedKeys.size &&
-            movedKeys.none { key -> key !in entries || key in moved.map { it.first } }
+            movedKeys.none { key -> key in entries && key !in oldKeysBeingMoved }
         ) {
             "Inspection drafts already exist at a remapped hive ID. Resolve the draft conflict before attaching."
         }
