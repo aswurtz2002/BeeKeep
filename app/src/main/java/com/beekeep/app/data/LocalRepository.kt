@@ -366,13 +366,17 @@ class LocalHiveRepository(context: Context) {
      */
     internal suspend fun applyLocalDataAttachmentRemap(
         plan: com.beekeep.app.cloud.LocalDataAttachmentMergePlan,
-        snapshotJson: String
+        snapshotJson: String,
+        snapshotSha256: String
     ) = withContext(Dispatchers.IO) {
         require(plan.isSafeToProceed) { "Resolve every manual-review item before attaching local data." }
         check(_activeWorkspaceId.value == null && !startupWorkspaceAccessPending.value) {
             "Switch to personal data and finish workspace verification before attaching records."
         }
         val database = db
+        require(snapshotSha256.matches(Regex("^[a-f0-9]{64}$"))) {
+            "The recovery snapshot checksum is invalid."
+        }
         val root = JSONObject(snapshotJson)
         require(root.optString("targetAccountId").trim() == plan.accountId) {
             "The recovery snapshot belongs to a different signed-in account."
@@ -413,6 +417,10 @@ class LocalHiveRepository(context: Context) {
             "Two local apiaries resolve to the same target ID. Refresh the merge plan."
         }
 
+        val existingMarker = database.localDataAttachmentMarkers().get(snapshotSha256)
+        require(existingMarker == null || existingMarker.accountId == plan.accountId) {
+            "This recovery snapshot was already attached to a different account."
+        }
         val sql = database.openHelper.writableDatabase
         fun exists(table: String, id: Long): Boolean =
             sql.query("SELECT 1 FROM $table WHERE id = ? LIMIT 1", arrayOf(id)).use { it.moveToFirst() }
@@ -441,7 +449,7 @@ class LocalHiveRepository(context: Context) {
             moves[type] = pendingMoves
         }
 
-        database.withTransaction {
+        if (existingMarker == null) database.withTransaction {
             check(_activeWorkspaceId.value == null && db === database) {
                 "The active dataset changed. No account attachment changes were applied."
             }
@@ -523,6 +531,13 @@ class LocalHiveRepository(context: Context) {
             database.outbox().holdPendingForAttachment()
             database.actionBatchOutbox().holdPendingForAttachment()
             database.workspaceActionOutbox().holdPendingForAttachment()
+            database.localDataAttachmentMarkers().upsert(
+                LocalDataAttachmentMarkerEntity(
+                    snapshotSha256 = snapshotSha256,
+                    accountId = plan.accountId,
+                    appliedAt = System.currentTimeMillis()
+                )
+            )
             check(_activeWorkspaceId.value == null && db === database) {
                 "The active dataset changed during attachment. The local transaction was rolled back."
             }
@@ -590,6 +605,14 @@ class LocalHiveRepository(context: Context) {
             }
         }
         check(editor.commit()) { "BeeKeep could not safely re-key an inspection draft." }
+    }
+
+    internal suspend fun isLocalAttachmentRoomApplyCommitted(
+        snapshotSha256: String,
+        accountId: String
+    ): Boolean = withContext(Dispatchers.IO) {
+        val marker = db.localDataAttachmentMarkers().get(snapshotSha256) ?: return@withContext false
+        marker.accountId == accountId
     }
 
     /**
