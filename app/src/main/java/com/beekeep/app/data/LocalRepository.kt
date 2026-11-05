@@ -358,6 +358,274 @@ class LocalHiveRepository(context: Context) {
         )
     }
 
+    /**
+     * Applies the approved identity remaps to the personal Room database. The operation is
+     * atomic: foreign-key references and primary keys move through temporary IDs with deferred
+     * FK validation, so a process interruption cannot leave half-remapped hive histories.
+     * Pending queues are retained in a non-replayable state; they are never uploaded here.
+     */
+    internal suspend fun applyLocalDataAttachmentRemap(
+        plan: com.beekeep.app.cloud.LocalDataAttachmentMergePlan,
+        snapshotJson: String
+    ) = withContext(Dispatchers.IO) {
+        require(plan.isSafeToProceed) { "Resolve every manual-review item before attaching local data." }
+        check(_activeWorkspaceId.value == null && !startupWorkspaceAccessPending.value) {
+            "Switch to personal data and finish workspace verification before attaching records."
+        }
+        val database = db
+        val root = JSONObject(snapshotJson)
+        require(root.optString("targetAccountId").trim() == plan.accountId) {
+            "The recovery snapshot belongs to a different signed-in account."
+        }
+        require(root.optString("format") == "beekeep-local-attachment-snapshot" &&
+            root.optInt("schemaVersion", -1) == 1
+        ) { "The local recovery snapshot format is not supported." }
+
+        val supportedTables = mapOf(
+            "apiary" to "apiaries",
+            "hive" to "hives",
+            "nfc_assignment" to "nfc_tag_assignments",
+            "inspection" to "inspections",
+            "feeding" to "feeding_entries",
+            "treatment" to "treatment_entries",
+            "harvest" to "harvest_entries",
+            "event" to "activity_events"
+        )
+        val idMaps = plan.items
+            .filter { it.entityType in supportedTables && it.targetId != it.sourceId }
+            .groupBy { it.entityType }
+            .mapValues { (_, items) ->
+                val map = items.associate { it.sourceId to it.targetId }
+                require(map.size == items.size) { "The attachment plan contains repeated source IDs." }
+                map
+            }
+        val hiveIdMap = plan.items.filter { it.entityType == "hive" }
+            .associate { it.sourceId to it.targetId }
+        val apiaryItems = plan.items.filter { it.entityType == "apiary" }
+        val hiveItems = plan.items.filter { it.entityType == "hive" }
+        val childItems = plan.items.filter {
+            it.entityType in setOf("feeding", "treatment", "harvest")
+        }
+        require(hiveIdMap.values.distinct().size == hiveIdMap.size) {
+            "Two local hives resolve to the same target ID. Refresh the merge plan."
+        }
+        require(apiaryItems.map { it.targetId }.distinct().size == apiaryItems.size) {
+            "Two local apiaries resolve to the same target ID. Refresh the merge plan."
+        }
+
+        val sql = database.openHelper.writableDatabase
+        fun exists(table: String, id: Long): Boolean =
+            sql.query("SELECT 1 FROM $table WHERE id = ? LIMIT 1", arrayOf(id)).use { it.moveToFirst() }
+
+        val moves = mutableMapOf<String, List<Pair<Long, Long>>>()
+        for ((type, table) in supportedTables) {
+            val mappings = idMaps[type].orEmpty().toList()
+            val pendingMoves = mutableListOf<Pair<Long, Long>>()
+            for ((sourceId, targetId) in mappings) {
+                val sourceExists = exists(table, sourceId)
+                val targetExists = exists(table, targetId)
+                when {
+                    sourceExists && targetExists ->
+                        throw IllegalStateException(
+                            "Both local $type IDs $sourceId and $targetId exist. No local records were changed; refresh the plan."
+                        )
+                    !sourceExists && !targetExists ->
+                        throw IllegalStateException(
+                            "Neither local $type ID $sourceId nor its planned target $targetId exists. Restore the recovery snapshot before continuing."
+                        )
+                    sourceExists -> pendingMoves += sourceId to targetId
+                    // Source missing + target present is the expected state after an earlier
+                    // successful Room transaction; this makes retry after process death safe.
+                }
+            }
+            moves[type] = pendingMoves
+        }
+
+        database.withTransaction {
+            check(_activeWorkspaceId.value == null && db === database) {
+                "The active dataset changed. No account attachment changes were applied."
+            }
+            // SQLite supports deferred FK validation for the duration of this Room transaction.
+            sql.execSQL("PRAGMA defer_foreign_keys = ON")
+
+            fun update(table: String, column: String, from: Long, to: Long) {
+                sql.execSQL("UPDATE $table SET $column = ? WHERE $column = ?", arrayOf(to, from))
+            }
+
+            // Move references first, then entity primary keys, all via temporary negative IDs.
+            // The database's FK checks are deferred until this transaction commits.
+            moves["apiary"].orEmpty().forEach { (source, _) ->
+                val temporary = -source
+                update("hives", "apiary_id", source, temporary)
+                update("feeding_entries", "apiary_id", source, temporary)
+                update("treatment_entries", "apiary_id", source, temporary)
+                update("harvest_entries", "apiary_id", source, temporary)
+            }
+            moves["hive"].orEmpty().forEach { (source, _) ->
+                val temporary = -source
+                update("nfc_tag_assignments", "hive_id", source, temporary)
+                update("inspections", "hive_id", source, temporary)
+                update("feeding_entries", "hive_id", source, temporary)
+                update("treatment_entries", "hive_id", source, temporary)
+                update("harvest_entries", "hive_id", source, temporary)
+                update("activity_events", "hive_id", source, temporary)
+                update("tasks", "hive_id", source, temporary)
+            }
+            moves.forEach { (type, pairs) ->
+                val table = supportedTables.getValue(type)
+                pairs.forEach { (source, _) -> update(table, "id", source, -source) }
+            }
+
+            // Now that every source ID has been vacated, move the rows and their references
+            // to the final deterministic target IDs.
+            moves.forEach { (type, pairs) ->
+                val table = supportedTables.getValue(type)
+                pairs.forEach { (source, target) -> update(table, "id", -source, target) }
+            }
+            moves["apiary"].orEmpty().forEach { (source, target) ->
+                update("hives", "apiary_id", -source, target)
+                update("feeding_entries", "apiary_id", -source, target)
+                update("treatment_entries", "apiary_id", -source, target)
+                update("harvest_entries", "apiary_id", -source, target)
+            }
+            moves["hive"].orEmpty().forEach { (source, target) ->
+                update("nfc_tag_assignments", "hive_id", -source, target)
+                update("inspections", "hive_id", -source, target)
+                update("feeding_entries", "hive_id", -source, target)
+                update("treatment_entries", "hive_id", -source, target)
+                update("harvest_entries", "hive_id", -source, target)
+                update("activity_events", "hive_id", -source, target)
+                update("tasks", "hive_id", -source, target)
+            }
+
+            // History records may inherit apiary_id from their hive when legacy snapshots did
+            // not store it. Persist the planner's approved parent mapping, not a guessed name.
+            hiveItems.forEach { item ->
+                item.targetApiaryId?.let { apiaryId ->
+                    sql.execSQL(
+                        "UPDATE hives SET apiary_id = ? WHERE id = ?",
+                        arrayOf(apiaryId, item.targetId)
+                    )
+                }
+            }
+            childItems.forEach { item ->
+                item.targetApiaryId?.let { apiaryId ->
+                    val table = supportedTables.getValue(item.entityType)
+                    sql.execSQL(
+                        "UPDATE $table SET apiary_id = ? WHERE id = ?",
+                        arrayOf(apiaryId, item.targetId)
+                    )
+                }
+            }
+
+            // Keep every unacknowledged legacy operation for recovery, but ensure no old-ID
+            // outbox item, action batch or audit action can replay into the newly attached account.
+            database.outbox().holdPendingForAttachment()
+            database.actionBatchOutbox().holdPendingForAttachment()
+            database.workspaceActionOutbox().holdPendingForAttachment()
+            check(_activeWorkspaceId.value == null && db === database) {
+                "The active dataset changed during attachment. The local transaction was rolled back."
+            }
+        }
+
+        // SharedPreferences are separate from Room's transaction. This transform is idempotent:
+        // rerunning it after process death finds the value at its final key and leaves it there.
+        remapPersonalDraftPreferences(inspectionNoteDraftPrefs, hiveIdMap, isFormDraft = false)
+        remapPersonalDraftPreferences(inspectionFormDraftPrefs, hiveIdMap, isFormDraft = true)
+        check(_activeWorkspaceId.value == null && db === database) {
+            "The active dataset changed while inspection drafts were being re-keyed."
+        }
+    }
+
+    /** Re-key personal drafts after hive-ID remapping without changing their saved values. */
+    private fun remapPersonalDraftPreferences(
+        preferences: SharedPreferences,
+        hiveIdMap: Map<Long, Long>,
+        isFormDraft: Boolean
+    ) {
+        if (hiveIdMap.isEmpty()) return
+        val entries = preferences.all
+        val notePattern = Regex("^(personal_hive_|hive_)([0-9]+)(.*)$")
+        val formHistoryPattern = Regex("^bee_count_history_start_(?:personal_)?([0-9]+)$")
+        val moved = entries.mapNotNull { (oldKey, originalValue) ->
+            val noteMatch = notePattern.matchEntire(oldKey)
+            val historyMatch = if (isFormDraft) formHistoryPattern.matchEntire(oldKey) else null
+            val oldId = noteMatch?.groupValues?.get(2)?.toLongOrNull()
+                ?: historyMatch?.groupValues?.get(1)?.toLongOrNull()
+                ?: return@mapNotNull null
+            val newId = hiveIdMap[oldId]?.takeIf { it != oldId } ?: return@mapNotNull null
+            val newKey = when {
+                noteMatch != null -> noteMatch.groupValues[1] + newId + noteMatch.groupValues[3]
+                oldKey.startsWith("bee_count_history_start_personal_") ->
+                    "bee_count_history_start_personal_$newId"
+                else -> "bee_count_history_start_$newId"
+            }
+            val value = if (isFormDraft && originalValue is String &&
+                (noteMatch?.groupValues?.get(3).orEmpty().isEmpty())
+            ) {
+                runCatching {
+                    JSONObject(originalValue).put("id", newId).put("hive_id", newId).toString()
+                }.getOrDefault(originalValue)
+            } else originalValue
+            Triple(oldKey, newKey, value)
+        }
+        if (moved.isEmpty()) return
+        val movedKeys = moved.map { it.second }
+        require(movedKeys.distinct().size == movedKeys.size &&
+            movedKeys.none { key -> key !in entries || key in moved.map { it.first } }
+        ) {
+            "Inspection drafts already exist at a remapped hive ID. Resolve the draft conflict before attaching."
+        }
+        val editor = preferences.edit()
+        moved.forEach { (oldKey, _, _) -> editor.remove(oldKey) }
+        moved.forEach { (_, newKey, value) ->
+            when (value) {
+                is String -> editor.putString(newKey, value)
+                is Boolean -> editor.putBoolean(newKey, value)
+                is Int -> editor.putInt(newKey, value)
+                is Long -> editor.putLong(newKey, value)
+                is Float -> editor.putFloat(newKey, value)
+                is Set<*> -> editor.putStringSet(newKey, value.filterIsInstance<String>().toSet())
+            }
+        }
+        check(editor.commit()) { "BeeKeep could not safely re-key an inspection draft." }
+    }
+
+    /**
+     * Verifies that every live cloud entity is represented locally and every cloud tombstone is
+     * absent. Draft documents remain in their own preference stores and are handled separately.
+     */
+    internal suspend fun verifyPersonalAttachmentDocuments(
+        documents: Collection<com.beekeep.app.cloud.CloudDocumentRow>
+    ): Boolean = withContext(Dispatchers.IO) {
+        check(_activeWorkspaceId.value == null) { "Personal attachment verification requires the personal dataset." }
+        val database = db
+        val localIds = mapOf(
+            "apiary" to database.apiaries().allForBackup().map { it.id }.toSet(),
+            "hive" to database.hives().allForBackup().map { it.id }.toSet(),
+            "nfc_assignment" to database.nfcTagAssignments().allForBackup().map { it.id }.toSet(),
+            "inspection" to database.inspections().allForBackup().map { it.id }.toSet(),
+            "feeding" to database.feedings().allForBackup().map { it.id }.toSet(),
+            "treatment" to database.treatments().allForBackup().map { it.id }.toSet(),
+            "harvest" to database.harvests().allForBackup().map { it.id }.toSet(),
+            "event" to database.events().allForBackup().map { it.id }.toSet()
+        )
+        documents.all { row ->
+            val present = localIds[row.entity_type]?.contains(row.entity_id) ?: return@all true
+            if (row.deleted) !present else present
+        }
+    }
+
+    /** Prevent a second copy of any attachment-era outbox operation from being replayed. */
+    internal suspend fun holdPendingAttachmentQueues() = withContext(Dispatchers.IO) {
+        val database = db
+        database.withTransaction {
+            database.outbox().holdPendingForAttachment()
+            database.actionBatchOutbox().holdPendingForAttachment()
+            database.workspaceActionOutbox().holdPendingForAttachment()
+        }
+    }
+
     private data class AttachmentSnapshotParts(
         val json: String,
         val recordCounts: Map<String, Int>,
