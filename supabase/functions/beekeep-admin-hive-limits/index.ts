@@ -1,6 +1,6 @@
-// Private support-admin endpoint for BeeKeep per-account Pro and Ultimate hive-limit exceptions.
-// The service-role key stays in Supabase. Every mutating request rechecks the trusted
-// app_metadata flag on the authenticated user before touching the internal override table.
+// Private support-admin endpoint for account hive-limit exceptions and manual Commercial grants.
+// The service-role key stays in Supabase. Every account action rechecks the trusted
+// app_metadata flag on the authenticated user before invoking a protected database RPC.
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 
