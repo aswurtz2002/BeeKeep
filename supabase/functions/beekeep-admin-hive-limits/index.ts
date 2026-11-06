@@ -89,6 +89,10 @@ Deno.serve(async (req: Request) => {
     return respond(400, { success: false, error: "Enter a valid account email." });
   }
 
+  const admin = createClient(supabaseUrl, serviceRoleKey, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+
   if (isCommercialAction) {
     const rpcAction = action === "commercial_lookup" ? "lookup"
       : action === "commercial_grant" ? "grant" : "revoke";
@@ -147,9 +151,6 @@ Deno.serve(async (req: Request) => {
     return respond(400, { success: false, error: "Enter a reason between 3 and 500 characters, or leave it blank." });
   }
 
-  const admin = createClient(supabaseUrl, serviceRoleKey, {
-    auth: { persistSession: false, autoRefreshToken: false },
-  });
   const { data, error } = await admin.rpc("beekeep_admin_manage_hive_limit_override", {
     p_action: action,
     p_email: email,
