@@ -3199,7 +3199,7 @@ class SupabaseGateway(
                 put("action", action)
                 put("email", email.trim())
                 if (hiveLimit != null) put("hive_limit", hiveLimit)
-                if (reason != null) put("reason", reason.trim())
+                if (cleanedReason.isNotEmpty()) put("reason", cleanedReason)
             }
             val response = supabase.functions.invoke(
                 function = "beekeep-admin-hive-limits",
@@ -3236,9 +3236,10 @@ class SupabaseGateway(
         if (action !in setOf("commercial_lookup", "commercial_grant", "commercial_revoke")) {
             return WorkspaceOperationResult(error = "Unsupported Commercial access action.")
         }
+        val cleanedReason = reason?.trim().orEmpty()
         if (action == "commercial_grant" &&
-            (expiresInDays != null && expiresInDays !in 1..3650 ||
-                reason.isNullOrBlank() || reason.trim().length !in 3..500)
+            ((expiresInDays != null && expiresInDays !in 1..3650) ||
+                cleanedReason.length !in 3..500)
         ) {
             return WorkspaceOperationResult(
                 error = "Enter a reason and choose permanent access or a duration between 1 and 3,650 days."
