@@ -480,11 +480,11 @@ internal fun AdminHiveLimitScreen(
                         Button(
                             enabled = !busy && access != null &&
                                 durationValid && commercialReasonText.trim().length in 3..500 &&
-                                true,
+                                !manualGrantActive,
                             onClick = { pendingCommercialAction = "commercial_grant" },
                             modifier = Modifier.fillMaxWidth()
                         ) {
-                            Text(if (manualGrantActive) "UPDATE COMMERCIAL GRANT" else "GRANT COMMERCIAL ACCESS")
+                            Text(if (manualGrantActive) "COMMERCIAL GRANT ALREADY ACTIVE" else "GRANT COMMERCIAL ACCESS")
                         }
                         if (access?.hasAdminGrant == true) {
                             OutlinedButton(
