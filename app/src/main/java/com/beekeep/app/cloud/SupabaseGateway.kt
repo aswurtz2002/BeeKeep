@@ -3068,10 +3068,37 @@ class SupabaseGateway(
      */
     suspend fun myActiveCommercialEntitlement(): WorkspaceOperationResult<Boolean> =
         workspaceOperation {
-            // The RPC name is historical; it now authorizes the Commercial tier.
-            client!!.postgrest.rpc("beekeep_my_active_ultimate_entitlement")
-                .decodeList<BeeKeepUltimateEntitlement>()
-                .firstOrNull()?.active ?: error("Commercial entitlement was not returned")
+            val supabase = client ?: error("BeeKeep Cloud is not configured.")
+            val userId = supabase.auth.currentSessionOrNull()?.user?.id
+                ?.trim()
+                ?.takeIf { it.isNotEmpty() }
+                ?: error("Sign in to BeeKeep Cloud to refresh your Commercial access.")
+
+            // Use the same trusted, complete entitlement response that powers the plan limits.
+            // This also refreshes the cached app plan and custom hive allowance after an admin
+            // grant/revoke, instead of updating only a separate boolean permission check.
+            val entitlement = supabase.postgrest.rpc("beekeep_my_hive_entitlement")
+                .decodeList<BeeKeepServerEntitlement>()
+                .firstOrNull()
+                ?: error("The server did not return your BeeKeep entitlement.")
+
+            val verifiedPlan = BeeKeepEntitlements.planFromServerEntitlement(
+                planCode = entitlement.planCode,
+                baseHiveLimit = entitlement.baseHiveLimit,
+                isActivePaidPlan = entitlement.isActivePaidPlan
+            )
+            val verifiedHiveOverride = entitlement.customHiveLimit?.takeIf {
+                it in BeeKeepEntitlements.COMMERCIAL_HIVE_LIMIT..BeeKeepEntitlements.MAX_CUSTOM_HIVE_LIMIT
+            }
+
+            verifiedPlanUserId = userId
+            _verifiedPlan.value = verifiedPlan
+            _hiveLimitOverride.value = verifiedHiveOverride
+            BeeKeepEntitlements.activateCloudHiveLimitOverride(appContext, userId)
+            BeeKeepEntitlements.updateCloudVerifiedPlan(appContext, userId, verifiedPlan)
+            BeeKeepEntitlements.updateCloudHiveLimitOverride(appContext, userId, verifiedHiveOverride)
+
+            verifiedPlan == BeeKeepPlan.COMMERCIAL
         }
 
     @Deprecated("Use myActiveCommercialEntitlement")
