@@ -38,6 +38,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import com.beekeep.app.cloud.SupportAdminCommercialAccessResponse
 import com.beekeep.app.cloud.SupportAdminHiveLimitResponse
 import com.beekeep.app.cloud.SupabaseGateway
 import kotlinx.coroutines.launch
@@ -61,6 +62,12 @@ internal fun AdminHiveLimitScreen(
     var limitText by remember { mutableStateOf("") }
     var reasonText by remember { mutableStateOf("Approved support exception: increased hive allowance") }
     var accountResult by remember { mutableStateOf<SupportAdminHiveLimitResponse?>(null) }
+    var commercialAccessResult by remember { mutableStateOf<SupportAdminCommercialAccessResponse?>(null) }
+    var commercialDurationDaysText by remember { mutableStateOf("") }
+    var commercialReasonText by remember { mutableStateOf("Approved support grant: Commercial access") }
+    var commercialMessage by remember { mutableStateOf("") }
+    var commercialMessageIsError by remember { mutableStateOf(false) }
+    var pendingCommercialAction by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf("") }
     var messageIsError by remember { mutableStateOf(false) }
@@ -89,6 +96,9 @@ internal fun AdminHiveLimitScreen(
             message = ""
             messageIsError = false
             accountResult = null
+            commercialAccessResult = null
+            commercialMessage = ""
+            commercialMessageIsError = false
             val result = cloud.manageSupportHiveLimit(
                 action = "lookup",
                 email = email,
@@ -109,6 +119,29 @@ internal fun AdminHiveLimitScreen(
             } else {
                 message = result.error ?: "Could not look up that account."
                 messageIsError = true
+            }
+
+            val accessResult = cloud.manageSupportCommercialAccess(
+                action = "commercial_lookup",
+                email = email,
+                expiresInDays = null,
+                reason = null
+            )
+            if (accessResult.isSuccess && accessResult.value != null) {
+                commercialAccessResult = accessResult.value
+                commercialDurationDaysText = accessResult.value.adminGrantExpiresAt?.let { "" } ?: ""
+                commercialReasonText = "Approved support grant: Commercial access"
+                commercialMessage = if (accessResult.value.adminGrantActive) {
+                    "A manual Commercial grant is active for this account."
+                } else if (accessResult.value.isActiveCommercial) {
+                    "Commercial access is active through the account's existing subscription."
+                } else {
+                    "No active Commercial access. You can grant it below."
+                }
+                commercialMessageIsError = false
+            } else {
+                commercialMessage = accessResult.error ?: "Could not load Commercial grant details."
+                commercialMessageIsError = true
             }
             busy = false
         }
@@ -139,6 +172,52 @@ internal fun AdminHiveLimitScreen(
             } else {
                 message = result.error ?: "The support-admin request failed."
                 messageIsError = true
+            }
+            busy = false
+        }
+    }
+
+    fun runCommercialMutation(action: String) {
+        val selectedAccount = commercialAccessResult ?: return
+        val expiryDays = commercialDurationDaysText.trim().takeIf { it.isNotEmpty() }?.toIntOrNull()
+        scope.launch {
+            busy = true
+            commercialMessage = ""
+            commercialMessageIsError = false
+            val result = cloud.manageSupportCommercialAccess(
+                action = action,
+                email = selectedAccount.accountEmail ?: targetEmail.trim(),
+                expiresInDays = if (action == "commercial_grant") expiryDays else null,
+                reason = commercialReasonText.trim().takeIf { it.isNotBlank() }
+            )
+            if (result.isSuccess && result.value != null) {
+                commercialAccessResult = result.value
+                val refreshed = cloud.manageSupportHiveLimit(
+                    action = "lookup",
+                    email = result.value.accountEmail ?: targetEmail.trim(),
+                    hiveLimit = null,
+                    reason = null
+                )
+                if (refreshed.isSuccess && refreshed.value != null) {
+                    accountResult = refreshed.value
+                    limitText = (refreshed.value.customHiveLimit
+                        ?: suggestedHiveLimit(refreshed.value.baseHiveLimit)).toString()
+                }
+                commercialMessage = if (action == "commercial_grant") {
+                    if (result.value.adminGrantExpiresAt.isNullOrBlank()) {
+                        "Commercial access granted permanently. The account receives the Commercial limits and features on its next successful entitlement refresh."
+                    } else {
+                        "Commercial access granted until ${result.value.adminGrantExpiresAt}. The account receives the Commercial limits and features on its next successful entitlement refresh."
+                    }
+                } else if (result.value.isActiveCommercial) {
+                    "The manual grant was removed. This account still has Commercial access through its existing subscription."
+                } else {
+                    "Manual Commercial access revoked. The account now returns to Hobbyist limits and access on its next successful entitlement refresh."
+                }
+                commercialMessageIsError = false
+            } else {
+                commercialMessage = result.error ?: "The Commercial access request failed."
+                commercialMessageIsError = true
             }
             busy = false
         }
@@ -336,6 +415,105 @@ internal fun AdminHiveLimitScreen(
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(20.dp)
                 ) {
+                    Column(
+                        Modifier.fillMaxWidth().padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Text("Commercial access", fontWeight = FontWeight.ExtraBold, style = MaterialTheme.typography.titleMedium)
+                        val access = commercialAccessResult
+                        val commercialActive = access?.isActiveCommercial == true
+                        val manualGrantActive = access?.adminGrantActive == true
+                        AdminInfoRow(
+                            "Current access",
+                            when {
+                                manualGrantActive -> "Commercial — admin grant active"
+                                commercialActive -> "Commercial — existing subscription"
+                                access?.hasAdminGrant == true -> "Hobbyist — previous admin grant expired"
+                                access != null -> "Hobbyist"
+                                else -> "Grant details unavailable"
+                            }
+                        )
+                        if (access?.hasAdminGrant == true) {
+                            AdminInfoRow(
+                                "Manual grant expiry",
+                                access.adminGrantExpiresAt ?: "Permanent (no expiry)"
+                            )
+                            if (!access.adminGrantReason.isNullOrBlank()) {
+                                Text("Grant reason", fontWeight = FontWeight.SemiBold)
+                                Text(access.adminGrantReason, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            if (!access.adminGrantUpdatedAt.isNullOrBlank()) {
+                                AdminInfoRow("Last grant update", access.adminGrantUpdatedAt)
+                            }
+                            if (!access.adminGrantedBy.isNullOrBlank()) {
+                                AdminInfoRow("Granted by (account ID)", access.adminGrantedBy)
+                            }
+                        }
+                        Text(
+                            "A manual grant enables Commercial's 10,000-hive and 1,000-apiary limits, NFC features and Commercial workspace access. It does not alter the customer's billing or store purchase records.",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                        OutlinedTextField(
+                            value = commercialDurationDaysText,
+                            onValueChange = { value ->
+                                commercialDurationDaysText = value.filter(Char::isDigit).take(4)
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            label = { Text("Grant duration in days (blank = permanent)") },
+                            supportingText = { Text("Use 1–3,650 days, or leave blank for no expiry.") },
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+                        )
+                        OutlinedTextField(
+                            value = commercialReasonText,
+                            onValueChange = { commercialReasonText = it.take(500) },
+                            modifier = Modifier.fillMaxWidth(),
+                            label = { Text("Reason for Commercial access") },
+                            supportingText = { Text("Required for the admin audit history (3–500 characters).") },
+                            minLines = 2,
+                            maxLines = 4
+                        )
+                        val parsedDuration = commercialDurationDaysText.trim().takeIf { it.isNotEmpty() }?.toIntOrNull()
+                        val durationValid = commercialDurationDaysText.isBlank() ||
+                            (parsedDuration != null && parsedDuration in 1..3650)
+                        Button(
+                            enabled = !busy && access != null &&
+                                durationValid && commercialReasonText.trim().length in 3..500 &&
+                                !manualGrantActive,
+                            onClick = { pendingCommercialAction = "commercial_grant" },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(if (manualGrantActive) "COMMERCIAL GRANT ALREADY ACTIVE" else "GRANT COMMERCIAL ACCESS")
+                        }
+                        if (access?.hasAdminGrant == true) {
+                            OutlinedButton(
+                                enabled = !busy,
+                                onClick = { pendingCommercialAction = "commercial_revoke" },
+                                modifier = Modifier.fillMaxWidth()
+                            ) { Text("REVOKE MANUAL COMMERCIAL GRANT") }
+                        }
+                        if (commercialMessage.isNotBlank()) {
+                            Surface(
+                                color = if (commercialMessageIsError) MaterialTheme.colorScheme.errorContainer
+                                else MaterialTheme.colorScheme.secondaryContainer,
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
+                                Text(
+                                    commercialMessage,
+                                    modifier = Modifier.padding(12.dp),
+                                    color = if (commercialMessageIsError) MaterialTheme.colorScheme.onErrorContainer
+                                    else MaterialTheme.colorScheme.onSecondaryContainer
+                                )
+                            }
+                        }
+                    }
+                }
+
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(20.dp)
+                ) {
                     Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         Text("Hive allowance controls", fontWeight = FontWeight.ExtraBold, style = MaterialTheme.typography.titleMedium)
                         Text(
@@ -450,6 +628,41 @@ internal fun AdminHiveLimitScreen(
         Spacer(Modifier.height(4.dp))
     }
 
+    pendingCommercialAction?.let { action ->
+        val isGrant = action == "commercial_grant"
+        val selected = commercialAccessResult
+        val durationLabel = if (commercialDurationDaysText.isBlank()) {
+            "permanent (no expiry)"
+        } else {
+            commercialDurationDaysText.trim() + " days"
+        }
+        AlertDialog(
+            onDismissRequest = { if (!busy) pendingCommercialAction = null },
+            title = { Text(if (isGrant) "Confirm Commercial access grant" else "Revoke manual Commercial access") },
+            text = {
+                Text(
+                    if (isGrant) {
+                        "Grant Commercial access to ${selected?.accountEmail} for $durationLabel?\n\nThis enables Commercial limits and features but does not change billing records.\n\nReason: ${commercialReasonText.trim()}"
+                    } else {
+                        "Remove the manual Commercial grant for ${selected?.accountEmail}? Any separate active paid Commercial subscription will remain active.\n\nThe account will return to Hobbyist only if no other Commercial entitlement is active."
+                    }
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = !busy,
+                    onClick = {
+                        pendingCommercialAction = null
+                        runCommercialMutation(action)
+                    }
+                ) { Text(if (isGrant) "CONFIRM GRANT" else "CONFIRM REVOKE") }
+            },
+            dismissButton = {
+                TextButton(enabled = !busy, onClick = { pendingCommercialAction = null }) { Text("CANCEL") }
+            }
+        )
+    }
+
     pendingAction?.let { action ->
         val isSet = action == "set"
         val selected = accountResult
@@ -494,6 +707,7 @@ private fun formatLimit(value: Int): String = String.format(Locale.CANADA, "%,d"
 private fun adminTierName(result: SupportAdminHiveLimitResponse?): String {
     val plan = result?.planCode.orEmpty().lowercase(Locale.ROOT).replace("_", "").replace("-", "")
     return when {
+        result?.isActiveUltimate == true -> "Commercial"
         plan.contains("ultimate") || plan.contains("commercial") -> "Commercial"
         else -> "Hobbyist"
     }
