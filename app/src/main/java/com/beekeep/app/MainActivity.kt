@@ -579,9 +579,13 @@ private fun BeeKeepAuthenticatedApp(
         mutableStateOf(BeeKeepEntitlements.currentPlan(context).name)
     }
     val localPurchasePlan = BeeKeepPlan.fromStoredValue(purchasePlanName)
-    // Release quotas follow the authenticated server entitlement rather than defaulting every
-    // paid customer to Free. Debug builds retain the local purchase simulator.
-    val purchasePlan = if (BuildConfig.DEBUG) localPurchasePlan else serverVerifiedPlan ?: BeeKeepPlan.HOBBYIST
+    // A server-granted Commercial entitlement must override the debug purchase simulator too.
+    // Otherwise a Hobbyist debug profile would still see upgrade prompts despite a valid grant.
+    val purchasePlan = BeeKeepEntitlements.planForAppFeatures(
+        isDebugBuild = BuildConfig.DEBUG,
+        localPlan = localPurchasePlan,
+        serverVerifiedPlan = serverVerifiedPlan
+    )
     var lockedHivePromptVisible by rememberSaveable { mutableStateOf(false) }
     var lockedHivePromptName by rememberSaveable { mutableStateOf<String?>(null) }
     var lockedHivePromptHiveId by rememberSaveable { mutableStateOf<Long?>(null) }

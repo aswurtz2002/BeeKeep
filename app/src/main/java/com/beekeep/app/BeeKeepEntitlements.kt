@@ -272,6 +272,23 @@ object BeeKeepEntitlements {
         }
     }
 
+    /**
+     * Selects the plan that gates app features.
+     *
+     * A server-verified Commercial entitlement (including an admin grant) always takes
+     * precedence over the local debug purchase simulator. Debug simulation remains available
+     * when the server has not granted Commercial; release builds never trust local simulation.
+     */
+    internal fun planForAppFeatures(
+        isDebugBuild: Boolean,
+        localPlan: BeeKeepPlan,
+        serverVerifiedPlan: BeeKeepPlan?
+    ): BeeKeepPlan = when {
+        serverVerifiedPlan == BeeKeepPlan.COMMERCIAL -> BeeKeepPlan.COMMERCIAL
+        isDebugBuild -> localPlan
+        else -> serverVerifiedPlan ?: BeeKeepPlan.HOBBYIST
+    }
+
     private fun standardHiveLimit(plan: BeeKeepPlan): Int = when (plan) {
         BeeKeepPlan.HOBBYIST -> HOBBYIST_HIVE_LIMIT
         BeeKeepPlan.COMMERCIAL -> COMMERCIAL_HIVE_LIMIT
