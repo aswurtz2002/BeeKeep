@@ -129,7 +129,7 @@ internal fun AdminHiveLimitScreen(
             )
             if (accessResult.isSuccess && accessResult.value != null) {
                 commercialAccessResult = accessResult.value
-                commercialDurationDaysText = accessResult.value.adminGrantExpiresAt?.let { "" } ?: ""
+                commercialDurationDaysText = ""
                 commercialReasonText = "Approved support grant: Commercial access"
                 commercialMessage = if (accessResult.value.adminGrantActive) {
                     "A manual Commercial grant is active for this account."
@@ -480,11 +480,11 @@ internal fun AdminHiveLimitScreen(
                         Button(
                             enabled = !busy && access != null &&
                                 durationValid && commercialReasonText.trim().length in 3..500 &&
-                                !manualGrantActive,
+                                true,
                             onClick = { pendingCommercialAction = "commercial_grant" },
                             modifier = Modifier.fillMaxWidth()
                         ) {
-                            Text(if (manualGrantActive) "COMMERCIAL GRANT ALREADY ACTIVE" else "GRANT COMMERCIAL ACCESS")
+                            Text(if (manualGrantActive) "UPDATE COMMERCIAL GRANT" else "GRANT COMMERCIAL ACCESS")
                         }
                         if (access?.hasAdminGrant == true) {
                             OutlinedButton(
@@ -492,6 +492,56 @@ internal fun AdminHiveLimitScreen(
                                 onClick = { pendingCommercialAction = "commercial_revoke" },
                                 modifier = Modifier.fillMaxWidth()
                             ) { Text("REVOKE MANUAL COMMERCIAL GRANT") }
+                        }
+                        if (access != null) {
+                            androidx.compose.material3.HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                            Text("Recent Commercial access activity", fontWeight = FontWeight.SemiBold)
+                            if (access.auditHistory.isEmpty()) {
+                                Text(
+                                    "No manual Commercial access changes have been recorded.",
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                            } else {
+                                access.auditHistory.forEachIndexed { index, entry ->
+                                    if (index > 0) {
+                                        androidx.compose.material3.HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                                    }
+                                    Column(
+                                        Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                                        verticalArrangement = Arrangement.spacedBy(3.dp)
+                                    ) {
+                                        Row(
+                                            Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Text(
+                                                if (entry.action.equals("revoke", ignoreCase = true)) "GRANT REVOKED" else "COMMERCIAL GRANTED / UPDATED",
+                                                fontWeight = FontWeight.Bold,
+                                                style = MaterialTheme.typography.labelMedium
+                                            )
+                                            Text(
+                                                entry.createdAt.orEmpty(),
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                        AdminInfoRow(
+                                            "Expiry",
+                                            entry.newExpiresAt ?: if (entry.action.equals("grant", ignoreCase = true)) "Permanent" else "Removed"
+                                        )
+                                        Text(entry.reason, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+                                        if (!entry.actorUserId.isNullOrBlank()) {
+                                            Text(
+                                                "Operator account: " + entry.actorUserId,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                style = MaterialTheme.typography.labelSmall
+                                            )
+                                        }
+                                    }
+                                }
+                            }
                         }
                         if (commercialMessage.isNotBlank()) {
                             Surface(
