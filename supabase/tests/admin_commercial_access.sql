@@ -98,8 +98,9 @@ begin
       );
     if result_row.is_active_commercial
        or result_row.has_admin_grant
-       or result_row.admin_grant_active then
-        raise exception 'Revoking a manual grant must restore Hobbyist when no billing entitlement exists.';
+       or result_row.admin_grant_active
+       or pg_catalog.jsonb_array_length(result_row.audit_history) < 2 then
+        raise exception 'Revoking a manual grant must restore Hobbyist and retain grant/revoke audit history.';
     end if;
 
     select * into result_row
