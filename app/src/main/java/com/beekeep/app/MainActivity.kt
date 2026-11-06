@@ -116,9 +116,6 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import com.beekeep.app.data.IdGenerator
-import com.beekeep.app.cloud.LocalDataAttachmentPreview
-import com.beekeep.app.cloud.LocalDataAttachmentMergePlan
-import com.beekeep.app.cloud.LocalDataAttachmentExecutionResult
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -238,7 +235,7 @@ class MainActivity : ComponentActivity(), TextToSpeech.OnInitListener {
             // Schedule background sync only after local-first session and workspace selection
             // have been published, so a worker cannot hold the shared sync mutex ahead of startup.
             CloudSyncScheduler.schedule(applicationContext)
-            if (cloud.account.value.signedIn && !cloud.localDataAttachmentRequired.value) {
+            if (cloud.account.value.signedIn) {
                 if (cloud.syncNow() is CloudResult.Success) cloud.startRealtime()
             }
         }
@@ -516,17 +513,6 @@ private fun BeeKeepAuthenticatedApp(
     val cloudHiveLimitOverride by cloud.hiveLimitOverride.collectAsStateWithLifecycle()
     val serverVerifiedPlan by cloud.verifiedPlan.collectAsStateWithLifecycle()
     val cloudAccountInitialized by cloud.accountInitialized.collectAsStateWithLifecycle()
-    val localDataAttachmentRequired by cloud.localDataAttachmentRequired.collectAsStateWithLifecycle()
-    var attachmentPreviewDialogOpen by rememberSaveable { mutableStateOf(false) }
-    var attachmentPreviewLoading by rememberSaveable { mutableStateOf(false) }
-    var attachmentPreviewError by rememberSaveable { mutableStateOf<String?>(null) }
-    var attachmentPreview by remember { mutableStateOf<LocalDataAttachmentPreview?>(null) }
-    var attachmentMergePlan by remember { mutableStateOf<LocalDataAttachmentMergePlan?>(null) }
-    var attachmentMergePlanLoading by rememberSaveable { mutableStateOf(false) }
-    var attachmentMergePlanError by rememberSaveable { mutableStateOf<String?>(null) }
-    var attachmentExecutionLoading by rememberSaveable { mutableStateOf(false) }
-    var attachmentExecutionError by rememberSaveable { mutableStateOf<String?>(null) }
-    var attachmentExecutionResult by remember { mutableStateOf<LocalDataAttachmentExecutionResult?>(null) }
     val commercialEntitlementResolved = BuildConfig.DEBUG || cloudAccountInitialized
     val autoVoicePrefs = remember(context) {
         context.getSharedPreferences(PREFS, android.content.Context.MODE_PRIVATE)
@@ -640,62 +626,6 @@ private fun BeeKeepAuthenticatedApp(
     var locationCheckCallback by remember { mutableStateOf<(() -> Unit)?>(null) }
     val scope = rememberCoroutineScope()
     val snackbarHostState = androidx.compose.material3.SnackbarHostState()
-
-    fun requestLocalDataAttachmentPreview() {
-        attachmentPreviewDialogOpen = true
-        attachmentPreviewLoading = true
-        attachmentPreviewError = null
-        attachmentPreview = null
-        attachmentMergePlan = null
-        attachmentMergePlanError = null
-        attachmentMergePlanLoading = false
-        attachmentExecutionLoading = false
-        attachmentExecutionError = null
-        attachmentExecutionResult = null
-        scope.launch {
-            val result = cloud.previewLocalDataAttachment()
-            attachmentPreview = result.value
-            attachmentPreviewError = result.error
-            attachmentPreviewLoading = false
-        }
-    }
-
-    fun requestLocalDataAttachmentMergePlan() {
-        val snapshotInfo = attachmentPreview?.localSnapshot ?: run {
-            attachmentMergePlanError = "Refresh the local-data preview before building a merge plan."
-            return
-        }
-        attachmentMergePlanLoading = true
-        attachmentMergePlanError = null
-        attachmentMergePlan = null
-        scope.launch {
-            val result = cloud.buildLocalDataAttachmentMergePlan(snapshotInfo)
-            attachmentMergePlan = result.value
-            attachmentMergePlanError = result.error
-            attachmentMergePlanLoading = false
-        }
-    }
-
-    fun requestLocalDataAttachmentExecution() {
-        val snapshotInfo = attachmentPreview?.localSnapshot ?: run {
-            attachmentExecutionError = "Refresh the local-data preview before attaching records."
-            return
-        }
-        val approvedPlan = attachmentMergePlan ?: run {
-            attachmentExecutionError = "Build and review a safe merge plan before attaching records."
-            return
-        }
-        if (!approvedPlan.isSafeToProceed || attachmentExecutionLoading) return
-        attachmentExecutionLoading = true
-        attachmentExecutionError = null
-        attachmentExecutionResult = null
-        scope.launch {
-            val result = cloud.executeLocalDataAttachment(snapshotInfo, approvedPlan)
-            attachmentExecutionResult = result.value
-            attachmentExecutionError = result.error
-            attachmentExecutionLoading = false
-        }
-    }
 
     fun clearApiaryBatchAction() {
         apiaryBatchTargetPickerVisible = false
@@ -3088,52 +3018,8 @@ vm.saveHarvestToApiary(
         }
         return
     }
-    if (attachmentPreviewDialogOpen) {
-        LocalDataAttachmentPreviewDialog(
-            preview = attachmentPreview,
-            loading = attachmentPreviewLoading,
-            error = attachmentPreviewError,
-            mergePlan = attachmentMergePlan,
-            mergePlanLoading = attachmentMergePlanLoading,
-            mergePlanError = attachmentMergePlanError,
-            executionLoading = attachmentExecutionLoading,
-            executionError = attachmentExecutionError,
-            executionResult = attachmentExecutionResult,
-            onBuildMergePlan = { requestLocalDataAttachmentMergePlan() },
-            onExecuteAttachment = { requestLocalDataAttachmentExecution() },
-            onRefresh = { requestLocalDataAttachmentPreview() },
-            onDismiss = { attachmentPreviewDialogOpen = false }
-        )
-    }
     Scaffold(
         snackbarHost = { androidx.compose.material3.SnackbarHost(snackbarHostState) },
-        topBar = {
-            if (localDataAttachmentRequired) {
-                Surface(
-                    modifier = Modifier.fillMaxWidth(),
-                    color = MaterialTheme.colorScheme.tertiaryContainer
-                ) {
-                    Column(
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        Text(
-                            "Cloud sync is paused until you review this device's existing data. Nothing will be uploaded or deleted yet.",
-                            color = MaterialTheme.colorScheme.onTertiaryContainer,
-                            style = MaterialTheme.typography.bodySmall,
-                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
-                        )
-                        Button(
-                            onClick = { requestLocalDataAttachmentPreview() },
-                            enabled = !attachmentPreviewLoading
-                        ) {
-                            Text(if (attachmentPreviewLoading) "PREPARING PREVIEW…" else "REVIEW EXISTING DATA")
-                        }
-                    }
-                }
-            }
-        },
         bottomBar = {
             Column {
             NavigationBar(
