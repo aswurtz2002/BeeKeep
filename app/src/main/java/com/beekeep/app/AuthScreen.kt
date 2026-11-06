@@ -345,10 +345,8 @@ internal fun BeeKeepAuthScreen(cloud: SupabaseGateway) {
                                 showMessage("Check your email to verify your BeeKeep account. Then return here to sign in.")
                             }
                             else -> {
-                                showMessage("You're signed in. Your device data remains protected while setup is completed.")
-                                if (!cloud.localDataAttachmentRequired.value) {
-                                    CloudSyncScheduler.runNow(context)
-                                }
+                                showMessage("You're signed in. Syncing your BeeKeep data.")
+                                CloudSyncScheduler.runNow(context)
                             }
                         }
                     }
@@ -493,10 +491,8 @@ internal fun BeeKeepAuthScreen(cloud: SupabaseGateway) {
                                                     nonce = googleToken.nonce
                                                 )) {
                                                     CloudResult.Success -> {
-                                                        showMessage("You're signed in. Your device data remains protected while setup is completed.")
-                                                        if (!cloud.localDataAttachmentRequired.value) {
-                                                            CloudSyncScheduler.runNow(context)
-                                                        }
+                                                        showMessage("You're signed in. Syncing your BeeKeep data.")
+                                                        CloudSyncScheduler.runNow(context)
                                                     }
                                                     CloudResult.NotConfigured -> showMessage(
                                                         "BeeKeep Cloud is not configured for this app build.",

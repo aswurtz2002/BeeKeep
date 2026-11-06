@@ -84,8 +84,6 @@ private const val SYNC_UPLOAD_BATCH_SIZE = 200
 private const val SYNC_DOWNLOAD_PAGE_SIZE = 500
 private const val SYNC_CONFLICT_LOOKUP_BATCH_SIZE = 100
 private const val CLOUD_DATA_ATTACHMENT_PENDING_USER_PREF = "cloud_data_attachment_pending_user_id"
-private const val CLOUD_DATA_ATTACHMENT_LAST_USER_PREF = "cloud_data_attachment_last_user_id"
-private const val CLOUD_DATA_ATTACHMENT_PAUSED_MESSAGE = "Cloud sync is paused while this device's existing records wait for review. Nothing will be uploaded or deleted yet."
 private const val PENDING_PASSWORD_RESET_REQUEST_EMAIL_PREF = "pending_password_reset_request_email"
 private const val PENDING_PASSWORD_RESET_REQUEST_AT_PREF = "pending_password_reset_request_at"
 private const val PASSWORD_RESET_REQUEST_MAX_AGE_MS = 60L * 60L * 1000L
@@ -139,9 +137,6 @@ class SupabaseGateway(
     private val _passwordRecoveryRequired = MutableStateFlow(false)
     /** True only after a password-recovery link has been returned to and processed by this app. */
     val passwordRecoveryRequired: StateFlow<Boolean> = _passwordRecoveryRequired.asStateFlow()
-    /** True when this signed-in account has not yet reviewed this device's pre-existing local data. */
-    private val _localDataAttachmentRequired = MutableStateFlow(false)
-    val localDataAttachmentRequired: StateFlow<Boolean> = _localDataAttachmentRequired.asStateFlow()
     /** True after Supabase has restored the stored session and the account identity is known. */
     val accountInitialized: StateFlow<Boolean> = _accountInitialized.asStateFlow()
     private val _accountSetupState = MutableStateFlow<BeeKeepAccountSetupState>(
@@ -244,7 +239,6 @@ class SupabaseGateway(
                                     error = "Your session has expired. Sign in again. Your local hive records are still on this device."
                                 )
                                 _accountSetupState.value = BeeKeepAccountSetupState.SignedOut
-                                _localDataAttachmentRequired.value = false
                                 _accountInitialized.value = true
                                 stopRealtime()
                             }
@@ -394,7 +388,6 @@ class SupabaseGateway(
                 .getBoolean(PASSWORD_RECOVERY_SESSION_PREF, false)
             if (userId == null) {
                 _accountSetupState.value = BeeKeepAccountSetupState.SignedOut
-                _localDataAttachmentRequired.value = false
                 // The auth SDK can have no current session when an expired token cannot refresh
                 // offline. An explicit in-app sign-out clears the active workspace before it gets
                 // here, so retain an account-bound selection as read-only instead of mistaking an
@@ -447,22 +440,10 @@ class SupabaseGateway(
                 val accountPrefs = appContext.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
                 // This dedicated marker survives explicit sign-out, which clears the active
                 // session identity but must not make the same account look new on this device.
-                // Fall back to the legacy active-account marker once for upgraded installs.
-                val previousUserId = (
-                    accountPrefs.getString(CLOUD_DATA_ATTACHMENT_LAST_USER_PREF, null)
-                        ?: accountPrefs.getString("last_cloud_user_id", null)
-                    )?.trim()?.takeIf { it.isNotEmpty() }
-                if (previousUserId != userId) {
-                    // A first login on this device (or a switch to another account) must not
-                    // upload the device's pre-existing personal dataset automatically.
-                    accountPrefs.edit()
-                        .putString(CLOUD_DATA_ATTACHMENT_PENDING_USER_PREF, userId)
-                        .apply()
-                }
-                _localDataAttachmentRequired.value =
-                    accountPrefs.getString(CLOUD_DATA_ATTACHMENT_PENDING_USER_PREF, null) == userId
+                // The device keeps its local records available and syncs them for the
+                // account the user explicitly signs into. Duplicate sign-ups are rejected
+                // by the Auth response before a second account can be reported as created.
                 accountPrefs.edit()
-                    .putString(CLOUD_DATA_ATTACHMENT_LAST_USER_PREF, userId)
                     .putString("last_cloud_user_id", userId)
                     .putString("last_cloud_user_email", session?.user?.email.orEmpty())
                     .apply()
@@ -537,9 +518,6 @@ class SupabaseGateway(
                 // Clear the selected team in this case; transient/offline failures above retain it.
                 repository.switchWorkspace(null)
             }
-            _localDataAttachmentRequired.value = cachedUserId != null &&
-                appContext.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
-                    .getString(CLOUD_DATA_ATTACHMENT_PENDING_USER_PREF, null) == cachedUserId
             if (cachedUserId != null) {
                 BeeKeepEntitlements.activateCloudHiveLimitOverride(appContext, cachedUserId)
                 _hiveLimitOverride.value =
@@ -703,8 +681,6 @@ class SupabaseGateway(
                     return@withTimeout false
                 }
                 restoreCachedWorkspaceForAccount(userId)
-                _localDataAttachmentRequired.value =
-                    prefs.getString(CLOUD_DATA_ATTACHMENT_PENDING_USER_PREF, null) == userId
                 _accountSetupState.value = cachedAccountSetupState(userId)
                     ?: BeeKeepAccountSetupState.Offline
                 _account.value = CloudAccountState(
@@ -1009,12 +985,17 @@ class SupabaseGateway(
     suspend fun signUp(email: String, password: String, username: String = ""): CloudResult {
         val result = authCall {
             val supabase = client ?: return@authCall
-            supabase.auth.signUpWith(Email) {
+            val signupUser = supabase.auth.signUpWith(Email) {
                 this.email = email.trim()
                 this.password = password
                 data = buildJsonObject {
                     if (username.isNotBlank()) put("username", username.trim())
                 }
+            }
+            if (SignupResponsePolicy.isExistingEmail(signupUser?.identities?.size)) {
+                throw IllegalStateException(
+                    "An account with this email already exists. Please sign in instead."
+                )
             }
         }
         if (result == CloudResult.Success) clearPendingPasswordResetRequest()
@@ -1262,30 +1243,8 @@ class SupabaseGateway(
         }
     }
 
-    private fun isLocalDataAttachmentPending(userId: String): Boolean {
-        val prefs = appContext.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
-        val previousUserId = (
-            prefs.getString(CLOUD_DATA_ATTACHMENT_LAST_USER_PREF, null)
-                ?: prefs.getString("last_cloud_user_id", null)
-            )?.trim()?.takeIf { it.isNotEmpty() }
-        if (previousUserId != userId.trim()) {
-            // Do this check inside sync and Realtime entry points as well as account restore.
-            // A worker can win the startup race and reach sync before refreshAccount completes.
-            prefs.edit()
-                .putString(CLOUD_DATA_ATTACHMENT_PENDING_USER_PREF, userId)
-                .apply()
-        }
-        // Keep this identity across explicit sign-out; only the active session marker is cleared.
-        prefs.edit().putString(CLOUD_DATA_ATTACHMENT_LAST_USER_PREF, userId).apply()
-        val pendingUserId = prefs.getString(CLOUD_DATA_ATTACHMENT_PENDING_USER_PREF, null)
-        val pending = LocalDataAttachmentPolicy.requiresReview(
-            previousUserId = previousUserId,
-            pendingUserId = pendingUserId,
-            currentUserId = userId
-        )
-        _localDataAttachmentRequired.value = pending
-        return pending
-    }
+    @Suppress("UNUSED_PARAMETER")
+    private fun isLocalDataAttachmentPending(userId: String): Boolean = false
 
     private fun selectedRealtimeWorkspaceId(): String =
         appContext.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
@@ -1304,10 +1263,6 @@ class SupabaseGateway(
         if (!configured || supabase == null) return
         val session = supabase.auth.currentSessionOrNull() ?: return
         val userId = session.user?.id?.trim()?.takeIf { it.isNotEmpty() } ?: return
-        if (isLocalDataAttachmentPending(userId)) {
-            stopRealtime()
-            return
-        }
         val workspaceId = selectedRealtimeWorkspaceId()
         val scopeKey = if (workspaceId.isBlank()) {
             "personal:$userId"
@@ -1959,11 +1914,6 @@ class SupabaseGateway(
                 frozenJournal.copy(localDatabaseApplied = true)
             )
 
-            val prefs = appContext.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
-            check(prefs.edit().remove(CLOUD_DATA_ATTACHMENT_PENDING_USER_PREF).commit()) {
-                "The records were verified, but BeeKeep could not safely release the sync hold. Reopen this review to finish."
-            }
-            _localDataAttachmentRequired.value = false
             _account.value = _account.value.copy(syncing = false, error = null, signedIn = true)
             startRealtime()
 
@@ -1982,7 +1932,6 @@ class SupabaseGateway(
             throw cancelled
         } catch (error: Throwable) {
             stopRealtime()
-            _localDataAttachmentRequired.value = true
             val message = TeamWorkspaceSyncError.userFacing(
                 error.message ?: "BeeKeep could not complete the local-data attachment."
             )
@@ -2308,15 +2257,6 @@ class SupabaseGateway(
             refreshAccountUnlocked()
             _account.value = _account.value.copy(syncing = false, signedIn = false, error = "Your cloud session has no user ID. Sign in again.")
             return CloudResult.NotSignedIn
-        }
-        if (isLocalDataAttachmentPending(userId)) {
-            stopRealtime()
-            _account.value = _account.value.copy(
-                syncing = false,
-                signedIn = true,
-                error = CLOUD_DATA_ATTACHMENT_PAUSED_MESSAGE
-            )
-            return CloudResult.Failure(CLOUD_DATA_ATTACHMENT_PAUSED_MESSAGE)
         }
         refreshVerifiedPlanForUser(userId)
         refreshHiveLimitOverrideForUser(userId)
@@ -3503,6 +3443,9 @@ class SupabaseGateway(
                 val rawMessage = t.message.orEmpty().trim()
                 val lowerMessage = rawMessage.lowercase()
                 val message = when {
+                    "already registered" in lowerMessage ||
+                        "an account with this email already exists" in lowerMessage ->
+                        "An account with this email already exists. Please sign in instead."
                     "beekeep_profiles_username_lower_idx" in lowerMessage ||
                         ("username" in lowerMessage && "already taken" in lowerMessage) ->
                         "That username is already taken. Please choose another."
