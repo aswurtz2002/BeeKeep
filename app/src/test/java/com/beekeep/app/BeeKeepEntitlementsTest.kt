@@ -41,6 +41,58 @@ class BeeKeepEntitlementsTest {
     }
 
     @Test
+    fun serverCommercialGrantOverridesHobbyistDebugPurchaseSimulator() {
+        assertEquals(
+            BeeKeepPlan.COMMERCIAL,
+            BeeKeepEntitlements.planForAppFeatures(
+                isDebugBuild = true,
+                localPlan = BeeKeepPlan.HOBBYIST,
+                serverVerifiedPlan = BeeKeepPlan.COMMERCIAL
+            )
+        )
+    }
+
+    @Test
+    fun serverHobbyistDoesNotDisableDebugPurchaseSimulation() {
+        assertEquals(
+            BeeKeepPlan.COMMERCIAL,
+            BeeKeepEntitlements.planForAppFeatures(
+                isDebugBuild = true,
+                localPlan = BeeKeepPlan.COMMERCIAL,
+                serverVerifiedPlan = BeeKeepPlan.HOBBYIST
+            )
+        )
+        assertEquals(
+            BeeKeepPlan.HOBBYIST,
+            BeeKeepEntitlements.planForAppFeatures(
+                isDebugBuild = true,
+                localPlan = BeeKeepPlan.HOBBYIST,
+                serverVerifiedPlan = BeeKeepPlan.HOBBYIST
+            )
+        )
+    }
+
+    @Test
+    fun releaseBuildOnlyUsesTheServerVerifiedPlan() {
+        assertEquals(
+            BeeKeepPlan.COMMERCIAL,
+            BeeKeepEntitlements.planForAppFeatures(
+                isDebugBuild = false,
+                localPlan = BeeKeepPlan.HOBBYIST,
+                serverVerifiedPlan = BeeKeepPlan.COMMERCIAL
+            )
+        )
+        assertEquals(
+            BeeKeepPlan.HOBBYIST,
+            BeeKeepEntitlements.planForAppFeatures(
+                isDebugBuild = false,
+                localPlan = BeeKeepPlan.COMMERCIAL,
+                serverVerifiedPlan = null
+            )
+        )
+    }
+
+    @Test
     fun personalQuotaSnapshotsMatchEachPlan() {
         assertEquals(BeeKeepQuotaLimits(BeeKeepPlan.HOBBYIST, 15, 3),
             BeeKeepQuotaLimits.forPlan(BeeKeepPlan.HOBBYIST))
