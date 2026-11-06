@@ -3199,7 +3199,7 @@ class SupabaseGateway(
                 put("action", action)
                 put("email", email.trim())
                 if (hiveLimit != null) put("hive_limit", hiveLimit)
-                if (cleanedReason.isNotEmpty()) put("reason", cleanedReason)
+                if (reason != null) put("reason", reason.trim())
             }
             val response = supabase.functions.invoke(
                 function = "beekeep-admin-hive-limits",
@@ -3255,7 +3255,7 @@ class SupabaseGateway(
                 put("action", action)
                 put("email", email.trim())
                 if (expiresInDays != null) put("expires_in_days", expiresInDays)
-                if (reason != null) put("reason", reason.trim())
+                if (cleanedReason.isNotEmpty()) put("reason", cleanedReason)
             }
             val response = supabase.functions.invoke(
                 function = "beekeep-admin-hive-limits",
