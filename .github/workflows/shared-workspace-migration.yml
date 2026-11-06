@@ -181,3 +181,8 @@ jobs:
         run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261104150000_beekeep_inspection_action_default_diff_normalization.sql
       - name: Verify detailed inspection Actions descriptions
         run: psql -v ON_ERROR_STOP=1 -f supabase/tests/workspace_inspection_action_log_details.sql
+
+      - name: Apply admin-managed Commercial access grants
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261106080000_beekeep_admin_commercial_grants.sql
+      - name: Verify Commercial grants, expiry, quota propagation and admin isolation
+        run: psql -v ON_ERROR_STOP=1 -f supabase/tests/admin_commercial_access.sql
