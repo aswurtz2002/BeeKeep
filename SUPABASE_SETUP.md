@@ -141,3 +141,27 @@ returning id, email, raw_app_meta_data -> 'beekeep_support_admin' as support_adm
 Open **More → Support admin tools**, look up the customer's exact BeeKeep account email, and verify the returned account and paid-plan status. A custom limit can be set from 1,000 to 1,000,000 for active Pro or active Ultimate, with the server enforcing each plan's standard minimum. Free/expired accounts cannot receive custom capacity. The panel shows account expiry, standard/effective quota, a reasoned change flow, reset-to-standard, and the most recent 10 change/removal audit events.
 
 The customer's app refreshes its trusted plan and custom quota during sign-in and cloud sync, so it can apply the new ceiling instead of continuing to display the old plan default. Ask the customer to tap **More → BeeKeep Cloud → Sync Now** if the previous limit warning remains on screen. This initial rollout is for **staging only**. Review and separately configure the production operator flag and production function before enabling this workflow for real customer accounts.
+
+## Admin-managed Commercial access grants
+
+The private **More → Support admin tools** panel can grant or revoke Commercial access for any exact BeeKeep account email. A grant can be permanent (leave the duration blank) or expire after 1–3,650 days. Every grant/update/revocation records the operator, reason, expiry and timestamp.
+
+For the active **BeeKeep** Supabase project (project ref `nnmcwsdunpwdktexgivr`, not `BeeKeep-Production`), paste the complete contents of `supabase/migrations/20261106080000_beekeep_admin_commercial_grants.sql` into **SQL Editor** and run it once. It creates private grant/audit tables, adds the trusted grant to the Commercial entitlement resolver, and installs the service-role-only admin RPC. It does not edit existing subscription/billing metadata or delete customer data.
+
+Deploy the updated `beekeep-admin-hive-limits` Edge Function from the current repository after the migration is installed. The function independently validates the signed-in support-admin flag before it can grant or revoke access. Keep the Supabase service-role key only in the Edge Function secrets; never add it to Android or source control.
+
+The app's existing trusted support-admin account flag remains required. To enable your own account, replace the email below with the exact email you use in the **BeeKeep** Supabase Auth users list and run this once in the same project's SQL Editor:
+
+```sql
+update auth.users
+set raw_app_meta_data = coalesce(raw_app_meta_data, '{}'::jsonb)
+    || jsonb_build_object('beekeep_support_admin', true)
+where lower(email) = lower('YOUR_ADMIN_ACCOUNT_EMAIL')
+returning id, email, raw_app_meta_data -> 'beekeep_support_admin' as support_admin;
+```
+
+The query must return exactly one row with `support_admin = true`. If it returns no rows, check that you are in the BeeKeep project and that the email is exact. Existing admins do not need to run it again.
+
+After the migration, Edge Function deployment and app update are complete, open **More → Support admin tools**, enter the customer's exact email, review the returned account, choose a duration or permanent access, enter a reason, and confirm the grant. Customers pick up their updated plan on their next successful sign-in/entitlement refresh or cloud sync. Revoking a manual grant does not cancel a separate paid subscription; a customer with a valid paid Commercial entitlement remains Commercial.
+
+The new grant and audit tables are deliberately inaccessible through direct Data API table grants. All lookup and write operations go through the protected Edge Function and its service-role-only database RPC.

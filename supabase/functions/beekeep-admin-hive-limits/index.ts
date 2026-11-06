@@ -1,6 +1,6 @@
-// Private support-admin endpoint for BeeKeep per-account Pro and Ultimate hive-limit exceptions.
-// The service-role key stays in Supabase. Every mutating request rechecks the trusted
-// app_metadata flag on the authenticated user before touching the internal override table.
+// Private support-admin endpoint for account hive-limit exceptions and manual Commercial grants.
+// The service-role key stays in Supabase. Every account action rechecks the trusted
+// app_metadata flag on the authenticated user before invoking a protected database RPC.
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 
@@ -63,6 +63,7 @@ Deno.serve(async (req: Request) => {
     action?: unknown;
     email?: unknown;
     hive_limit?: unknown;
+    expires_in_days?: unknown;
     reason?: unknown;
   };
   try {
@@ -78,13 +79,61 @@ Deno.serve(async (req: Request) => {
   if (!isSupportAdmin) {
     return respond(403, { success: false, allowed: false, error: "This BeeKeep account is not authorized for support-admin tools." });
   }
-  if (!["lookup", "set", "clear"].includes(action)) {
+  const isCommercialAction = ["commercial_lookup", "commercial_grant", "commercial_revoke"].includes(action);
+  if (!["lookup", "set", "clear", "commercial_lookup", "commercial_grant", "commercial_revoke"].includes(action)) {
     return respond(400, { success: false, error: "Unsupported action." });
   }
 
   const email = typeof body.email === "string" ? body.email.trim() : "";
   if (!email || email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
     return respond(400, { success: false, error: "Enter a valid account email." });
+  }
+
+  const admin = createClient(supabaseUrl, serviceRoleKey, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+
+  if (isCommercialAction) {
+    const rpcAction = action === "commercial_lookup" ? "lookup"
+      : action === "commercial_grant" ? "grant" : "revoke";
+    let expiresInDays: number | null = null;
+    if (body.expires_in_days !== undefined && body.expires_in_days !== null && body.expires_in_days !== "") {
+      const candidate = body.expires_in_days;
+      if (typeof candidate !== "number" || !Number.isInteger(candidate) || candidate < 1 || candidate > 3650) {
+        return respond(400, { success: false, error: "Grant duration must be blank for permanent access or between 1 and 3,650 days." });
+      }
+      expiresInDays = candidate;
+    }
+    const commercialReason = typeof body.reason === "string" ? body.reason.trim() : null;
+    if (rpcAction === "grant" && (!commercialReason || commercialReason.length < 3 || commercialReason.length > 500)) {
+      return respond(400, { success: false, error: "Enter a reason between 3 and 500 characters." });
+    }
+    if (rpcAction === "revoke" && commercialReason != null && commercialReason.length > 0 &&
+        (commercialReason.length < 3 || commercialReason.length > 500)) {
+      return respond(400, { success: false, error: "Enter a reason between 3 and 500 characters, or leave it blank." });
+    }
+
+    const { data, error } = await admin.rpc("beekeep_admin_manage_commercial_access", {
+      p_action: rpcAction,
+      p_email: email,
+      p_expires_in_days: expiresInDays,
+      p_reason: commercialReason,
+      p_actor_id: userData.user.id,
+    });
+
+    if (error) {
+      if (error.code === "P0002") return respond(404, { success: false, error: "No BeeKeep account was found with that exact email." });
+      if (error.code === "22023") return respond(400, { success: false, error: error.message });
+      if (error.code === "PGRST202" || error.code === "42883" || error.code === "42P01") {
+        return respond(503, { success: false, error: "Commercial access setup is not installed yet. Paste the Commercial access SQL into the BeeKeep Supabase SQL Editor, then try again." });
+      }
+      console.error("Support-admin Commercial access RPC failed:", error.code ?? "unknown");
+      return respond(500, { success: false, error: "The Commercial access request failed. Check the server logs." });
+    }
+
+    const row = Array.isArray(data) ? data[0] : null;
+    if (!row) return respond(404, { success: false, error: "No BeeKeep account was returned." });
+    return respond(200, { success: true, ...row });
   }
 
   let customLimit: number | null = null;
@@ -102,9 +151,6 @@ Deno.serve(async (req: Request) => {
     return respond(400, { success: false, error: "Enter a reason between 3 and 500 characters, or leave it blank." });
   }
 
-  const admin = createClient(supabaseUrl, serviceRoleKey, {
-    auth: { persistSession: false, autoRefreshToken: false },
-  });
   const { data, error } = await admin.rpc("beekeep_admin_manage_hive_limit_override", {
     p_action: action,
     p_email: email,

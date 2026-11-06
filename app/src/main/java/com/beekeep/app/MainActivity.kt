@@ -4213,7 +4213,7 @@ private fun MoreScreen(
                 Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                         Text("Support admin tools", fontWeight = FontWeight.ExtraBold, style = MaterialTheme.typography.titleMedium)
-                        Text("Manage approved Commercial hive-limit exceptions", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("Grant Commercial access and manage custom hive allowances", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     Icon(Icons.Rounded.Lock, "Open support admin tools", tint = Color(0xFFB45309), modifier = Modifier.size(28.dp))
                 }
