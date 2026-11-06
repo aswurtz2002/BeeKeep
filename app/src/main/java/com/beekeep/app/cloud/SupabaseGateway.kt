@@ -3224,6 +3224,61 @@ class SupabaseGateway(
         }
     }
 
+    /** Looks up, grants, or revokes a trusted manual Commercial entitlement through the protected Edge Function. */
+    suspend fun manageSupportCommercialAccess(
+        action: String,
+        email: String,
+        expiresInDays: Int?,
+        reason: String?
+    ): WorkspaceOperationResult<SupportAdminCommercialAccessResponse> {
+        val supabase = client
+            ?: return WorkspaceOperationResult(error = "BeeKeep Cloud is not configured.")
+        if (action !in setOf("commercial_lookup", "commercial_grant", "commercial_revoke")) {
+            return WorkspaceOperationResult(error = "Unsupported Commercial access action.")
+        }
+        if (action == "commercial_grant" &&
+            (expiresInDays != null && expiresInDays !in 1..3650 ||
+                reason.isNullOrBlank() || reason.trim().length !in 3..500)
+        ) {
+            return WorkspaceOperationResult(
+                error = "Enter a reason and choose permanent access or a duration between 1 and 3,650 days."
+            )
+        }
+        return try {
+            ensureAuthStorageInitialized(supabase)
+            if (supabase.auth.currentSessionOrNull() == null) {
+                refreshAccount()
+                return WorkspaceOperationResult(error = "Sign in before using support-admin tools.")
+            }
+            val body = buildJsonObject {
+                put("action", action)
+                put("email", email.trim())
+                if (expiresInDays != null) put("expires_in_days", expiresInDays)
+                if (reason != null) put("reason", reason.trim())
+            }
+            val response = supabase.functions.invoke(
+                function = "beekeep-admin-hive-limits",
+                body = body
+            ).body<SupportAdminCommercialAccessResponse>()
+            if (!response.success || response.accountEmail.isNullOrBlank()) {
+                WorkspaceOperationResult(
+                    error = response.error ?: "The Commercial access request did not return an account."
+                )
+            } else {
+                WorkspaceOperationResult(value = response)
+            }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Throwable) {
+            WorkspaceOperationResult(
+                error = TeamWorkspaceSyncError.userFacing(
+                    error.message
+                        ?: "The Commercial access request could not be completed. Verify the SQL setup, Edge Function deployment and admin access."
+                )
+            )
+        }
+    }
+
     suspend fun createWorkspace(name: String): WorkspaceOperationResult<BeeKeepWorkspace> =
         workspaceOperation {
             client!!.postgrest.rpc("beekeep_create_workspace", WorkspaceNameParams(name.trim()))
