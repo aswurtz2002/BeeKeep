@@ -169,7 +169,7 @@ begin
         raise exception 'Supabase Storage objects table is not available; cannot enable trusted-device enforcement.';
     end if;
     execute 'drop policy if exists beekeep_trusted_device_required on storage.objects';
-    execute 'create policy beekeep_trusted_device_required on storage.objects as restrictive for all to authenticated using (public.beekeep_device_session_is_trusted()) with check (public.beekeep_device_session_is_trusted())';
+    execute 'create policy beekeep_trusted_device_required on storage.objects as restrictive for all to authenticated using (bucket_id <> ''inspection-photos'' or public.beekeep_device_session_is_trusted()) with check (bucket_id <> ''inspection-photos'' or public.beekeep_device_session_is_trusted())';
 end;
 $storage$;
 
