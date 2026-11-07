@@ -891,7 +891,7 @@ class SupabaseGateway(
             status = TrustedDeviceAccessStatus.REPLACED_LOCAL_OFFLINE,
             message = "This phone is signed out. Your local records are available, but cloud sync and workspaces are disconnected."
         )
-        CloudResult.Success
+        return CloudResult.Success
     }
 
     /** Show the sign-in screen; the replacement marker remains until a new login succeeds. */
