@@ -1900,6 +1900,19 @@ class SupabaseGateway(
             .apply()
         _passwordRecoveryRequired.value = false
         _pendingPasswordResetEmail.value = null
+        val recoveredUserId = client?.auth?.currentSessionOrNull()
+            ?.user?.id?.trim()?.takeIf { it.isNotEmpty() }
+        if (recoveredUserId != null) {
+            // Password-reset completion establishes a deliberate fresh session. Remove any
+            // previous-device fingerprint, but still require the regular trusted-device flow.
+            TrustedDeviceLocalSessionState.clearForAuthenticatedSession(
+                appContext,
+                recoveredUserId
+            )
+            _trustedDeviceAccess.value = TrustedDeviceAccessState(
+                status = TrustedDeviceAccessStatus.CHECKING
+            )
+        }
         refreshAccount()
     }
 
