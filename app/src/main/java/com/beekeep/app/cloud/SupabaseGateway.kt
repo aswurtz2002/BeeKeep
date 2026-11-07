@@ -107,6 +107,7 @@ private const val SYNC_UPLOAD_BATCH_SIZE = 200
 private const val SYNC_DOWNLOAD_PAGE_SIZE = 500
 private const val SYNC_CONFLICT_LOOKUP_BATCH_SIZE = 100
 private const val CLOUD_DATA_ATTACHMENT_PENDING_USER_PREF = "cloud_data_attachment_pending_user_id"
+private const val CLOUD_DATA_ATTACHMENT_REVIEWED_USER_PREF = "cloud_data_attachment_reviewed_user_id"
 private const val PENDING_PASSWORD_RESET_REQUEST_EMAIL_PREF = "pending_password_reset_request_email"
 private const val PENDING_SIGNUP_VERIFICATION_EMAIL_PREF = "pending_signup_verification_email"
 private const val PENDING_PASSWORD_RESET_REQUEST_AT_PREF = "pending_password_reset_request_at"
@@ -166,6 +167,12 @@ class SupabaseGateway(
     /** Emits after any configured sync attempt completes, including WorkManager syncs. */
     val workspaceActionLogRefreshVersion: StateFlow<Long> = WorkspaceActionLogRefreshSignal.version
     private val _accountInitialized = MutableStateFlow(false)
+    private val _localDataAttachmentPending = MutableStateFlow(
+        appContext.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
+            .getString(CLOUD_DATA_ATTACHMENT_PENDING_USER_PREF, null)?.isNotBlank() == true
+    )
+    /** True while personal cloud uploads are held for an explicit local-data review. */
+    val localDataAttachmentPending: StateFlow<Boolean> = _localDataAttachmentPending.asStateFlow()
     private val _passwordRecoveryRequired = MutableStateFlow(false)
     private val _pendingSignupVerificationEmail = MutableStateFlow(
         appContext.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
@@ -1684,6 +1691,7 @@ class SupabaseGateway(
             .remove(PENDING_PASSWORD_RESET_REQUEST_AT_PREF)
             .remove(PASSWORD_RECOVERY_SESSION_PREF)
             .remove(PENDING_SIGNUP_VERIFICATION_EMAIL_PREF)
+            .remove(CLOUD_DATA_ATTACHMENT_REVIEWED_USER_PREF)
             .apply()
         _passwordRecoveryRequired.value = false
         _pendingSignupVerificationEmail.value = null
@@ -1822,8 +1830,67 @@ class SupabaseGateway(
         }
     }
 
-    @Suppress("UNUSED_PARAMETER")
-    private fun isLocalDataAttachmentPending(userId: String): Boolean = false
+    private fun pendingLocalDataAttachmentUserId(): String? =
+        appContext.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
+            .getString(CLOUD_DATA_ATTACHMENT_PENDING_USER_PREF, null)
+            ?.trim()?.takeIf { it.isNotEmpty() }
+
+    private fun isLocalDataAttachmentPending(userId: String): Boolean =
+        pendingLocalDataAttachmentUserId() == userId
+
+    /**
+     * Runs once per account/device before personal uploads. It compares a read-only local
+     * snapshot with the account inventory and holds the outbox if this phone has records or
+     * pending edits that are not already represented by that account. This deliberately runs
+     * inside syncNowUnlocked as well as startup, so WorkManager cannot race ahead of the check.
+     */
+    private suspend fun ensureLocalDataAttachmentReviewBeforePersonalSync(userId: String): String? {
+        val prefs = appContext.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
+        val pendingUserId = pendingLocalDataAttachmentUserId()
+        if (pendingUserId != null) {
+            _localDataAttachmentPending.value = true
+            return if (pendingUserId == userId) {
+                "BeeKeep found local records that need review before personal cloud sync. Your records remain on this phone; nothing is uploaded until you approve the review."
+            } else {
+                "Local records on this phone are held for a different BeeKeep account. Sign in to that account to review them. Personal cloud sync is paused and no records have been uploaded."
+            }
+        }
+        if (prefs.getString(CLOUD_DATA_ATTACHMENT_REVIEWED_USER_PREF, null) == userId) {
+            _localDataAttachmentPending.value = false
+            return null
+        }
+        if (repository.activeWorkspaceId.value != null) return null
+
+        val snapshotInfo = repository.createLocalDataAttachmentSnapshot(userId)
+        val hasLocalAttachmentState = snapshotInfo.totalRecords > 0 ||
+            snapshotInfo.pendingSyncWrites > 0 || snapshotInfo.pendingActionBatches > 0 ||
+            snapshotInfo.pendingWorkspaceActions > 0 || snapshotInfo.noteDrafts > 0 ||
+            snapshotInfo.formDrafts > 0
+        if (!hasLocalAttachmentState) {
+            check(prefs.edit().putString(CLOUD_DATA_ATTACHMENT_REVIEWED_USER_PREF, userId).commit()) {
+                "BeeKeep could not save the local-data review checkpoint. Personal cloud sync is paused; try again."
+            }
+            _localDataAttachmentPending.value = false
+            return null
+        }
+
+        val snapshotJson = LocalDataAttachmentSnapshotStore.readVerified(appContext.filesDir, snapshotInfo)
+        val cloudRows = loadAllPersonalDocuments().filter { it.user_id == userId }
+        val plan = LocalDataAttachmentMergePlanner.plan(snapshotJson, cloudRows)
+        if (LocalDataAttachmentReviewPolicy.requiresReview(plan)) {
+            check(prefs.edit().putString(CLOUD_DATA_ATTACHMENT_PENDING_USER_PREF, userId).commit()) {
+                "BeeKeep found local records that need review, but could not save the safety hold. Personal cloud sync is paused; try again."
+            }
+            _localDataAttachmentPending.value = true
+            return "BeeKeep found local records that are not confirmed in this cloud account. Review them before personal cloud sync. Your local records are safe and nothing has been uploaded."
+        }
+
+        check(prefs.edit().putString(CLOUD_DATA_ATTACHMENT_REVIEWED_USER_PREF, userId).commit()) {
+            "BeeKeep could not save the local-data review checkpoint. Personal cloud sync is paused; try again."
+        }
+        _localDataAttachmentPending.value = false
+        return null
+    }
 
     private fun selectedRealtimeWorkspaceId(): String =
         appContext.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
@@ -2211,9 +2278,14 @@ class SupabaseGateway(
                 ?: return WorkspaceOperationResult(error = "Sign in before reviewing this device's data.")
             val userId = session.user?.id?.trim()?.takeIf { it.isNotEmpty() }
                 ?: return WorkspaceOperationResult(error = "The signed-in account could not be verified.")
-            if (!isLocalDataAttachmentPending(userId)) {
+            val pendingAttachmentUserId = pendingLocalDataAttachmentUserId()
+            if (pendingAttachmentUserId != userId) {
                 return WorkspaceOperationResult(
-                    error = "There is no pending local-data review for this signed-in account."
+                    error = if (pendingAttachmentUserId == null) {
+                        "There is no pending local-data review for this signed-in account."
+                    } else {
+                        "This device has local records held for a different BeeKeep account. Sign in to that account to review them; no records have been uploaded."
+                    }
                 )
             }
 
@@ -2492,6 +2564,14 @@ class SupabaseGateway(
                 appContext.filesDir,
                 frozenJournal.copy(localDatabaseApplied = true)
             )
+            val attachmentPrefs = appContext.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
+            check(attachmentPrefs.edit()
+                .remove(CLOUD_DATA_ATTACHMENT_PENDING_USER_PREF)
+                .putString(CLOUD_DATA_ATTACHMENT_REVIEWED_USER_PREF, userId)
+                .commit()) {
+                "BeeKeep completed the data attachment, but could not save its sync-review checkpoint. Retry the review to finish safely."
+            }
+            _localDataAttachmentPending.value = false
 
             _account.value = _account.value.copy(syncing = false, error = null, signedIn = true)
             startRealtime()
@@ -2872,6 +2952,20 @@ class SupabaseGateway(
         _account.value = _account.value.copy(syncing = true, error = null)
         if (activeTeamWorkspaceId.isNotEmpty()) {
             return syncSharedWorkspace(activeTeamWorkspaceId, userId, session.user?.email.orEmpty())
+        }
+        val attachmentBlock = try {
+            ensureLocalDataAttachmentReviewBeforePersonalSync(userId)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Throwable) {
+            val message = "BeeKeep could not safely compare this phone's local records with the cloud account. Personal cloud sync is paused; your local records are unchanged. " +
+                TeamWorkspaceSyncError.userFacing(error.message)
+            _account.value = _account.value.copy(syncing = false, error = message, signedIn = true)
+            return CloudResult.Failure(message)
+        }
+        if (attachmentBlock != null) {
+            _account.value = _account.value.copy(syncing = false, error = attachmentBlock, signedIn = true)
+            return CloudResult.Failure(attachmentBlock)
         }
         return try {
 
