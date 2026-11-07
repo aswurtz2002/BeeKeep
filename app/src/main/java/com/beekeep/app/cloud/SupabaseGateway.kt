@@ -458,19 +458,14 @@ class SupabaseGateway(
                             java.time.Instant.parse(expiresAt).toEpochMilli() <= System.currentTimeMillis()
                         }.getOrDefault(false)
                     } ?: false
-                    val nextStatus = when (request?.requestStatus?.lowercase()) {
-                        "approved_pending_finalize", "finalizing" -> {
-                            // The trusted phone that approved/recovered this request must sign out;
-                            // only the not-yet-trusted replacement session may finalize it.
-                            if (previous == TrustedDeviceAccessStatus.TRUSTED ||
-                                previous == TrustedDeviceAccessStatus.OFFLINE_LOCAL ||
-                                wasPreviouslyTrustedHere
-                            ) {
-                                TrustedDeviceAccessStatus.REPLACED_LOCAL
-                            } else {
-                                TrustedDeviceAccessStatus.PENDING_FINALIZATION
-                            }
-                        }
+                    val previouslyTrustedHere =
+                        previous == TrustedDeviceAccessStatus.TRUSTED ||
+                            previous == TrustedDeviceAccessStatus.OFFLINE_LOCAL ||
+                            wasPreviouslyTrustedHere
+                    val nextStatus = TrustedDeviceCutoverPolicy.finalizationStatus(
+                        requestStatus = request?.requestStatus,
+                        previouslyTrustedHere = previouslyTrustedHere
+                    ) ?: when (request?.requestStatus?.lowercase()) {
                         "pending" -> if (requestExpired) {
                             TrustedDeviceAccessStatus.EXPIRED
                         } else if (request.requestMode == "replacement") {
