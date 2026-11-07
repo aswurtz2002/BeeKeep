@@ -545,9 +545,11 @@ $device_request_rate_limit$;
 reset role;
 
 -- The same account can request again after every prior request leaves the window.
-update beekeep_private.device_access_requests
-set created_at = pg_catalog.clock_timestamp() - interval '16 minutes'
-where user_id = '00000000-0000-0000-0000-000000000083';
+update beekeep_private.device_access_requests as request
+set created_at = timestamps.past_time - interval '16 minutes',
+    expires_at = timestamps.past_time - interval '11 minutes'
+from (select pg_catalog.clock_timestamp() as past_time) as timestamps
+where request.user_id = '00000000-0000-0000-0000-000000000083';
 
 set role authenticated;
 select set_config(
