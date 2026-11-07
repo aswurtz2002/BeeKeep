@@ -33,9 +33,9 @@ insert into beekeep_private.trusted_devices (
 )
 values
     ('00000000-0000-0000-0000-000000000091', '10000000-0000-0000-0000-000000000091',
-     repeat('1', 64), repeat('A', 128), 'Owner trusted phone', 'active'),
+     repeat('1', 64), repeat('A', 128), 'Owner trusted phone', 'active', null),
     ('00000000-0000-0000-0000-000000000092', '10000000-0000-0000-0000-000000000093',
-     repeat('2', 64), repeat('B', 128), 'Member trusted phone', 'active'),
+     repeat('2', 64), repeat('B', 128), 'Member trusted phone', 'active', null),
     ('00000000-0000-0000-0000-000000000091', '10000000-0000-0000-0000-000000000094',
      repeat('3', 64), repeat('C', 128), 'Old replaced phone', 'replaced', now())
 on conflict (session_id) do nothing;
