@@ -196,3 +196,10 @@ jobs:
         run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261107030000_beekeep_trusted_device_request_api.sql
       - name: Verify trusted-device request, approval, denial and recovery
         run: psql -v ON_ERROR_STOP=1 -f supabase/tests/trusted_device_request_api.sql
+
+      - name: Prepare CI-only Supabase Storage schema
+        run: psql -v ON_ERROR_STOP=1 -f supabase/tests/trusted_device_server_enforcement_storage_fixture.sql
+      - name: Apply trusted-device RLS, Storage and privileged RPC enforcement
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261107050000_beekeep_trusted_device_server_enforcement.sql
+      - name: Verify trusted-device data, workspace, Storage and RPC enforcement
+        run: psql -v ON_ERROR_STOP=1 -f supabase/tests/trusted_device_server_enforcement.sql
