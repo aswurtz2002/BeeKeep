@@ -664,12 +664,14 @@ class SupabaseGateway(
         try {
             ensureAuthStorageInitialized(supabase)
             if (supabase.auth.currentSessionOrNull() == null) return
-            val wasTrusted = _trustedDeviceAccess.value.status == TrustedDeviceAccessStatus.TRUSTED
+            val previousDeviceStatus = _trustedDeviceAccess.value.status
+            val wasTrusted = previousDeviceStatus == TrustedDeviceAccessStatus.TRUSTED
+            val wasLocalOnly = previousDeviceStatus in setOf(
+                TrustedDeviceAccessStatus.OFFLINE_LOCAL,
+                TrustedDeviceAccessStatus.REPLACED_LOCAL
+            )
             val trusted = verifyTrustedDeviceSession(supabase)
             if (trusted) {
-                val wasLocalOnly = wasTrusted.not() &&
-                    _trustedDeviceAccess.value.status == TrustedDeviceAccessStatus.TRUSTED &&
-                    _account.value.signedIn
                 when (val requests = TrustedDeviceAccessApi(supabase).pendingRequests()) {
                     is TrustedDeviceApiResult.Success -> _pendingTrustedDeviceRequests.value = requests.value
                     is TrustedDeviceApiResult.Failure -> {
