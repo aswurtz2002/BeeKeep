@@ -403,7 +403,11 @@ class SupabaseGateway(
                     val requestResult = api.requestStatus()
                     val request = (requestResult as? TrustedDeviceApiResult.Success)?.value
                     val nextStatus = when (request?.requestStatus?.lowercase()) {
-                        "pending" -> TrustedDeviceAccessStatus.PENDING_APPROVAL
+                        "pending" -> if (request.requestMode == "replacement") {
+                            TrustedDeviceAccessStatus.PENDING_APPROVAL
+                        } else {
+                            TrustedDeviceAccessStatus.NOT_TRUSTED
+                        }
                         "denied" -> TrustedDeviceAccessStatus.DENIED
                         else -> if (previous == TrustedDeviceAccessStatus.TRUSTED) {
                             TrustedDeviceAccessStatus.REPLACED
