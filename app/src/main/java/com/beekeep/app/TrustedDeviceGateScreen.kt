@@ -164,15 +164,21 @@ internal fun BeeKeepTrustedDeviceGateScreen(
                                 scope.launch {
                                     busy = true
                                     val result = cloud.requestTrustedDeviceApproval()
-                                    showResult(
-                                        result,
-                                        "Your request was submitted. Check the trusted phone for an approval prompt."
-                                    )
+                                    val latest = cloud.trustedDeviceAccess.value
+                                    val successMessage = when {
+                                        latest.status == TrustedDeviceAccessStatus.TRUSTED ->
+                                            "This phone has been verified. BeeKeep is restoring your cloud access."
+                                        latest.requestMode == "first_device_setup" ->
+                                            "No trusted phone is registered yet. Verify your email to activate this phone."
+                                        else ->
+                                            "Your request was submitted. Approve this phone from the trusted BeeKeep phone."
+                                    }
+                                    showResult(result, successMessage)
                                     busy = false
                                 }
                             }
                         ) {
-                            if (busy) CircularProgressIndicator() else Text("Request approval from trusted phone")
+                            if (busy) CircularProgressIndicator() else Text("Continue device verification")
                         }
                     }
 
