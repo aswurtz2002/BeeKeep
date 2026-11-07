@@ -79,50 +79,67 @@ Email recovery is not equivalent to approval from an uncompromised old phone: an
 - Add SQL tests for matching, unknown, cross-account, and revoked sessions.
 - This first migration deliberately does not attach the guard to live data policies, so it cannot lock out existing app versions.
 
-#### 2B — Approval API (in progress)
+#### 2B — Approval API (complete)
 
 - Add pre-trust request creation, session-bound status, and trusted-phone pending-request APIs.
 - Add short-lived key-proof and approval challenges; expose approval/recovery/rebind operations only through service-role RPCs.
 - Verify ECDSA signatures in a server Edge Function before service RPCs can mark a request verified or replace the trusted device.
 - Keep the RLS/Storage lockout switch separate until the Android client is ready.
 
-#### 2C — Access enforcement (not started)
+#### 2C — Access enforcement (in progress; coordinated migration is under CI validation)
+
+- Restrictive trusted-session policies have been drafted for all 19 public RLS tables and the inspection-photo Storage bucket.
+- User-callable SECURITY DEFINER account/workspace RPCs and direct membership/entitlement helpers have explicit trusted-device guards.
+- Staging-only entitlement and support-admin Edge Functions now verify the caller's JWT session against the trusted-device registry before using service-role RPCs.
+- Enforcement migration and regression tests are in branch `feature/trusted-device-server-enforcement`; it has not yet been applied to staging.
 
 - Add restrictive device authorization to personal/workspace table policies and photo Storage policies.
 - Add explicit guards to user-callable `SECURITY DEFINER` functions and sensitive Edge Functions.
 - Add SQL security tests proving a pending/replaced device cannot read or write personal records, shared workspace records, action data, or private photos, while a trusted device and another legitimate workspace member still can.
 
-#### 2D — Deployment and verification (not started)
+#### 2D — Deployment and verification (backend foundation deployed; final enforcement pending)
 
-- Apply and verify the fully coordinated database migrations only on BeeKeep staging project `nnmcwsdunpwdktexgivr`; never change BeeKeep Production as part of this work.
+- The non-enforcing registry and approval migrations are applied to BeeKeep staging project `nnmcwsdunpwdktexgivr`.
+- The `beekeep-device-access` Edge Function is deployed to staging, version 2, with JWT verification enabled and the `access` action.
+- Post-deployment checks confirmed the private registry exists, its client schema/table grants remain closed, the expected public tables/policies and Storage policies remain unchanged, and internal device RPCs remain service-role-only.
+- A live signed end-to-end request/approval round trip with physical phones has not yet been performed.
+- The restrictive RLS/Storage/RPC enforcement migration remains pending CI validation and will be deployed to staging only after the coordinated tests pass. BeeKeep Production remains untouched.
 
 ### Stage 3 — Android enrolment and session gate
 
-#### 3A — Key store and API client (in progress)
+#### 3A — Key store and API client (complete)
 
 - Generate and persist a non-exportable P-256 signing key in Android Keystore.
 - Derive the installation fingerprint from the encoded public key and sign server challenges with SHA-256/ECDSA.
 - Add a typed Kotlin client for begin/status/list/complete/approve/deny/recovery Edge Function actions.
 - Add JVM cryptography tests for signature verification, challenge binding, and fingerprint formatting.
 
-#### 3B — Sign-in and foreground approval state machine (not started)
+#### 3B — Sign-in and foreground approval state machine (complete; merged to main)
+
+- The Android client verifies the current installation before restoring a cloud account or allowing sync/workspace operations.
+- First enrolment and lost-phone recovery use a fresh six-digit email OTP; a replacement phone requires approval from the existing trusted phone; same-phone reauthentication can rebind through its Keystore key.
+- The verification gate supports pending, denied, expired, replaced, offline-local, and sign-out states.
+- The trusted phone polls for verified replacement requests and can approve/deny with a signed Keystore challenge. This is an in-app foreground path; FCM/background push is not configured yet.
+- Merged in PR #137 at `c1f39905ad39a2e0533171f57212e0686c40c2aa`.
 
 - Route email/password, Google, email OTP verification, and restored sessions through one device gate.
 - Show the pending/recovery screen before account setup or cloud-backed data is loaded.
 - Let the existing trusted phone poll and review verified replacement requests while BeeKeep is open (FCM remains a later setup dependency).
 - Preserve local/offline records and drafts for pending, denied, or replaced sessions.
 
-#### 3C — Background and revocation handling (not started)
+#### 3C — Background and revocation handling (in progress)
+
+- Startup session restoration and foreground/background sync paths are guarded in the Android gateway; untrusted or replaced installations do not sync.
+- Previously trusted phones can keep local-only access to cached records while offline or after replacement; local Room records are not deleted.
+- The coordinated database RLS, Storage, and SECURITY DEFINER enforcement is being completed in Stage 2C; WorkManager uses the same sync guard.
 
 - Gate WorkManager, startup restoration, realtime, and all cloud-backed entry points.
 - Detect a phone that has been replaced and switch it to local-only access without deleting its local cache.
 
-### Stage 4 — Trusted-phone approval and recovery
+### Stage 4 — Trusted-phone approval and recovery (core Android/API work complete)
 
-- Add a pending request screen and approve/deny controls.
-- Require signed challenges and atomically replace the active installation/session.
-- Add the email recovery path and expiry/rate-limit handling.
-- Surface clear messages on a phone whose cloud authorization has been replaced.
+- Pending request screen, approve/deny controls, signed challenges, atomic replacement, email recovery, and expiry messaging are merged.
+- Physical two-phone validation, rate-limit review, and recovery-flow verification remain part of Stage 5 validation.
 
 ### Stage 5 — Notifications and two-phone validation
 
