@@ -34,6 +34,9 @@ alter table beekeep_private.device_access_requests
         or (
             finalization_challenge_hash is not null
             and finalization_challenge_hash ~ '^[0-9a-f]{64}$'
+            and finalization_challenge_expires_at is not null
+        )
+    );
 
 create index if not exists device_access_requests_finalization_user_idx
     on beekeep_private.device_access_requests (user_id, finalization_started_at desc)
