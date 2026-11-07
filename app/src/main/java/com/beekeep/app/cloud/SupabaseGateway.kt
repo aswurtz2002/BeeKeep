@@ -79,6 +79,7 @@ enum class TrustedDeviceAccessStatus {
     TRUSTED,
     NOT_TRUSTED,
     PENDING_APPROVAL,
+    EXPIRED,
     DENIED,
     REPLACED,
     OFFLINE_LOCAL,
@@ -441,8 +442,15 @@ class SupabaseGateway(
                     val wasPreviouslyTrustedHere = hasTrustedDeviceOfflineCache(supabase)
                     val requestResult = api.requestStatus()
                     val request = (requestResult as? TrustedDeviceApiResult.Success)?.value
+                    val requestExpired = request?.expiresAt?.let { expiresAt ->
+                        runCatching {
+                            java.time.Instant.parse(expiresAt).toEpochMilli() <= System.currentTimeMillis()
+                        }.getOrDefault(false)
+                    } ?: false
                     val nextStatus = when (request?.requestStatus?.lowercase()) {
-                        "pending" -> if (request.requestMode == "replacement") {
+                        "pending" -> if (requestExpired) {
+                            TrustedDeviceAccessStatus.EXPIRED
+                        } else if (request.requestMode == "replacement") {
                             TrustedDeviceAccessStatus.PENDING_APPROVAL
                         } else {
                             TrustedDeviceAccessStatus.NOT_TRUSTED
@@ -464,6 +472,8 @@ class SupabaseGateway(
                         message = when (nextStatus) {
                             TrustedDeviceAccessStatus.PENDING_APPROVAL ->
                                 "Your phone request is waiting for approval on the trusted phone."
+                            TrustedDeviceAccessStatus.EXPIRED ->
+                                "The five-minute phone approval request expired. Start a new request or verify this phone by email."
                             TrustedDeviceAccessStatus.DENIED ->
                                 "The phone approval request was denied. You can request access again."
                             TrustedDeviceAccessStatus.REPLACED ->
