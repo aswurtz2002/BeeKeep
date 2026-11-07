@@ -153,7 +153,7 @@ declare
     row_count integer;
 begin
     if not public.beekeep_device_session_is_trusted() then
-        raise exception 'The owner's registered installation was not trusted';
+        raise exception 'The registered owner phone was not trusted';
     end if;
 
     select count(*) into row_count from public.beekeep_documents
