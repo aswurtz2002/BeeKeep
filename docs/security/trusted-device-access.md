@@ -6,7 +6,7 @@ Allow one trusted Android installation per BeeKeep account at a time. A user may
 
 Guest mode remains local-only. Hive records and drafts already stored on a phone must not be deleted as a side effect of device authorization or revocation.
 
-## Current-state audit (main, 2026-11-07)
+## Pre-rollout baseline audit (main, 2026-11-07)
 
 ### Authentication and session lifecycle
 
@@ -86,24 +86,22 @@ Email recovery is not equivalent to approval from an uncompromised old phone: an
 - Verify ECDSA signatures in a server Edge Function before service RPCs can mark a request verified or replace the trusted device.
 - Keep the RLS/Storage lockout switch separate until the Android client is ready.
 
-#### 2C — Access enforcement (in progress; coordinated migration is under CI validation)
+#### 2C — Access enforcement (complete; deployed to staging)
 
-- Restrictive trusted-session policies have been drafted for all 19 public RLS tables and the inspection-photo Storage bucket.
-- User-callable SECURITY DEFINER account/workspace RPCs and direct membership/entitlement helpers have explicit trusted-device guards.
-- Staging-only entitlement and support-admin Edge Functions now verify the caller's JWT session against the trusted-device registry before using service-role RPCs.
-- Enforcement migration and regression tests are in branch `feature/trusted-device-server-enforcement`; it has not yet been applied to staging.
+- A restrictive trusted-session policy now gates all 19 public RLS tables and the `inspection-photos` Storage bucket while preserving existing user-ownership and workspace-role policies.
+- The migration adds an explicit trusted-device guard to 24 user-callable SECURITY DEFINER account/workspace RPCs and direct membership/entitlement helpers.
+- The staging entitlement simulator and support-admin Edge Functions verify the caller's Auth session against the trusted-device registry before using service-role operations.
+- PostgreSQL regression coverage verifies trusted owner/member access, denial for unregistered/replaced sessions, private-record and photo denial, guarded RPC denial, and the allowed pre-trust enrolment path.
 
-- Add restrictive device authorization to personal/workspace table policies and photo Storage policies.
-- Add explicit guards to user-callable `SECURITY DEFINER` functions and sensitive Edge Functions.
-- Add SQL security tests proving a pending/replaced device cannot read or write personal records, shared workspace records, action data, or private photos, while a trusted device and another legitimate workspace member still can.
+#### 2D — Deployment and verification (complete on BeeKeep staging)
 
-#### 2D — Deployment and verification (backend foundation deployed; final enforcement pending)
-
-- The non-enforcing registry and approval migrations are applied to BeeKeep staging project `nnmcwsdunpwdktexgivr`.
-- The `beekeep-device-access` Edge Function is deployed to staging, version 2, with JWT verification enabled and the `access` action.
-- Post-deployment checks confirmed the private registry exists, its client schema/table grants remain closed, the expected public tables/policies and Storage policies remain unchanged, and internal device RPCs remain service-role-only.
-- A live signed end-to-end request/approval round trip with physical phones has not yet been performed.
-- The restrictive RLS/Storage/RPC enforcement migration remains pending CI validation and will be deployed to staging only after the coordinated tests pass. BeeKeep Production remains untouched.
+- Applied migrations `20261107043551 beekeep_trusted_device_foundation`, `20261107043558 beekeep_trusted_device_request_api`, and `20261107114016 beekeep_trusted_device_server_enforcement` to project `nnmcwsdunpwdktexgivr`.
+- Deployed `beekeep-device-access` version 2, `beekeep-debug-entitlement` version 3, and `beekeep-admin-hive-limits` version 4. All three have JWT verification enabled.
+- Verified 19 public RLS tables have exactly one new restrictive device policy each, plus one restrictive policy on Storage objects for `inspection-photos`.
+- Verified 24 public SECURITY DEFINER account/workspace functions include the trusted-device guard; authenticated enrolment/status calls remain available, while internal approval RPCs remain inaccessible to authenticated clients.
+- Ran the complete trusted-device enforcement regression SQL against the live staging database successfully. The test transaction rolled back, and a follow-up query confirmed no test users, documents, or Storage objects remained.
+- The CI Storage fixture was aligned with Supabase's deployed `storage.objects.owner_id text` type in PR #139. No production project was changed.
+- No signed round-trip using two physical phones has been completed yet; that remains part of Stage 5.
 
 ### Stage 3 — Android enrolment and session gate
 
@@ -122,33 +120,27 @@ Email recovery is not equivalent to approval from an uncompromised old phone: an
 - The trusted phone polls for verified replacement requests and can approve/deny with a signed Keystore challenge. This is an in-app foreground path; FCM/background push is not configured yet.
 - Merged in PR #137 at `c1f39905ad39a2e0533171f57212e0686c40c2aa`.
 
-- Route email/password, Google, email OTP verification, and restored sessions through one device gate.
-- Show the pending/recovery screen before account setup or cloud-backed data is loaded.
-- Let the existing trusted phone poll and review verified replacement requests while BeeKeep is open (FCM remains a later setup dependency).
-- Preserve local/offline records and drafts for pending, denied, or replaced sessions.
+#### 3C — Background and revocation handling (complete)
 
-#### 3C — Background and revocation handling (in progress)
-
-- Startup session restoration and foreground/background sync paths are guarded in the Android gateway; untrusted or replaced installations do not sync.
-- Previously trusted phones can keep local-only access to cached records while offline or after replacement; local Room records are not deleted.
-- The coordinated database RLS, Storage, and SECURITY DEFINER enforcement is being completed in Stage 2C; WorkManager uses the same sync guard.
-
-- Gate WorkManager, startup restoration, realtime, and all cloud-backed entry points.
-- Detect a phone that has been replaced and switch it to local-only access without deleting its local cache.
+- Startup restoration verifies the trusted-device session before account setup, workspace restoration, or realtime starts.
+- Foreground sync and WorkManager both pass through the gateway's trusted-session check; table reads/writes, Storage, and guarded SECURITY DEFINER RPCs are additionally protected by the deployed server policy.
+- A replaced phone transitions to local-only mode and keeps its Room records/drafts; cloud sync and workspace access are denied.
+- Authorization is polled while BeeKeep is open. Realtime FCM approval and a signed real-device request/approval test remain outstanding in Stage 5.
 
 ### Stage 4 — Trusted-phone approval and recovery (core Android/API work complete)
 
-- Pending request screen, approve/deny controls, signed challenges, atomic replacement, email recovery, and expiry messaging are merged.
+- Pending request screen, approve/deny controls, signed challenges, atomic replacement, same-phone rebind, email recovery, and expiry messaging are merged and deployed.
 - Physical two-phone validation, rate-limit review, and recovery-flow verification remain part of Stage 5 validation.
 
-### Stage 5 — Notifications and two-phone validation
+### Stage 5 — Notifications and two-phone validation (remaining)
 
-- Add FCM only after BeeKeep has a Firebase project/configuration and server credentials.
-- Test on two physical Android phones: initial enrolment, normal sign-in, second-phone pending state, allow, deny, expiry, lost-phone email recovery, revoked phone reconnect, offline local editing, background worker, personal records, team records, and Storage access.
+- Add FCM only after BeeKeep has a Firebase project/configuration and server credentials; the current approval alert is foreground polling, not a push notification.
+- Validate on two physical Android phones: first enrolment, normal sign-in, replacement request, allow, deny, expiry, lost-phone email recovery, same-phone rebind, revoked-phone reconnect, offline local editing, WorkManager, personal data, team data, and inspection-photo Storage.
+- Verify real-world resend/recovery rate limits and the account recovery experience before enabling this in a production release.
 
 ## Rollout and safety constraints
 
-- Do not make live database changes before the matching migration and security tests are in the repository.
+- Staging enforcement is deployed only after the matching migration and regression tests passed in CI; keep BeeKeep Production untouched until an explicit production rollout is planned.
 - Do not automatically trust a new session just because it has valid email/password credentials.
 - Do not revoke an old phone until the replacement approval transaction succeeds.
 - Do not clear Room databases, drafts, or local attachment data when a device is denied or replaced.
