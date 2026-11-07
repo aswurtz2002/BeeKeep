@@ -165,7 +165,7 @@ begin
     if row_count <> 1 then raise exception 'Trusted owner could not read a team hive'; end if;
 
     select count(*) into row_count from storage.objects
-    where bucket_id = 'inspection-photos' and owner_id = auth.uid();
+    where bucket_id = 'inspection-photos' and owner_id::text = auth.uid()::text;
     if row_count <> 1 then raise exception 'Trusted owner could not read its inspection photo'; end if;
 
     if not public.has_beekeep_workspace_role(
@@ -224,7 +224,7 @@ begin
     if row_count <> 0 then raise exception 'An untrusted phone read personal hive data'; end if;
 
     select count(*) into row_count from storage.objects
-    where bucket_id = 'inspection-photos' and owner_id = auth.uid();
+    where bucket_id = 'inspection-photos' and owner_id::text = auth.uid()::text;
     if row_count <> 0 then raise exception 'An untrusted phone read inspection photos'; end if;
 
     denied := false;
