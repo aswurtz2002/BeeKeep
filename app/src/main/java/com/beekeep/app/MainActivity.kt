@@ -445,9 +445,18 @@ fun BeeKeepApp(
     val accountSetupState by cloud.accountSetupState.collectAsStateWithLifecycle()
     val trustedDeviceAccess by cloud.trustedDeviceAccess.collectAsStateWithLifecycle()
     val pendingTrustedDeviceRequests by cloud.pendingTrustedDeviceRequests.collectAsStateWithLifecycle()
+    val localDataAttachmentPending by cloud.localDataAttachmentPending.collectAsStateWithLifecycle()
+    val activeWorkspaceId by repository.activeWorkspaceId.collectAsStateWithLifecycle()
     val trustedDeviceScope = androidx.compose.runtime.rememberCoroutineScope()
     var trustedDeviceDecisionBusy by rememberSaveable { mutableStateOf(false) }
     var startupWatchdogElapsed by rememberSaveable { mutableStateOf(false) }
+    var localDataReviewDismissed by rememberSaveable(account.userId) { mutableStateOf(false) }
+
+    androidx.compose.runtime.LaunchedEffect(localDataAttachmentPending, activeWorkspaceId) {
+        if (!localDataAttachmentPending || activeWorkspaceId != null) {
+            localDataReviewDismissed = false
+        }
+    }
 
     // Poll while the account is open so a newly approved phone takes effect promptly and
     // the old phone transitions to local-only mode without waiting for a manual sign-out.
@@ -494,22 +503,39 @@ fun BeeKeepApp(
             )
         }
         accountSetupState is BeeKeepAccountSetupState.Ready ||
-            accountSetupState is BeeKeepAccountSetupState.Offline -> BeeKeepAuthenticatedApp(
-            vm = vm,
-            nfc = nfc,
-            activity = activity,
-            locationController = locationController,
-            cloud = cloud,
-            darkMode = darkMode,
-            incomingNfc = incomingNfc,
-            repository = repository,
-            onSpeakHiveNumber = onSpeakHiveNumber,
-            largeFieldText = largeFieldText,
-            onLargeFieldTextChange = onLargeFieldTextChange,
-            compactHiveRows = compactHiveRows,
-            onCompactHiveRowsChange = onCompactHiveRowsChange,
-            onDarkModeChange = onDarkModeChange
-        )
+            accountSetupState is BeeKeepAccountSetupState.Offline -> {
+            if (localDataAttachmentPending && activeWorkspaceId == null && !localDataReviewDismissed) {
+                BeeKeepLocalDataAttachmentReviewScreen(cloud = cloud) {
+                    localDataReviewDismissed = true
+                }
+            } else {
+                Column(modifier = Modifier.fillMaxSize()) {
+                    if (localDataAttachmentPending && activeWorkspaceId == null) {
+                        BeeKeepLocalDataAttachmentPendingBanner {
+                            localDataReviewDismissed = false
+                        }
+                    }
+                    Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                        BeeKeepAuthenticatedApp(
+                            vm = vm,
+                            nfc = nfc,
+                            activity = activity,
+                            locationController = locationController,
+                            cloud = cloud,
+                            darkMode = darkMode,
+                            incomingNfc = incomingNfc,
+                            repository = repository,
+                            onSpeakHiveNumber = onSpeakHiveNumber,
+                            largeFieldText = largeFieldText,
+                            onLargeFieldTextChange = onLargeFieldTextChange,
+                            compactHiveRows = compactHiveRows,
+                            onCompactHiveRowsChange = onCompactHiveRowsChange,
+                            onDarkModeChange = onDarkModeChange
+                        )
+                    }
+                }
+            }
+        }
         else -> BeeKeepAuthLoadingScreen()
     }
 
