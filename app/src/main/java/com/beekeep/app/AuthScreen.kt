@@ -1040,7 +1040,10 @@ private fun BeeKeepPasswordResetCodeScreen(
                                 showMessage("")
                                 try {
                                     when (val result = cloud.requestPasswordReset(email)) {
-                                        CloudResult.Success -> showMessage("A new six-digit password-reset code has been sent. Check your inbox.")
+                                        CloudResult.Success -> {
+                                            code = ""
+                                            showMessage("A new six-digit password-reset code has been sent. Check your inbox.")
+                                        }
                                         CloudResult.NotConfigured -> showMessage("BeeKeep Cloud is not configured for this app build.", true)
                                         CloudResult.NotSignedIn -> showMessage("Please return to sign in and request a new code.", true)
                                         is CloudResult.Failure -> showMessage(result.message, true)
