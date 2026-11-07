@@ -22,4 +22,4 @@ create policy beekeep_ci_photo_read on storage.objects
 drop policy if exists beekeep_ci_photo_upload on storage.objects;
 create policy beekeep_ci_photo_upload on storage.objects
     for insert to authenticated
-    with check (bucket_id = 'inspection-photos' and owner_id = auth.uid());
+    with check (bucket_id = 'inspection-photos' and owner_id = auth.uid()::text);
