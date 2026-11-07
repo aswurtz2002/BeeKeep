@@ -489,8 +489,8 @@ begin
                 'sub', '00000000-0000-0000-0000-000000000083',
                 'role', 'authenticated',
                 'session_id', pg_catalog.format(
-                    '10000000-0000-0000-0000-%012s',
-                    (86 + attempt)::text
+                    '10000000-0000-0000-0000-%s',
+                    pg_catalog.lpad((86 + attempt)::text, 12, '0')
                 )
             )::text,
             true
