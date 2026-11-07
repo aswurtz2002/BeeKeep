@@ -976,12 +976,69 @@ class SupabaseGateway(
             ensureAuthStorageInitialized(supabase)
             val session = supabase.auth.currentSessionOrNull()
             val userId = session?.user?.id?.trim()?.takeIf { it.isNotEmpty() }
+            if (userId != null && TrustedDeviceLocalSessionState.isReplaced(appContext)) {
+                // A successful new login explicitly leaves the replaced-phone local-only state.
+                // The pending local-data review still protects any personal upload to this account.
+                TrustedDeviceLocalSessionState.clearForAuthenticatedSession(appContext, userId)
+            }
             _passwordRecoveryRequired.value = appContext
                 .getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
                 .getBoolean(PASSWORD_RECOVERY_SESSION_PREF, false)
             val deviceTrusted = userId == null || _passwordRecoveryRequired.value ||
                 verifyTrustedDeviceSession(supabase)
             val localOnlyDevice = !deviceTrusted && isLocalOnlyTrustedDeviceState()
+
+            if (userId == null && TrustedDeviceLocalSessionState.isReplaced(appContext)) {
+                stopRealtime()
+                accountVerificationJob?.cancel()
+                sessionRefreshJob?.cancel()
+                sessionRefreshJob = null
+                CloudSyncScheduler.cancel(appContext)
+                val replacedUserId = TrustedDeviceLocalSessionState.replacedUserId(appContext)
+                val replacedEmail = TrustedDeviceLocalSessionState.replacedUserEmail(appContext)
+                val prefs = appContext.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
+                val cachedWorkspaceId = prefs.getString("active_team_workspace_id", "").orEmpty().trim()
+                val storedOwnerId = prefs.getString("active_team_workspace_user_id", null)
+                    ?.trim()?.takeIf { it.isNotEmpty() }
+                if (ActiveWorkspaceSessionPolicy.canKeepCachedWorkspace(
+                        cachedWorkspaceId, replacedUserId, storedOwnerId
+                    )
+                ) {
+                    repository.switchWorkspace(
+                        workspaceId = cachedWorkspaceId,
+                        readOnly = prefs.getBoolean("active_team_workspace_read_only", false),
+                        ownerUserId = storedOwnerId
+                    )
+                } else if (repository.activeWorkspaceId.value != null) {
+                    repository.switchWorkspace(null)
+                }
+                _accountSetupState.value = BeeKeepAccountSetupState.Offline
+                _trustedDeviceAccess.value = TrustedDeviceAccessState(
+                    status = TrustedDeviceAccessStatus.REPLACED_LOCAL,
+                    message = "You were signed out because another phone was approved. Continue offline to view this phone's local records, or sign in again."
+                )
+                _account.value = CloudAccountState(
+                    configured = true,
+                    signedIn = false,
+                    email = replacedEmail,
+                    userId = replacedUserId,
+                    error = "Your BeeKeep account was approved on another phone. This phone is signed out; its local records have been kept."
+                )
+                repository.completeStartupWorkspaceAccessResolution()
+                _accountInitialized.value = true
+                return
+            }
+
+            if (userId != null && !_passwordRecoveryRequired.value &&
+                !deviceTrusted &&
+                _trustedDeviceAccess.value.status == TrustedDeviceAccessStatus.REPLACED_LOCAL
+            ) {
+                signOutReplacedDeviceLocallyUnlocked(supabase, userId)
+                repository.completeStartupWorkspaceAccessResolution()
+                _accountInitialized.value = true
+                return
+            }
+
             if (userId != null && !_passwordRecoveryRequired.value &&
                 !deviceTrusted && !localOnlyDevice
             ) {
