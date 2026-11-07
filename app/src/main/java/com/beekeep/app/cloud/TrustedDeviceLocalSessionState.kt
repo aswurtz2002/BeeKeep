@@ -28,6 +28,9 @@ internal object TrustedDeviceLocalSessionState {
     fun continueOffline(context: Context): Boolean =
         preferences(context).edit().putBoolean(CONTINUE_OFFLINE_KEY, true).commit()
 
+    fun stopContinuingOffline(context: Context): Boolean =
+        preferences(context).edit().putBoolean(CONTINUE_OFFLINE_KEY, false).commit()
+
     fun markReplaced(context: Context, userId: String, email: String): Boolean {
         val cleanUserId = userId.trim().takeIf { it.isNotEmpty() } ?: return false
         return preferences(context).edit()
