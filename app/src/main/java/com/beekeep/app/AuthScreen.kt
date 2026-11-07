@@ -439,13 +439,20 @@ internal fun BeeKeepAuthScreen(cloud: SupabaseGateway) {
                     ) {
                         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                             Text(
-                                if (createAccount) "Create your account" else "Welcome back",
+                                when {
+                                    forgotPasswordMode -> "Reset your password"
+                                    createAccount -> "Create your account"
+                                    else -> "Welcome back"
+                                },
                                 style = MaterialTheme.typography.headlineSmall,
                                 fontWeight = FontWeight.ExtraBold
                             )
                             Text(
-                                if (createAccount) "Set up your BeeKeep account to get started."
-                                else "Sign in to continue to your apiaries.",
+                                when {
+                                    forgotPasswordMode -> "Enter the email address associated with your BeeKeep account."
+                                    createAccount -> "Set up your BeeKeep account to get started."
+                                    else -> "Sign in to continue to your apiaries."
+                                },
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
@@ -678,12 +685,16 @@ internal fun BeeKeepAuthScreen(cloud: SupabaseGateway) {
                         }
 
                         if (forgotPasswordMode) {
-                            Row(
+                            Column(
                                 modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.Center,
-                                verticalAlignment = Alignment.CenterVertically
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(2.dp)
                             ) {
-                                Text("Remembered your password?", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(
+                                    "Remembered your password?",
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    textAlign = TextAlign.Center
+                                )
                                 TextButton(
                                     onClick = {
                                         forgotPasswordMode = false
@@ -691,7 +702,7 @@ internal fun BeeKeepAuthScreen(cloud: SupabaseGateway) {
                                     },
                                     enabled = !busy
                                 ) {
-                                    Text("Back to sign in")
+                                    Text("Back to sign in", maxLines = 1)
                                 }
                             }
                         } else {
@@ -1128,13 +1139,17 @@ private fun BeeKeepPasswordRecoveryScreen(cloud: SupabaseGateway) {
                 modifier = Modifier.size(88.dp)
             )
             Text(
-                "Choose a new password",
+                if (passwordUpdated) "Password updated" else "Choose a new password",
                 style = MaterialTheme.typography.headlineSmall,
                 fontWeight = FontWeight.ExtraBold,
                 textAlign = TextAlign.Center
             )
             Text(
-                "Your recovery request is verified. Set a new password for your BeeKeep account.",
+                if (passwordUpdated) {
+                    "Your password has been updated. Continue to your BeeKeep account."
+                } else {
+                    "Your recovery request is verified. Set a new password for your BeeKeep account."
+                },
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center
             )
@@ -1150,11 +1165,6 @@ private fun BeeKeepPasswordRecoveryScreen(cloud: SupabaseGateway) {
                     verticalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
                     if (passwordUpdated) {
-                        Text(
-                            "Your password has been updated.",
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            textAlign = TextAlign.Center
-                        )
                         Button(
                             onClick = {
                                 scope.launch {
