@@ -78,12 +78,20 @@ function requiredString(value: unknown, name: string, maxLength = 4096): string 
   return value.trim();
 }
 
+type RpcResult = { data: unknown; error: { code?: string } | null };
+type RpcClient = {
+  rpc: (functionName: string, args: Record<string, unknown>) => PromiseLike<RpcResult>;
+};
+
 async function rpcData<T>(
-  client: ReturnType<typeof createClient>,
+  client: unknown,
   functionName: string,
   args: Record<string, unknown>,
 ): Promise<T> {
-  const { data, error } = await client.rpc(functionName, args);
+  // The SDK client schema is intentionally supplied at runtime by PostgREST here.
+  // Narrow the external client to only the RPC surface this endpoint needs.
+  const rpcClient = client as RpcClient;
+  const { data, error } = await rpcClient.rpc(functionName, args);
   if (error) {
     console.error("Device access RPC failed:", functionName, error.code ?? "unknown");
     throw new Error("The phone approval request could not be completed.");
