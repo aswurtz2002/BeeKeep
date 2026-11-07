@@ -647,6 +647,7 @@ class SupabaseGateway(
                 } else {
                     _pendingTrustedDeviceRequests.value = emptyList()
                     refreshAccount()
+                    CloudSyncScheduler.runNow(appContext)
                     CloudResult.Success
                 }
             }
@@ -4451,6 +4452,7 @@ class SupabaseGateway(
                     }
                 }
                 if (enableRealtime && _account.value.signedIn) startRealtime()
+                if (_account.value.signedIn) CloudSyncScheduler.runNow(appContext)
                 CloudResult.Success
             } catch (cancelled: CancellationException) {
                 throw cancelled
