@@ -251,6 +251,22 @@ internal fun BeeKeepTrustedDeviceGateScreen(
                         }
                     }
 
+                    TextButton(
+                        enabled = !busy,
+                        onClick = {
+                            scope.launch {
+                                busy = true
+                                val result = cloud.signOut()
+                                if (result != CloudResult.Success) {
+                                    showResult(result, "")
+                                }
+                                busy = false
+                            }
+                        }
+                    ) {
+                        Text("Sign out and use another account")
+                    }
+
                     if (message.isNotBlank()) {
                         Text(
                             message,
