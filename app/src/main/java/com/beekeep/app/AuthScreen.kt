@@ -594,7 +594,7 @@ internal fun BeeKeepAuthScreen(cloud: SupabaseGateway) {
                                         enabled = !busy
                                     ) {
                                         Icon(
-                                            imageVector = if (passwordVisible) Icons.Rounded.VisibilityOff else Icons.Rounded.Visibility,
+                                            imageVector = if (passwordVisible) Icons.Rounded.Visibility else Icons.Rounded.VisibilityOff,
                                             contentDescription = if (passwordVisible) "Hide password" else "Show password"
                                         )
                                     }
@@ -1144,15 +1144,13 @@ private fun BeeKeepPasswordRecoveryScreen(cloud: SupabaseGateway) {
                 fontWeight = FontWeight.ExtraBold,
                 textAlign = TextAlign.Center
             )
-            Text(
-                if (passwordUpdated) {
-                    "Your password has been updated. Continue to your BeeKeep account."
-                } else {
-                    "Your recovery request is verified. Set a new password for your BeeKeep account."
-                },
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                textAlign = TextAlign.Center
-            )
+            if (!passwordUpdated) {
+                Text(
+                    "Your recovery request is verified. Set a new password for your BeeKeep account.",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center
+                )
+            }
             Surface(
                 modifier = Modifier.fillMaxWidth(),
                 color = MaterialTheme.colorScheme.surface,
@@ -1196,7 +1194,7 @@ private fun BeeKeepPasswordRecoveryScreen(cloud: SupabaseGateway) {
                                 enabled = !busy
                             ) {
                                 Icon(
-                                    imageVector = if (passwordVisible) Icons.Rounded.VisibilityOff else Icons.Rounded.Visibility,
+                                    imageVector = if (passwordVisible) Icons.Rounded.Visibility else Icons.Rounded.VisibilityOff,
                                     contentDescription = if (passwordVisible) "Hide password" else "Show password"
                                 )
                             }
