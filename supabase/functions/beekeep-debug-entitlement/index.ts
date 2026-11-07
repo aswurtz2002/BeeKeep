@@ -45,11 +45,23 @@ Deno.serve(async (req: Request) => {
   if (!token) return respond(401, { success: false, error: "Sign-in is required." });
 
   const userClient = createClient(supabaseUrl, publicKey, {
+    global: { headers: { Authorization: `Bearer ${token}` } },
     auth: { persistSession: false, autoRefreshToken: false },
   });
   const { data: userData, error: authError } = await userClient.auth.getUser(token);
   if (authError || !userData.user) {
     return respond(401, { success: false, error: "Your BeeKeep Cloud session is no longer valid. Sign in again." });
+  }
+
+  // This staging-only simulator uses a service-role client to update test metadata,
+  // so independently confirm the caller's active trusted Android session first.
+  const { data: trustedDevice, error: trustedDeviceError } =
+    await userClient.rpc("beekeep_device_session_is_trusted");
+  if (trustedDeviceError || trustedDevice !== true) {
+    return respond(403, {
+      success: false,
+      error: "Verify this phone with BeeKeep before changing staging test entitlements.",
+    });
   }
 
   let body: { plan?: unknown };

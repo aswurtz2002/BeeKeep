@@ -3,6 +3,7 @@ on:
   push:
     paths:
       - 'supabase/functions/beekeep-admin-hive-limits/**'
+      - 'supabase/functions/beekeep-debug-entitlement/**'
       - '.github/workflows/support-admin-function.yml'
   pull_request:
     paths:
@@ -21,3 +22,5 @@ jobs:
           deno-version: v2.x
       - name: Type-check support admin Edge Function
         run: deno check supabase/functions/beekeep-admin-hive-limits/index.ts
+      - name: Type-check staging entitlement simulator
+        run: deno check supabase/functions/beekeep-debug-entitlement/index.ts

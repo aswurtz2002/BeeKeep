@@ -51,11 +51,24 @@ Deno.serve(async (req: Request) => {
   if (!token) return respond(401, { success: false, allowed: false, error: "Sign in to BeeKeep Cloud first." });
 
   const userClient = createClient(supabaseUrl, publicKey, {
+    global: { headers: { Authorization: `Bearer ${token}` } },
     auth: { persistSession: false, autoRefreshToken: false },
   });
   const { data: userData, error: authError } = await userClient.auth.getUser(token);
   if (authError || !userData.user) {
     return respond(401, { success: false, allowed: false, error: "Your cloud session is no longer valid. Sign in again." });
+  }
+
+  // The service-role client below bypasses RLS, so the caller's exact Auth
+  // session must pass the trusted-device registry check before any support action.
+  const { data: trustedDevice, error: trustedDeviceError } =
+    await userClient.rpc("beekeep_device_session_is_trusted");
+  if (trustedDeviceError || trustedDevice !== true) {
+    return respond(403, {
+      success: false,
+      allowed: false,
+      error: "Verify this phone with BeeKeep before using support-admin tools.",
+    });
   }
 
   const isSupportAdmin = userData.user.app_metadata?.beekeep_support_admin === true;
