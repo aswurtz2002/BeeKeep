@@ -435,6 +435,10 @@ class SupabaseGateway(
                     true
                 } else {
                     val previous = _trustedDeviceAccess.value.status
+                    // A successful server response of "not trusted" means access has been
+                    // revoked for this session. If this same Keystore fingerprint was trusted
+                    // here before, preserve its local-only records even after an app restart.
+                    val wasPreviouslyTrustedHere = hasTrustedDeviceOfflineCache(supabase)
                     val requestResult = api.requestStatus()
                     val request = (requestResult as? TrustedDeviceApiResult.Success)?.value
                     val nextStatus = when (request?.requestStatus?.lowercase()) {
@@ -445,7 +449,8 @@ class SupabaseGateway(
                         }
                         "denied" -> TrustedDeviceAccessStatus.DENIED
                         else -> if (previous == TrustedDeviceAccessStatus.TRUSTED ||
-                            previous == TrustedDeviceAccessStatus.OFFLINE_LOCAL
+                            previous == TrustedDeviceAccessStatus.OFFLINE_LOCAL ||
+                            wasPreviouslyTrustedHere
                         ) {
                             TrustedDeviceAccessStatus.REPLACED_LOCAL
                         } else {
