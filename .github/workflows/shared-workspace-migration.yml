@@ -186,3 +186,8 @@ jobs:
         run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261106080000_beekeep_admin_commercial_grants.sql
       - name: Verify Commercial grants, expiry, quota propagation and admin isolation
         run: psql -v ON_ERROR_STOP=1 -f supabase/tests/admin_commercial_access.sql
+
+      - name: Apply trusted-device registry and session predicate
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261107010000_beekeep_trusted_device_foundation.sql
+      - name: Verify trusted-device session authorization
+        run: psql -v ON_ERROR_STOP=1 -f supabase/tests/trusted_device_session_security.sql
