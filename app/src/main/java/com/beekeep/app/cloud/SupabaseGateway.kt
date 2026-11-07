@@ -18,6 +18,8 @@ import io.github.jan.supabase.exceptions.HttpRequestException
 import io.github.jan.supabase.exceptions.RestException
 import io.ktor.client.plugins.HttpRequestTimeoutException
 import io.github.jan.supabase.auth.auth
+import io.github.jan.supabase.auth.exception.AuthErrorCode
+import io.github.jan.supabase.auth.exception.AuthRestException
 import io.github.jan.supabase.auth.OtpType
 import io.github.jan.supabase.auth.handleDeeplinks
 import io.github.jan.supabase.auth.providers.Google
@@ -976,45 +978,30 @@ class SupabaseGateway(
     }
 
     suspend fun signIn(email: String, password: String): CloudResult {
-        val result = authCall(restoreWorkspaceId = repository.activeWorkspaceId.value) {
+        val result = authCall(
+            restoreWorkspaceId = repository.activeWorkspaceId.value,
+            mapInvalidCredentials = true
+        ) {
             val supabase = client ?: return@authCall
             supabase.auth.signInWith(Email) {
                 this.email = email.trim()
                 this.password = password
             }
         }
-        val userFacingResult = when (result) {
-            is CloudResult.Failure -> {
-                val error = result.message.lowercase()
-                val invalidCredentials = listOf(
-                    "invalid login credentials",
-                    "invalid_credentials",
-                    "invalid credentials",
-                    "invalid email or password",
-                    "email or password is incorrect"
-                ).any(error::contains)
-                if (invalidCredentials) {
-                    CloudResult.Failure("The email or password you entered is incorrect.")
-                } else {
-                    result
-                }
-            }
-            else -> result
-        }
-        when (userFacingResult) {
+        when (result) {
             CloudResult.Success -> {
                 clearPendingSignupVerification()
                 clearPendingPasswordResetRequestUnlessEmailMatches(email)
             }
             is CloudResult.Failure -> {
-                val error = userFacingResult.message.lowercase()
+                val error = result.message.lowercase()
                 if ("not confirmed" in error || "not verified" in error || "email_not_confirmed" in error) {
                     setPendingSignupVerificationEmail(email)
                 }
             }
             else -> Unit
         }
-        return userFacingResult
+        return result
     }
 
     /**
@@ -3640,6 +3627,7 @@ class SupabaseGateway(
 
     private suspend fun authCall(
         restoreWorkspaceId: String? = null,
+        mapInvalidCredentials: Boolean = false,
         block: suspend () -> Unit
     ): CloudResult {
         if (!configured || client == null) return CloudResult.NotConfigured
@@ -3677,9 +3665,21 @@ class SupabaseGateway(
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (t: Throwable) {
+                // Supabase Auth exceptions carry a structured error code. Read that before
+                // sanitizing the exception text, which can otherwise hide invalid_credentials.
+                val authErrorCode = if (mapInvalidCredentials) {
+                    generateSequence(t) { it.cause }
+                        .filterIsInstance<AuthRestException>()
+                        .firstOrNull()
+                        ?.errorCode
+                } else {
+                    null
+                }
+                val invalidCredentialsMessage =
+                    SignInErrorPolicy.messageFor(authErrorCode)
                 val rawMessage = t.message.orEmpty().trim()
                 val lowerMessage = rawMessage.lowercase()
-                val message = when {
+                val message = invalidCredentialsMessage ?: when {
                     "already registered" in lowerMessage ||
                         "an account with this email already exists" in lowerMessage ->
                         "An account with this email already exists. Please sign in instead."
