@@ -475,6 +475,7 @@ fun BeeKeepApp(
         account.userId != null && trustedDeviceAccess.status in setOf(
             TrustedDeviceAccessStatus.NOT_TRUSTED,
             TrustedDeviceAccessStatus.PENDING_APPROVAL,
+            TrustedDeviceAccessStatus.EXPIRED,
             TrustedDeviceAccessStatus.DENIED,
             TrustedDeviceAccessStatus.REPLACED,
             TrustedDeviceAccessStatus.UNAVAILABLE
