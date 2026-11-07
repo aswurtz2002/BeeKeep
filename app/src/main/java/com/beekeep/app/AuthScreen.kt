@@ -248,13 +248,17 @@ internal fun BeeKeepAuthScreen(cloud: SupabaseGateway) {
     val scope = rememberCoroutineScope()
     val account by cloud.account.collectAsStateWithLifecycle()
     val passwordRecoveryRequired by cloud.passwordRecoveryRequired.collectAsStateWithLifecycle()
+    val pendingSignupVerificationEmail by cloud.pendingSignupVerificationEmail.collectAsStateWithLifecycle()
     if (passwordRecoveryRequired) {
         BeeKeepPasswordRecoveryScreen(cloud)
         return
     }
+    if (!pendingSignupVerificationEmail.isNullOrBlank()) {
+        BeeKeepSignupVerificationScreen(cloud, pendingSignupVerificationEmail.orEmpty())
+        return
+    }
     var createAccount by rememberSaveable { mutableStateOf(false) }
     var forgotPasswordMode by rememberSaveable { mutableStateOf(false) }
-    var canResendConfirmation by rememberSaveable { mutableStateOf(false) }
     var email by rememberSaveable { mutableStateOf("") }
     var username by rememberSaveable { mutableStateOf("") }
     var password by rememberSaveable { mutableStateOf("") }
@@ -341,8 +345,7 @@ internal fun BeeKeepAuthScreen(cloud: SupabaseGateway) {
                                 showMessage("If an account exists for that address, a password reset link has been sent. Check your inbox.")
                             }
                             createAccount && !cloud.account.value.signedIn -> {
-                                canResendConfirmation = true
-                                showMessage("Check your email to verify your BeeKeep account. Then return here to sign in.")
+                                showMessage("We sent a six-digit verification code to $cleanEmail.")
                             }
                             else -> {
                                 showMessage("You're signed in. Syncing your BeeKeep data.")
@@ -352,43 +355,14 @@ internal fun BeeKeepAuthScreen(cloud: SupabaseGateway) {
                     }
                     CloudResult.NotConfigured -> showMessage("BeeKeep Cloud is not configured for this app build.", true)
                     CloudResult.NotSignedIn -> {
-                        canResendConfirmation = true
-                        showMessage("Your account is not signed in yet. Check your email for a verification link.", true)
+                        showMessage("Your account is not signed in yet. Verify your email address to continue.", true)
                     }
-                    is CloudResult.Failure -> {
-                        showMessage(result.message, true)
-                        val errorText = result.message.lowercase()
-                        if ("not confirmed" in errorText || "not verified" in errorText) {
-                            canResendConfirmation = true
-                        }
-                    }
-                }
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (_: Throwable) {
-                showMessage("BeeKeep couldn't complete that request. Check your connection and try again.", true)
-            } finally {
-                busy = false
-            }
-        }
-    }
-
-    fun resendConfirmation() {
-        if (busy || !validEmail) return
-        scope.launch {
-            busy = true
-            showMessage("")
-            try {
-                when (val result = cloud.resendSignupConfirmation(cleanEmail)) {
-                    CloudResult.Success -> showMessage("A new confirmation email has been requested. Check your inbox.")
-                    CloudResult.NotConfigured -> showMessage("BeeKeep Cloud is not configured for this app build.", true)
-                    CloudResult.NotSignedIn -> showMessage("Sign in after confirming your email address.", true)
                     is CloudResult.Failure -> showMessage(result.message, true)
                 }
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (_: Throwable) {
-                showMessage("BeeKeep couldn't resend the confirmation email. Check your connection and try again.", true)
+                showMessage("BeeKeep couldn't complete that request. Check your connection and try again.", true)
             } finally {
                 busy = false
             }
@@ -683,16 +657,6 @@ internal fun BeeKeepAuthScreen(cloud: SupabaseGateway) {
                             )
                         }
 
-                        if (canResendConfirmation && validEmail && !forgotPasswordMode) {
-                            TextButton(
-                                onClick = { resendConfirmation() },
-                                enabled = !busy,
-                                modifier = Modifier.align(Alignment.CenterHorizontally)
-                            ) {
-                                Text("Resend confirmation email")
-                            }
-                        }
-
                         if (message.isNotBlank()) {
                             Text(
                                 message,
@@ -764,6 +728,177 @@ internal fun BeeKeepAuthScreen(cloud: SupabaseGateway) {
                         style = MaterialTheme.typography.bodySmall,
                         textAlign = TextAlign.Center
                     )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun BeeKeepSignupVerificationScreen(
+    cloud: SupabaseGateway,
+    email: String
+) {
+    BackHandler(enabled = true) { /* Stay on verification until completed or changed. */ }
+
+    val scope = rememberCoroutineScope()
+    var code by rememberSaveable(email) { mutableStateOf("") }
+    var busy by rememberSaveable { mutableStateOf(false) }
+    var message by rememberSaveable { mutableStateOf("") }
+    var messageIsError by rememberSaveable { mutableStateOf(false) }
+
+    fun showMessage(value: String, isError: Boolean = false) {
+        message = value
+        messageIsError = isError
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(
+                Brush.verticalGradient(
+                    listOf(
+                        MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
+                        MaterialTheme.colorScheme.background,
+                        MaterialTheme.colorScheme.background
+                    )
+                )
+            )
+            .imePadding(),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 22.dp, vertical = 30.dp)
+                .widthIn(max = 460.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(18.dp)
+        ) {
+            androidx.compose.foundation.Image(
+                painter = painterResource(R.drawable.beekeep_header_logo),
+                contentDescription = "BeeKeep logo",
+                modifier = Modifier.size(88.dp)
+            )
+            Text(
+                "Verify your email",
+                style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.ExtraBold,
+                textAlign = TextAlign.Center
+            )
+            Text(
+                "We sent a six-digit code to $email. Enter it below to verify your address and finish creating your BeeKeep account.",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center
+            )
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                color = MaterialTheme.colorScheme.surface,
+                shape = RoundedCornerShape(24.dp),
+                tonalElevation = 2.dp,
+                shadowElevation = 6.dp
+            ) {
+                Column(
+                    modifier = Modifier.padding(22.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp)
+                ) {
+                    OutlinedTextField(
+                        value = code,
+                        onValueChange = { value ->
+                            code = value.filter { it in '0'..'9' }.take(6)
+                            message = ""
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        enabled = !busy,
+                        singleLine = true,
+                        label = { Text("6-digit verification code") },
+                        placeholder = { Text("000000") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        textStyle = androidx.compose.ui.text.TextStyle(
+                            textAlign = TextAlign.Center,
+                            letterSpacing = 8.sp,
+                            fontSize = 24.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    )
+                    Button(
+                        onClick = {
+                            scope.launch {
+                                busy = true
+                                showMessage("")
+                                try {
+                                    when (val result = cloud.verifySignupCode(email, code)) {
+                                        CloudResult.Success -> showMessage("Email verified. Opening your BeeKeep account…")
+                                        CloudResult.NotConfigured -> showMessage("BeeKeep Cloud is not configured for this app build.", true)
+                                        CloudResult.NotSignedIn -> showMessage("BeeKeep couldn't establish your account session. Please try again.", true)
+                                        is CloudResult.Failure -> showMessage(result.message, true)
+                                    }
+                                } catch (cancelled: CancellationException) {
+                                    throw cancelled
+                                } catch (_: Throwable) {
+                                    showMessage("BeeKeep couldn't verify that code. Check it and try again.", true)
+                                } finally {
+                                    busy = false
+                                }
+                            }
+                        },
+                        enabled = !busy && code.length == 6,
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 54.dp),
+                        shape = RoundedCornerShape(16.dp)
+                    ) {
+                        if (busy) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(19.dp),
+                                strokeWidth = 2.dp,
+                                color = MaterialTheme.colorScheme.onPrimary
+                            )
+                            Spacer(Modifier.width(10.dp))
+                        }
+                        Text(if (busy) "VERIFYING..." else "VERIFY EMAIL", fontWeight = FontWeight.ExtraBold)
+                    }
+                    TextButton(
+                        onClick = {
+                            scope.launch {
+                                busy = true
+                                showMessage("")
+                                try {
+                                    when (val result = cloud.resendSignupConfirmation(email)) {
+                                        CloudResult.Success -> showMessage("A new six-digit code has been sent. Check your inbox.")
+                                        CloudResult.NotConfigured -> showMessage("BeeKeep Cloud is not configured for this app build.", true)
+                                        CloudResult.NotSignedIn -> showMessage("Please return to the sign-in screen and request a new code.", true)
+                                        is CloudResult.Failure -> showMessage(result.message, true)
+                                    }
+                                } catch (cancelled: CancellationException) {
+                                    throw cancelled
+                                } catch (_: Throwable) {
+                                    showMessage("BeeKeep couldn't resend the code. Check your connection and try again.", true)
+                                } finally {
+                                    busy = false
+                                }
+                            }
+                        },
+                        enabled = !busy,
+                        modifier = Modifier.align(Alignment.CenterHorizontally)
+                    ) {
+                        Text("Resend code")
+                    }
+                    if (message.isNotBlank()) {
+                        Text(
+                            message,
+                            color = if (messageIsError) MaterialTheme.colorScheme.error
+                            else MaterialTheme.colorScheme.onSurfaceVariant,
+                            style = MaterialTheme.typography.bodySmall,
+                            textAlign = TextAlign.Center
+                        )
+                    }
+                    TextButton(
+                        onClick = { cloud.clearPendingSignupVerification() },
+                        enabled = !busy,
+                        modifier = Modifier.align(Alignment.CenterHorizontally)
+                    ) {
+                        Text("Use a different email")
+                    }
                 }
             }
         }

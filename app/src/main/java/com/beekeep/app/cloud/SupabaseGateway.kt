@@ -85,6 +85,7 @@ private const val SYNC_DOWNLOAD_PAGE_SIZE = 500
 private const val SYNC_CONFLICT_LOOKUP_BATCH_SIZE = 100
 private const val CLOUD_DATA_ATTACHMENT_PENDING_USER_PREF = "cloud_data_attachment_pending_user_id"
 private const val PENDING_PASSWORD_RESET_REQUEST_EMAIL_PREF = "pending_password_reset_request_email"
+private const val PENDING_SIGNUP_VERIFICATION_EMAIL_PREF = "pending_signup_verification_email"
 private const val PENDING_PASSWORD_RESET_REQUEST_AT_PREF = "pending_password_reset_request_at"
 private const val PASSWORD_RESET_REQUEST_MAX_AGE_MS = 60L * 60L * 1000L
 private const val PASSWORD_RECOVERY_SESSION_PREF = "password_recovery_session_active"
@@ -135,6 +136,14 @@ class SupabaseGateway(
     val workspaceActionLogRefreshVersion: StateFlow<Long> = WorkspaceActionLogRefreshSignal.version
     private val _accountInitialized = MutableStateFlow(false)
     private val _passwordRecoveryRequired = MutableStateFlow(false)
+    private val _pendingSignupVerificationEmail = MutableStateFlow(
+        appContext.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
+            .getString(PENDING_SIGNUP_VERIFICATION_EMAIL_PREF, null)
+            ?.trim()?.takeIf { it.isNotEmpty() }
+    )
+    /** Email address awaiting the in-app six-digit signup verification code, if any. */
+    val pendingSignupVerificationEmail: StateFlow<String?> =
+        _pendingSignupVerificationEmail.asStateFlow()
     /** True only after a password-recovery link has been returned to and processed by this app. */
     val passwordRecoveryRequired: StateFlow<Boolean> = _passwordRecoveryRequired.asStateFlow()
     /** True after Supabase has restored the stored session and the account identity is known. */
@@ -960,7 +969,19 @@ class SupabaseGateway(
                 this.password = password
             }
         }
-        if (result == CloudResult.Success) clearPendingPasswordResetRequestUnlessEmailMatches(email)
+        when (result) {
+            CloudResult.Success -> {
+                clearPendingSignupVerification()
+                clearPendingPasswordResetRequestUnlessEmailMatches(email)
+            }
+            is CloudResult.Failure -> {
+                val error = result.message.lowercase()
+                if ("not confirmed" in error || "not verified" in error || "email_not_confirmed" in error) {
+                    setPendingSignupVerificationEmail(email)
+                }
+            }
+            else -> Unit
+        }
         return result
     }
 
@@ -972,7 +993,7 @@ class SupabaseGateway(
         if (idToken.isBlank() || nonce.isBlank()) {
             return CloudResult.Failure("Google sign-in could not be verified. Please try again.")
         }
-        return authCall(restoreWorkspaceId = repository.activeWorkspaceId.value) {
+        val result = authCall(restoreWorkspaceId = repository.activeWorkspaceId.value) {
             val supabase = client ?: return@authCall
             supabase.auth.signInWith(IDToken) {
                 this.idToken = idToken
@@ -980,6 +1001,8 @@ class SupabaseGateway(
                 this.nonce = nonce
             }
         }
+        if (result == CloudResult.Success) clearPendingSignupVerification()
+        return result
     }
 
     suspend fun signUp(email: String, password: String, username: String = ""): CloudResult {
@@ -998,17 +1021,61 @@ class SupabaseGateway(
                 )
             }
         }
-        if (result == CloudResult.Success) clearPendingPasswordResetRequest()
+        if (result == CloudResult.Success) {
+            clearPendingPasswordResetRequest()
+            if (_account.value.signedIn) clearPendingSignupVerification()
+            else setPendingSignupVerificationEmail(email)
+        }
         return result
     }
 
-    /** Resends the confirmation email for a signup that has not yet been verified. */
-    suspend fun resendSignupConfirmation(email: String): CloudResult = authEmailRequest { supabase ->
-        supabase.auth.resendEmail(
-            OtpType.Email.SIGNUP,
-            email.trim(),
-            redirectUrl = authRedirectUrl()
-        )
+    /** Requests a new six-digit confirmation code for an unverified signup. */
+    suspend fun resendSignupConfirmation(email: String): CloudResult {
+        val result = authEmailRequest { supabase ->
+            supabase.auth.resendEmail(
+                OtpType.Email.SIGNUP,
+                email.trim(),
+                redirectUrl = authRedirectUrl()
+            )
+        }
+        if (result == CloudResult.Success) setPendingSignupVerificationEmail(email)
+        return result
+    }
+
+    /** Verifies the six-digit signup code and establishes the normal authenticated session. */
+    suspend fun verifySignupCode(email: String, code: String): CloudResult {
+        val cleanEmail = email.trim()
+        val cleanCode = code.trim()
+        if (cleanEmail.isBlank() || !cleanCode.matches(Regex("^[0-9]{6}$"))) {
+            return CloudResult.Failure("Enter the six-digit code from your BeeKeep verification email.")
+        }
+        val result = authCall {
+            val supabase = client ?: return@authCall
+            supabase.auth.verifyEmailOtp(
+                type = OtpType.Email.EMAIL,
+                email = cleanEmail,
+                token = cleanCode
+            )
+        }
+        if (result == CloudResult.Success) clearPendingSignupVerification()
+        return result
+    }
+
+    /** Clears the pending signup step when the user chooses a different email address. */
+    fun clearPendingSignupVerification() {
+        appContext.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE).edit()
+            .remove(PENDING_SIGNUP_VERIFICATION_EMAIL_PREF)
+            .apply()
+        _pendingSignupVerificationEmail.value = null
+    }
+
+    private fun setPendingSignupVerificationEmail(email: String) {
+        val cleanEmail = email.trim()
+        if (cleanEmail.isBlank()) return
+        appContext.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE).edit()
+            .putString(PENDING_SIGNUP_VERIFICATION_EMAIL_PREF, cleanEmail)
+            .apply()
+        _pendingSignupVerificationEmail.value = cleanEmail
     }
 
     /**
@@ -1109,8 +1176,10 @@ class SupabaseGateway(
             .remove(PENDING_PASSWORD_RESET_REQUEST_EMAIL_PREF)
             .remove(PENDING_PASSWORD_RESET_REQUEST_AT_PREF)
             .remove(PASSWORD_RECOVERY_SESSION_PREF)
+            .remove(PENDING_SIGNUP_VERIFICATION_EMAIL_PREF)
             .apply()
         _passwordRecoveryRequired.value = false
+        _pendingSignupVerificationEmail.value = null
         // Never leave another account viewing the previously selected team's local cache.
         repository.switchWorkspace(null)
         supabase.auth.signOut()
