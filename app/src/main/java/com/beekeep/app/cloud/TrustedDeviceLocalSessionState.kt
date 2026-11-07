@@ -26,7 +26,6 @@ internal object TrustedDeviceLocalSessionState {
         return preferences(context).edit()
             .putString(REPLACED_USER_ID_KEY, cleanUserId)
             .putString(REPLACED_USER_EMAIL_KEY, email.trim())
-            .remove(trustedDeviceFingerprintKey(cleanUserId))
             // Offline edits made by the replaced phone must be reviewed again before a later
             // personal upload. The review gate compares them with the current cloud inventory.
             .remove("cloud_data_attachment_reviewed_user_id")
