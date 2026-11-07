@@ -36,6 +36,7 @@ internal data class TrustedDeviceFunctionResponse(
     val requests: List<TrustedDeviceRequestRow>? = null,
     val challenge: String? = null,
     val status: String? = null,
+    val trusted: Boolean? = null,
     @SerialName("device_id") val deviceId: String? = null
 )
 
@@ -47,6 +48,10 @@ internal data class TrustedDeviceFunctionResponse(
 internal class TrustedDeviceAccessApi(
     private val supabase: SupabaseClient
 ) {
+    suspend fun currentSessionTrusted(): TrustedDeviceApiResult<Boolean> = call {
+        invoke("access").trusted == true
+    }
+
     suspend fun begin(
         keyMaterial: TrustedDeviceKeyMaterial,
         deviceLabel: String

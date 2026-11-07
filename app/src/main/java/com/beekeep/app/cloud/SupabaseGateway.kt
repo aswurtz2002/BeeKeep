@@ -25,6 +25,7 @@ import io.github.jan.supabase.auth.handleDeeplinks
 import io.github.jan.supabase.auth.providers.Google
 import io.github.jan.supabase.auth.providers.builtin.Email
 import io.github.jan.supabase.auth.providers.builtin.IDToken
+import io.github.jan.supabase.auth.providers.builtin.OTP
 import io.github.jan.supabase.functions.functions
 import io.github.jan.supabase.postgrest.from
 import io.github.jan.supabase.postgrest.postgrest
@@ -72,6 +73,26 @@ sealed interface CloudResult {
     data object NotConfigured : CloudResult
     data object NotSignedIn : CloudResult
 }
+
+enum class TrustedDeviceAccessStatus {
+    CHECKING,
+    TRUSTED,
+    NOT_TRUSTED,
+    PENDING_APPROVAL,
+    EXPIRED,
+    DENIED,
+    REPLACED,
+    OFFLINE_LOCAL,
+    REPLACED_LOCAL,
+    UNAVAILABLE
+}
+
+data class TrustedDeviceAccessState(
+    val status: TrustedDeviceAccessStatus = TrustedDeviceAccessStatus.CHECKING,
+    val requestId: String? = null,
+    val requestMode: String? = null,
+    val message: String? = null
+)
 
 private object WorkspaceActionLogRefreshSignal {
     private val mutableVersion = MutableStateFlow(0L)
@@ -134,6 +155,14 @@ class SupabaseGateway(
         CloudAccountState(configured = configured, signedIn = false)
     )
     val account: StateFlow<CloudAccountState> = _account.asStateFlow()
+    private val _trustedDeviceAccess = MutableStateFlow(TrustedDeviceAccessState())
+    /** Server-confirmed authorization for this Android installation. */
+    val trustedDeviceAccess: StateFlow<TrustedDeviceAccessState> = _trustedDeviceAccess.asStateFlow()
+    private val _pendingTrustedDeviceRequests = MutableStateFlow<List<TrustedDeviceRequestRow>>(emptyList())
+    /** Verified new-phone requests visible only to the currently trusted installation. */
+    internal val pendingTrustedDeviceRequests: StateFlow<List<TrustedDeviceRequestRow>> =
+        _pendingTrustedDeviceRequests.asStateFlow()
+    private val trustedDeviceKeyStore = TrustedDeviceKeyStore()
     /** Emits after any configured sync attempt completes, including WorkManager syncs. */
     val workspaceActionLogRefreshVersion: StateFlow<Long> = WorkspaceActionLogRefreshSignal.version
     private val _accountInitialized = MutableStateFlow(false)
@@ -359,6 +388,383 @@ class SupabaseGateway(
      * an owner ID is restored only after a successful membership lookup; offline, the app stays
      * on private/local data until the identity can be verified.
      */
+    /**
+     * Checks device authorization with the server. A failed or unavailable check is closed:
+     * local Room data remains available, but no cloud read/write is granted.
+     */
+    private fun trustedDeviceOfflineFingerprintKey(userId: String): String =
+        "trusted_device_cached_fingerprint_$userId"
+
+    private fun rememberTrustedDeviceForOffline(supabase: SupabaseClient) {
+        val userId = supabase.auth.currentSessionOrNull()?.user?.id
+            ?.trim()?.takeIf { it.isNotEmpty() } ?: return
+        runCatching {
+            val fingerprint = trustedDeviceKeyStore.getOrCreateKeyMaterial().fingerprint
+            appContext.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE).edit()
+                .putString(trustedDeviceOfflineFingerprintKey(userId), fingerprint)
+                .apply()
+        }
+    }
+
+    private fun hasTrustedDeviceOfflineCache(supabase: SupabaseClient): Boolean {
+        val userId = supabase.auth.currentSessionOrNull()?.user?.id
+            ?.trim()?.takeIf { it.isNotEmpty() } ?: return false
+        val savedFingerprint = appContext.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
+            .getString(trustedDeviceOfflineFingerprintKey(userId), null)
+            ?.trim()?.takeIf { it.isNotEmpty() } ?: return false
+        val currentFingerprint = runCatching {
+            trustedDeviceKeyStore.getOrCreateKeyMaterial().fingerprint
+        }.getOrNull() ?: return false
+        return savedFingerprint == currentFingerprint
+    }
+
+    private fun isLocalOnlyTrustedDeviceState(): Boolean =
+        _trustedDeviceAccess.value.status in setOf(
+            TrustedDeviceAccessStatus.OFFLINE_LOCAL,
+            TrustedDeviceAccessStatus.REPLACED_LOCAL
+        )
+
+    private suspend fun verifyTrustedDeviceSession(supabase: SupabaseClient): Boolean {
+        val api = TrustedDeviceAccessApi(supabase)
+        return when (val access = api.currentSessionTrusted()) {
+            is TrustedDeviceApiResult.Success -> {
+                if (access.value) {
+                    rememberTrustedDeviceForOffline(supabase)
+                    _trustedDeviceAccess.value = TrustedDeviceAccessState(
+                        status = TrustedDeviceAccessStatus.TRUSTED
+                    )
+                    true
+                } else {
+                    val previous = _trustedDeviceAccess.value.status
+                    // A successful server response of "not trusted" means access has been
+                    // revoked for this session. If this same Keystore fingerprint was trusted
+                    // here before, preserve its local-only records even after an app restart.
+                    val wasPreviouslyTrustedHere = hasTrustedDeviceOfflineCache(supabase)
+                    val requestResult = api.requestStatus()
+                    val request = (requestResult as? TrustedDeviceApiResult.Success)?.value
+                    val requestExpired = request?.expiresAt?.let { expiresAt ->
+                        runCatching {
+                            java.time.Instant.parse(expiresAt).toEpochMilli() <= System.currentTimeMillis()
+                        }.getOrDefault(false)
+                    } ?: false
+                    val nextStatus = when (request?.requestStatus?.lowercase()) {
+                        "pending" -> if (requestExpired) {
+                            TrustedDeviceAccessStatus.EXPIRED
+                        } else if (request.requestMode == "replacement") {
+                            TrustedDeviceAccessStatus.PENDING_APPROVAL
+                        } else {
+                            TrustedDeviceAccessStatus.NOT_TRUSTED
+                        }
+                        "denied" -> TrustedDeviceAccessStatus.DENIED
+                        else -> if (previous == TrustedDeviceAccessStatus.TRUSTED ||
+                            previous == TrustedDeviceAccessStatus.OFFLINE_LOCAL ||
+                            wasPreviouslyTrustedHere
+                        ) {
+                            TrustedDeviceAccessStatus.REPLACED_LOCAL
+                        } else {
+                            TrustedDeviceAccessStatus.NOT_TRUSTED
+                        }
+                    }
+                    _trustedDeviceAccess.value = TrustedDeviceAccessState(
+                        status = nextStatus,
+                        requestId = request?.requestId,
+                        requestMode = request?.requestMode,
+                        message = when (nextStatus) {
+                            TrustedDeviceAccessStatus.PENDING_APPROVAL ->
+                                "Your phone request is waiting for approval on the trusted phone."
+                            TrustedDeviceAccessStatus.EXPIRED ->
+                                "The five-minute phone approval request expired. Start a new request or verify this phone by email."
+                            TrustedDeviceAccessStatus.DENIED ->
+                                "The phone approval request was denied. You can request access again."
+                            TrustedDeviceAccessStatus.REPLACED ->
+                                "This phone has been replaced for cloud access. Your local records remain on this device."
+                            TrustedDeviceAccessStatus.REPLACED_LOCAL ->
+                                "This phone was replaced for cloud access. You can still open local records on this phone, but it cannot sync or access cloud workspaces."
+                            else ->
+                                "This phone needs to be verified before it can access BeeKeep Cloud."
+                        }
+                    )
+                    false
+                }
+            }
+            is TrustedDeviceApiResult.Failure -> {
+                val cachedTrustedPhone = hasTrustedDeviceOfflineCache(supabase)
+                _trustedDeviceAccess.value = TrustedDeviceAccessState(
+                    status = if (cachedTrustedPhone) {
+                        TrustedDeviceAccessStatus.OFFLINE_LOCAL
+                    } else {
+                        TrustedDeviceAccessStatus.UNAVAILABLE
+                    },
+                    message = if (cachedTrustedPhone) {
+                        "BeeKeep can't reach the security service. Local hive records are available, but cloud sync is paused until this phone can be verified online."
+                    } else {
+                        access.message
+                    }
+                )
+                false
+            }
+        }
+    }
+
+    private suspend fun finishTrustedDeviceRegistration(
+        supabase: SupabaseClient,
+        recoverByEmail: Boolean
+    ): CloudResult {
+        val api = TrustedDeviceAccessApi(supabase)
+        val keyMaterial = try {
+            trustedDeviceKeyStore.getOrCreateKeyMaterial()
+        } catch (error: Throwable) {
+            return CloudResult.Failure(
+                error.message ?: "BeeKeep couldn't create this phone's security key."
+            )
+        }
+        val started = when (val result = api.begin(keyMaterial, trustedDeviceKeyStore.deviceLabel())) {
+            is TrustedDeviceApiResult.Success -> result.value
+            is TrustedDeviceApiResult.Failure -> return CloudResult.Failure(result.message)
+        }
+        val requestId = started.requestId?.takeIf { it.isNotBlank() }
+            ?: return CloudResult.Failure("BeeKeep didn't return a phone request ID. Try again.")
+        val challenge = started.challenge?.takeIf { it.isNotBlank() }
+            ?: return CloudResult.Failure("BeeKeep didn't return a phone security challenge. Try again.")
+        val signature = try {
+            trustedDeviceKeyStore.signChallenge(challenge)
+        } catch (error: Throwable) {
+            return CloudResult.Failure(
+                error.message ?: "BeeKeep couldn't sign this phone's security challenge."
+            )
+        }
+        val completed = when (val result = api.complete(requestId, challenge, signature)) {
+            is TrustedDeviceApiResult.Success -> result.value
+            is TrustedDeviceApiResult.Failure -> return CloudResult.Failure(result.message)
+        }
+
+        if (started.requestMode == "same_device_rebind") {
+            if (completed.status != "approved") {
+                return CloudResult.Failure("This phone couldn't restore its previous trusted-device registration.")
+            }
+        } else if (recoverByEmail) {
+            when (val recovered = api.recover(requestId, challenge, signature)) {
+                is TrustedDeviceApiResult.Success -> Unit
+                is TrustedDeviceApiResult.Failure -> return CloudResult.Failure(recovered.message)
+            }
+        } else {
+            val isReplacement = started.requestMode == "replacement"
+            _trustedDeviceAccess.value = TrustedDeviceAccessState(
+                status = if (isReplacement) {
+                    TrustedDeviceAccessStatus.PENDING_APPROVAL
+                } else {
+                    TrustedDeviceAccessStatus.NOT_TRUSTED
+                },
+                requestId = requestId,
+                requestMode = started.requestMode,
+                message = if (isReplacement) {
+                    "Approval has been requested. Open BeeKeep on your current trusted phone and approve this device."
+                } else {
+                    "No trusted phone is registered yet. Verify your email to make this the trusted phone."
+                }
+            )
+            return CloudResult.Success
+        }
+
+        return if (verifyTrustedDeviceSession(supabase)) {
+            _pendingTrustedDeviceRequests.value = emptyList()
+            // Switch the UI back to the authenticated app immediately after a same-phone
+            // rebind or verified recovery; don't leave the user on the sign-in screen while
+            // waiting for the next periodic authorization poll.
+            refreshAccount()
+            CloudResult.Success
+        } else {
+            CloudResult.Failure(
+                _trustedDeviceAccess.value.message
+                    ?: "BeeKeep couldn't confirm this phone's trusted-device access."
+            )
+        }
+    }
+
+    /** Ask the existing trusted phone to approve this installation. */
+    suspend fun requestTrustedDeviceApproval(): CloudResult {
+        val supabase = client ?: return CloudResult.NotConfigured
+        return authOperationRunner.run {
+            try {
+                ensureAuthStorageInitialized(supabase)
+                if (supabase.auth.currentSessionOrNull() == null) return@run CloudResult.NotSignedIn
+                finishTrustedDeviceRegistration(supabase, recoverByEmail = false)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Throwable) {
+                CloudResult.Failure(
+                    TeamWorkspaceSyncError.userFacing(
+                        error.message ?: "BeeKeep couldn't request phone approval."
+                    )
+                )
+            }
+        }
+    }
+
+    /** Send a six-digit security code to the email already attached to this signed-in account. */
+    suspend fun requestTrustedDeviceEmailCode(): CloudResult {
+        val supabase = client ?: return CloudResult.NotConfigured
+        return try {
+            ensureAuthStorageInitialized(supabase)
+            val email = supabase.auth.currentSessionOrNull()?.user?.email
+                ?.trim()?.takeIf { it.isNotEmpty() }
+                ?: _account.value.email.trim().takeIf { it.isNotEmpty() }
+                ?: return CloudResult.Failure("Sign in to BeeKeep before verifying this phone.")
+            supabase.auth.signInWith(OTP) {
+                this.email = email
+                createUser = false
+            }
+            _trustedDeviceAccess.value = _trustedDeviceAccess.value.copy(
+                message = "A six-digit security code was sent to $email. Enter it below to verify this phone."
+            )
+            CloudResult.Success
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Throwable) {
+            CloudResult.Failure(
+                TeamWorkspaceSyncError.userFacing(
+                    error.message ?: "BeeKeep couldn't send the security code."
+                )
+            )
+        }
+    }
+
+    /** Verify the email OTP, prove possession of the Android Keystore key, then atomically trust this phone. */
+    suspend fun verifyTrustedDeviceEmailCode(code: String): CloudResult {
+        val cleanCode = code.trim()
+        if (!cleanCode.matches(Regex("^[0-9]{6}$"))) {
+            return CloudResult.Failure("Enter the six-digit code from your BeeKeep security email.")
+        }
+        val supabase = client ?: return CloudResult.NotConfigured
+        return authOperationRunner.run {
+            try {
+                ensureAuthStorageInitialized(supabase)
+                val email = supabase.auth.currentSessionOrNull()?.user?.email
+                    ?.trim()?.takeIf { it.isNotEmpty() }
+                    ?: _account.value.email.trim().takeIf { it.isNotEmpty() }
+                    ?: return@run CloudResult.Failure("Sign in to BeeKeep before verifying this phone.")
+                val expectedUserId = _account.value.userId
+                supabase.auth.verifyEmailOtp(
+                    type = OtpType.Email.EMAIL,
+                    email = email,
+                    token = cleanCode
+                )
+                val verifiedSession = supabase.auth.currentSessionOrNull()
+                    ?: return@run CloudResult.Failure("Email verification finished without an active BeeKeep session.")
+                val verifiedUserId = verifiedSession.user?.id?.trim()
+                if (expectedUserId != null && verifiedUserId != expectedUserId) {
+                    supabase.auth.clearSession()
+                    return@run CloudResult.Failure(
+                        "The verification code belongs to a different BeeKeep account. Sign in to the correct account and try again."
+                    )
+                }
+                finishTrustedDeviceRegistration(supabase, recoverByEmail = true)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Throwable) {
+                CloudResult.Failure(
+                    TeamWorkspaceSyncError.userFacing(
+                        error.message ?: "BeeKeep couldn't verify this phone."
+                    )
+                )
+            }
+        }
+    }
+
+    /** Poll server authorization and pending approval requests while BeeKeep is open. */
+    suspend fun refreshTrustedDeviceAccess() {
+        val supabase = client ?: return
+        try {
+            ensureAuthStorageInitialized(supabase)
+            if (supabase.auth.currentSessionOrNull() == null) return
+            val previousDeviceStatus = _trustedDeviceAccess.value.status
+            val wasTrusted = previousDeviceStatus == TrustedDeviceAccessStatus.TRUSTED
+            val wasLocalOnly = previousDeviceStatus in setOf(
+                TrustedDeviceAccessStatus.OFFLINE_LOCAL,
+                TrustedDeviceAccessStatus.REPLACED_LOCAL
+            )
+            val trusted = verifyTrustedDeviceSession(supabase)
+            if (trusted) {
+                when (val requests = TrustedDeviceAccessApi(supabase).pendingRequests()) {
+                    is TrustedDeviceApiResult.Success -> _pendingTrustedDeviceRequests.value = requests.value
+                    is TrustedDeviceApiResult.Failure -> {
+                        // Keep the last list visible through a transient poll failure.
+                    }
+                }
+                if (wasLocalOnly || !_account.value.signedIn) refreshAccount()
+            } else {
+                _pendingTrustedDeviceRequests.value = emptyList()
+                if (isLocalOnlyTrustedDeviceState()) {
+                    val userId = supabase.auth.currentSessionOrNull()?.user?.id
+                        ?.trim()?.takeIf { it.isNotEmpty() }
+                    if (userId != null) {
+                        _accountSetupState.value = cachedAccountSetupState(userId)
+                            ?: BeeKeepAccountSetupState.Offline
+                        _account.value = _account.value.copy(
+                            signedIn = true,
+                            syncing = false,
+                            error = _trustedDeviceAccess.value.message
+                        )
+                    }
+                    accountVerificationJob?.cancel()
+                    stopRealtime()
+                } else if (wasTrusted || _account.value.signedIn) {
+                    accountVerificationJob?.cancel()
+                    stopRealtime()
+                    _accountSetupState.value = BeeKeepAccountSetupState.SignedOut
+                    _account.value = _account.value.copy(
+                        signedIn = false,
+                        syncing = false,
+                        error = _trustedDeviceAccess.value.message
+                    )
+                }
+            }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Throwable) {
+            // Authorization polling is retried by the next foreground cycle. Never fail open.
+        }
+    }
+
+    /** Approve or deny a new installation using a signature from this trusted phone's Keystore key. */
+    suspend fun decideTrustedDeviceRequest(requestId: String, approve: Boolean): CloudResult {
+        val supabase = client ?: return CloudResult.NotConfigured
+        return try {
+            ensureAuthStorageInitialized(supabase)
+            if (!verifyTrustedDeviceSession(supabase)) {
+                return CloudResult.Failure(
+                    _trustedDeviceAccess.value.message ?: "Only the trusted phone can review this request."
+                )
+            }
+            val api = TrustedDeviceAccessApi(supabase)
+            val challenge = when (val result = api.approvalChallenge(requestId)) {
+                is TrustedDeviceApiResult.Success -> result.value
+                is TrustedDeviceApiResult.Failure -> return CloudResult.Failure(result.message)
+            }
+            val signature = trustedDeviceKeyStore.signChallenge(challenge)
+            val decision = if (approve) {
+                api.approve(requestId, challenge, signature)
+            } else {
+                api.deny(requestId, challenge, signature)
+            }
+            when (decision) {
+                is TrustedDeviceApiResult.Success -> {
+                    refreshTrustedDeviceAccess()
+                    CloudResult.Success
+                }
+                is TrustedDeviceApiResult.Failure -> CloudResult.Failure(decision.message)
+            }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Throwable) {
+            CloudResult.Failure(
+                TeamWorkspaceSyncError.userFacing(
+                    error.message ?: "BeeKeep couldn't submit the phone decision."
+                )
+            )
+        }
+    }
+
     private suspend fun refreshAccountUnlocked() {
         _accountInitialized.value = false
         val supabase = client
@@ -411,6 +817,29 @@ class SupabaseGateway(
             _passwordRecoveryRequired.value = appContext
                 .getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
                 .getBoolean(PASSWORD_RECOVERY_SESSION_PREF, false)
+            val deviceTrusted = userId == null || _passwordRecoveryRequired.value ||
+                verifyTrustedDeviceSession(supabase)
+            val localOnlyDevice = !deviceTrusted && isLocalOnlyTrustedDeviceState()
+            if (userId != null && !_passwordRecoveryRequired.value &&
+                !deviceTrusted && !localOnlyDevice
+            ) {
+                // The phone may keep using its local Room database, but must not restore a
+                // workspace, start realtime, or run account RPCs until device verification passes.
+                stopRealtime()
+                accountVerificationJob?.cancel()
+                repository.completeStartupWorkspaceAccessResolution()
+                _accountSetupState.value = BeeKeepAccountSetupState.SignedOut
+                _account.value = CloudAccountState(
+                    configured = true,
+                    signedIn = false,
+                    email = session?.user?.email.orEmpty(),
+                    userId = userId,
+                    error = _trustedDeviceAccess.value.message
+                )
+                scheduleSessionRefresh(supabase, session!!)
+                _accountInitialized.value = true
+                return
+            }
             if (userId == null) {
                 _accountSetupState.value = BeeKeepAccountSetupState.SignedOut
                 // The auth SDK can have no current session when an expired token cannot refresh
@@ -494,8 +923,15 @@ class SupabaseGateway(
             _accountInitialized.value = true
             if (session != null && userId != null) {
                 scheduleSessionRefresh(supabase, session)
-                scheduleAccountVerification(supabase, userId)
-                if (enableRealtime) startRealtime() else stopRealtime()
+                if (isLocalOnlyTrustedDeviceState()) {
+                    // Local browsing remains available, but don't run profile/workspace RPCs
+                    // or realtime until server authorization can be confirmed again.
+                    accountVerificationJob?.cancel()
+                    stopRealtime()
+                } else {
+                    scheduleAccountVerification(supabase, userId)
+                    if (enableRealtime) startRealtime() else stopRealtime()
+                }
             } else {
                 sessionRefreshJob?.cancel()
                 stopRealtime()
@@ -1250,6 +1686,8 @@ class SupabaseGateway(
             .apply()
         _passwordRecoveryRequired.value = false
         _pendingSignupVerificationEmail.value = null
+        _trustedDeviceAccess.value = TrustedDeviceAccessState()
+        _pendingTrustedDeviceRequests.value = emptyList()
         _pendingPasswordResetEmail.value = null
         // Never leave another account viewing the previously selected team's local cache.
         repository.switchWorkspace(null)
@@ -2397,6 +2835,18 @@ class SupabaseGateway(
             refreshAccountUnlocked()
             _account.value = _account.value.copy(syncing = false, signedIn = false, error = "Your cloud session has no user ID. Sign in again.")
             return CloudResult.NotSignedIn
+        }
+        if (!verifyTrustedDeviceSession(client)) {
+            _account.value = _account.value.copy(
+                signedIn = isLocalOnlyTrustedDeviceState() && _account.value.userId != null,
+                syncing = false,
+                error = _trustedDeviceAccess.value.message
+                    ?: "Verify this phone before syncing BeeKeep data."
+            )
+            stopRealtime()
+            return CloudResult.Failure(
+                _trustedDeviceAccess.value.message ?: "This phone isn't trusted for BeeKeep Cloud."
+            )
         }
         refreshVerifiedPlanForUser(userId)
         refreshHiveLimitOverrideForUser(userId)
@@ -3612,6 +4062,12 @@ class SupabaseGateway(
             refreshAccount()
             return WorkspaceOperationResult(error = "Sign in to manage workspaces.")
         }
+        if (!verifyTrustedDeviceSession(supabase)) {
+            return WorkspaceOperationResult(
+                error = _trustedDeviceAccess.value.message
+                    ?: "Verify this phone before managing BeeKeep workspaces."
+            )
+        }
         return try {
             WorkspaceOperationResult(value = block())
         } catch (cancelled: CancellationException) {
@@ -3639,6 +4095,10 @@ class SupabaseGateway(
             val supabase = client ?: return@run CloudResult.NotConfigured
             try {
                 ensureAuthStorageInitialized(supabase)
+                // Re-evaluate authorization for the identity being authenticated rather than
+                // carrying the previous account's in-memory trusted status across sign-in.
+                _trustedDeviceAccess.value = TrustedDeviceAccessState()
+                _pendingTrustedDeviceRequests.value = emptyList()
                 // Authentication can replace the signed-in account. Return to private/local data
                 // before that transition so a cached team dataset is not displayed to the next account.
                 // Serialize account transitions with sync so a background worker cannot
