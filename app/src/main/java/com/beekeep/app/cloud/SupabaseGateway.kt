@@ -159,7 +159,7 @@ class SupabaseGateway(
     val trustedDeviceAccess: StateFlow<TrustedDeviceAccessState> = _trustedDeviceAccess.asStateFlow()
     private val _pendingTrustedDeviceRequests = MutableStateFlow<List<TrustedDeviceRequestRow>>(emptyList())
     /** Verified new-phone requests visible only to the currently trusted installation. */
-    val pendingTrustedDeviceRequests: StateFlow<List<TrustedDeviceRequestRow>> =
+    internal val pendingTrustedDeviceRequests: StateFlow<List<TrustedDeviceRequestRow>> =
         _pendingTrustedDeviceRequests.asStateFlow()
     private val trustedDeviceKeyStore = TrustedDeviceKeyStore()
     /** Emits after any configured sync attempt completes, including WorkManager syncs. */
