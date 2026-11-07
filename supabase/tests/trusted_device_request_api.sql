@@ -74,6 +74,11 @@ end;
 $replacement_request$;
 
 -- Until the Edge Function verifies the key signature, the trusted phone must not see it.
+select set_config(
+    'request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-000000000081","role":"authenticated","session_id":"10000000-0000-0000-0000-000000000081"}',
+    true
+);
 do $unverified_not_listed$
 declare pending_count integer;
 begin
@@ -84,16 +89,8 @@ begin
 end;
 $unverified_not_listed$;
 
-select set_config(
-    'request.jwt.claims',
-    '{"sub":"00000000-0000-0000-0000-000000000081","role":"authenticated","session_id":"10000000-0000-0000-0000-000000000081"}',
-    true
-);
-update device_test_context
-set approval_challenge = public.beekeep_device_issue_approval_challenge(request_id)
-where test_key = 'replacement';
--- The trusted phone cannot issue an approval challenge before the new phone's key proof.
--- Mark the new key proof through the server-only verifier RPC to simulate a valid signature.
+-- Mark the new key proof through the service-only verifier RPC to simulate
+-- the Edge Function accepting a valid ECDSA signature.
 reset role;
 select public.beekeep_internal_device_mark_request_verified(
     (select request_id from device_test_context where test_key = 'replacement'),
