@@ -16,7 +16,8 @@ values
     ('10000000-0000-0000-0000-000000000082', '00000000-0000-0000-0000-000000000081', now(), now(), now() + interval '30 days'),
     ('10000000-0000-0000-0000-000000000083', '00000000-0000-0000-0000-000000000081', now(), now(), now() + interval '30 days'),
     ('10000000-0000-0000-0000-000000000084', '00000000-0000-0000-0000-000000000081', now(), now(), now() + interval '30 days'),
-    ('10000000-0000-0000-0000-000000000085', '00000000-0000-0000-0000-000000000082', now(), now(), now() + interval '30 days')
+    ('10000000-0000-0000-0000-000000000085', '00000000-0000-0000-0000-000000000082', now(), now(), now() + interval '30 days'),
+    ('10000000-0000-0000-0000-000000000086', '00000000-0000-0000-0000-000000000081', now(), now(), now() + interval '30 days')
 on conflict (id) do nothing;
 
 create temporary table device_test_keys as
@@ -380,6 +381,83 @@ begin
     end if;
 end;
 $first_device_trusted$;
+
+-- A phone that was replaced earlier can be brought back through verified
+-- email recovery. Historical key rows remain for audit, but cannot block re-enrollment.
+set role authenticated;
+select set_config(
+    'request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-000000000081","role":"authenticated","session_id":"10000000-0000-0000-0000-000000000086"}',
+    true
+);
+insert into device_test_context(test_key, request_id, request_mode, challenge)
+select 'returning_phone', request_id, request_mode, challenge
+from public.beekeep_device_begin_request(
+    (select old_key from device_test_keys),
+    'Returning original phone'
+);
+
+do $returning_phone_mode$
+begin
+    if (select request_mode from device_test_context where test_key = 'returning_phone') <> 'replacement' then
+        raise exception 'A previously replaced phone was not classified as a replacement';
+    end if;
+end;
+$returning_phone_mode$;
+reset role;
+
+select public.beekeep_internal_device_mark_request_verified(
+    (select request_id from device_test_context where test_key = 'returning_phone'),
+    '00000000-0000-0000-0000-000000000081',
+    '10000000-0000-0000-0000-000000000086',
+    encode(
+        extensions.digest(
+            convert_to((select challenge from device_test_context where test_key = 'returning_phone'), 'UTF8'),
+            'sha256'
+        ),
+        'hex'
+    )
+);
+select public.beekeep_internal_device_recover_request(
+    (select request_id from device_test_context where test_key = 'returning_phone'),
+    '00000000-0000-0000-0000-000000000081',
+    '10000000-0000-0000-0000-000000000086',
+    encode(
+        extensions.digest(
+            convert_to((select challenge from device_test_context where test_key = 'returning_phone'), 'UTF8'),
+            'sha256'
+        ),
+        'hex'
+    )
+);
+
+set role authenticated;
+select set_config(
+    'request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-000000000081","role":"authenticated","session_id":"10000000-0000-0000-0000-000000000086"}',
+    true
+);
+do $returning_phone_trusted$
+begin
+    if not public.beekeep_device_session_is_trusted() then
+        raise exception 'Email recovery did not re-enroll a previously replaced phone';
+    end if;
+end;
+$returning_phone_trusted$;
+select set_config(
+    'request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-000000000081","role":"authenticated","session_id":"10000000-0000-0000-0000-000000000084"}',
+    true
+);
+do $previous_replacement_phone_revoked$
+begin
+    if public.beekeep_device_session_is_trusted() then
+        raise exception 'Email recovery did not revoke the previously active phone';
+    end if;
+end;
+$previous_replacement_phone_revoked$;
+
+reset role;
 
 reset role;
 rollback;
