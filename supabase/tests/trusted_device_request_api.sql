@@ -459,5 +459,110 @@ $previous_replacement_phone_revoked$;
 
 reset role;
 
+-- Stage 5 regression: enforce the per-account new-phone request limit.
+-- Five requests from distinct sessions are allowed in the rolling 15-minute window;
+-- a sixth is rejected, and the limit becomes available again after the window passes.
+insert into auth.users (id, email, raw_user_meta_data)
+values ('00000000-0000-0000-0000-000000000083', 'device-api-rate-limit@example.test', '{}'::jsonb)
+on conflict (id) do nothing;
+
+insert into auth.sessions (id, user_id, created_at, updated_at, not_after)
+values
+    ('10000000-0000-0000-0000-000000000087', '00000000-0000-0000-0000-000000000083', now(), now(), now() + interval '30 days'),
+    ('10000000-0000-0000-0000-000000000088', '00000000-0000-0000-0000-000000000083', now(), now(), now() + interval '30 days'),
+    ('10000000-0000-0000-0000-000000000089', '00000000-0000-0000-0000-000000000083', now(), now(), now() + interval '30 days'),
+    ('10000000-0000-0000-0000-000000000090', '00000000-0000-0000-0000-000000000083', now(), now(), now() + interval '30 days'),
+    ('10000000-0000-0000-0000-000000000091', '00000000-0000-0000-0000-000000000083', now(), now(), now() + interval '30 days'),
+    ('10000000-0000-0000-0000-000000000092', '00000000-0000-0000-0000-000000000083', now(), now(), now() + interval '30 days')
+on conflict (id) do nothing;
+
+set role authenticated;
+do $device_request_rate_limit$
+declare
+    attempt integer;
+    sixth_request_rejected boolean := false;
+begin
+    for attempt in 1..5 loop
+        perform set_config(
+            'request.jwt.claims',
+            jsonb_build_object(
+                'sub', '00000000-0000-0000-0000-000000000083',
+                'role', 'authenticated',
+                'session_id', pg_catalog.format(
+                    '10000000-0000-0000-0000-%012s',
+                    (86 + attempt)::text
+                )
+            )::text,
+            true
+        );
+
+        perform *
+        from public.beekeep_device_begin_request(
+            pg_catalog.encode(
+                pg_catalog.convert_to(pg_catalog.repeat(pg_catalog.chr(65 + attempt), 100), 'UTF8'),
+                'base64'
+            ),
+            pg_catalog.format('Rate-limit test phone %s', attempt)
+        );
+    end loop;
+
+    perform set_config(
+        'request.jwt.claims',
+        '{"sub":"00000000-0000-0000-0000-000000000083","role":"authenticated","session_id":"10000000-0000-0000-0000-000000000092"}',
+        true
+    );
+
+    begin
+        perform *
+        from public.beekeep_device_begin_request(
+            pg_catalog.encode(
+                pg_catalog.convert_to(pg_catalog.repeat('Z', 100), 'UTF8'),
+                'base64'
+            ),
+            'Rate-limit overflow phone'
+        );
+    exception
+        when sqlstate '53300' then
+            if sqlerrm not like '%Too many phone approval requests%' then
+                raise;
+            end if;
+            sixth_request_rejected := true;
+    end;
+
+    if not sixth_request_rejected then
+        raise exception 'A sixth new-phone request was accepted inside the 15-minute limit window';
+    end if;
+end;
+$device_request_rate_limit$;
+reset role;
+
+-- The same account can request again after every prior request leaves the window.
+update beekeep_private.device_access_requests
+set created_at = pg_catalog.clock_timestamp() - interval '16 minutes'
+where user_id = '00000000-0000-0000-0000-000000000083';
+
+set role authenticated;
+select set_config(
+    'request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-000000000083","role":"authenticated","session_id":"10000000-0000-0000-0000-000000000092"}',
+    true
+);
+do $device_request_rate_limit_expires$
+begin
+    perform *
+    from public.beekeep_device_begin_request(
+        pg_catalog.encode(
+            pg_catalog.convert_to(pg_catalog.repeat('Y', 100), 'UTF8'),
+            'base64'
+        ),
+        'Rate-limit recovery phone'
+    );
+exception
+    when others then
+        raise exception 'The new-phone request limit did not clear after 15 minutes: %', sqlerrm;
+end;
+$device_request_rate_limit_expires$;
+reset role;
+
 reset role;
 rollback;
