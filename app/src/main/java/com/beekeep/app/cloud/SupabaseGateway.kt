@@ -876,6 +876,9 @@ class SupabaseGateway(
         if (!TrustedDeviceLocalSessionState.isReplaced(appContext)) {
             return CloudResult.Failure("This phone is not marked as replaced.")
         }
+        if (!TrustedDeviceLocalSessionState.continueOffline(appContext)) {
+            return CloudResult.Failure("BeeKeep couldn't save the offline-only choice. Your records have not been changed.")
+        }
         val current = _account.value
         _accountSetupState.value = BeeKeepAccountSetupState.Offline
         _account.value = current.copy(
@@ -893,6 +896,9 @@ class SupabaseGateway(
 
     /** Show the sign-in screen; the replacement marker remains until a new login succeeds. */
     fun openSignInAfterReplacement() {
+        check(TrustedDeviceLocalSessionState.stopContinuingOffline(appContext)) {
+            "BeeKeep couldn't save the sign-in choice."
+        }
         _accountSetupState.value = BeeKeepAccountSetupState.SignedOut
         _account.value = CloudAccountState(
             configured = configured,
@@ -1024,9 +1030,19 @@ class SupabaseGateway(
                     repository.switchWorkspace(null)
                 }
                 _accountSetupState.value = BeeKeepAccountSetupState.Offline
+                val continueOffline =
+                    TrustedDeviceLocalSessionState.isContinuingOffline(appContext)
                 _trustedDeviceAccess.value = TrustedDeviceAccessState(
-                    status = TrustedDeviceAccessStatus.REPLACED_LOCAL,
-                    message = "You were signed out because another phone was approved. Continue offline to view this phone's local records, or sign in again."
+                    status = if (continueOffline) {
+                        TrustedDeviceAccessStatus.REPLACED_LOCAL_OFFLINE
+                    } else {
+                        TrustedDeviceAccessStatus.REPLACED_LOCAL
+                    },
+                    message = if (continueOffline) {
+                        "This phone is signed out. Local records are available, but cloud sync is off."
+                    } else {
+                        "You were signed out because another phone was approved. Continue offline to view this phone's local records, or sign in again."
+                    }
                 )
                 _account.value = CloudAccountState(
                     configured = true,
