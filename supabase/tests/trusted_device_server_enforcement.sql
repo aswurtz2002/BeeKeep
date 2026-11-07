@@ -216,7 +216,7 @@ declare
     denied boolean := false;
 begin
     if public.beekeep_device_session_is_trusted() then
-        raise exception 'The owner's second phone was incorrectly trusted';
+        raise exception 'The second owner phone was incorrectly trusted';
     end if;
 
     select count(*) into row_count from public.beekeep_documents
