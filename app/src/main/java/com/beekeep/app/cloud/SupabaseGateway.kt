@@ -896,8 +896,11 @@ class SupabaseGateway(
 
     /** Show the sign-in screen; the replacement marker remains until a new login succeeds. */
     fun openSignInAfterReplacement() {
-        check(TrustedDeviceLocalSessionState.stopContinuingOffline(appContext)) {
-            "BeeKeep couldn't save the sign-in choice."
+        if (!TrustedDeviceLocalSessionState.stopContinuingOffline(appContext)) {
+            _account.value = _account.value.copy(
+                error = "BeeKeep couldn't save the sign-in choice. Your local records have not been changed."
+            )
+            return
         }
         _accountSetupState.value = BeeKeepAccountSetupState.SignedOut
         _account.value = CloudAccountState(
