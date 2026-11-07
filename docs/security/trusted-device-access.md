@@ -71,7 +71,7 @@ Email recovery is not equivalent to approval from an uncompromised old phone: an
 
 ### Stage 2 — Backend foundation
 
-#### 2A — Trusted-session registry (in progress)
+#### 2A — Trusted-session registry (complete)
 
 - Add private registry tables for trusted installations and expiring access requests.
 - Add a reusable server predicate that binds the JWT `session_id` to an active device row and a live `auth.sessions` row.
@@ -79,13 +79,20 @@ Email recovery is not equivalent to approval from an uncompromised old phone: an
 - Add SQL tests for matching, unknown, cross-account, and revoked sessions.
 - This first migration deliberately does not attach the guard to live data policies, so it cannot lock out existing app versions.
 
-#### 2B — Access enforcement (not started)
+#### 2B — Approval API (in progress)
+
+- Add pre-trust request creation, session-bound status, and trusted-phone pending-request APIs.
+- Add short-lived key-proof and approval challenges; expose approval/recovery/rebind operations only through service-role RPCs.
+- Verify ECDSA signatures in a server Edge Function before service RPCs can mark a request verified or replace the trusted device.
+- Keep the RLS/Storage lockout switch separate until the Android client is ready.
+
+#### 2C — Access enforcement (not started)
 
 - Add restrictive device authorization to personal/workspace table policies and photo Storage policies.
 - Add explicit guards to user-callable `SECURITY DEFINER` functions and sensitive Edge Functions.
 - Add SQL security tests proving a pending/replaced device cannot read or write personal records, shared workspace records, action data, or private photos, while a trusted device and another legitimate workspace member still can.
 
-#### 2C — Deployment and verification (not started)
+#### 2D — Deployment and verification (not started)
 
 - Apply and verify the fully coordinated database migrations only on BeeKeep staging project `nnmcwsdunpwdktexgivr`; never change BeeKeep Production as part of this work.
 

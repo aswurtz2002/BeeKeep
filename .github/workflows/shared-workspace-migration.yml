@@ -191,3 +191,8 @@ jobs:
         run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261107010000_beekeep_trusted_device_foundation.sql
       - name: Verify trusted-device session authorization
         run: psql -v ON_ERROR_STOP=1 -f supabase/tests/trusted_device_session_security.sql
+
+      - name: Apply trusted-device request and approval API
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261107030000_beekeep_trusted_device_request_api.sql
+      - name: Verify trusted-device request, approval, denial and recovery
+        run: psql -v ON_ERROR_STOP=1 -f supabase/tests/trusted_device_request_api.sql
