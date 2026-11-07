@@ -3,6 +3,12 @@
 -- is kept separate until the Android app can complete device authorization.
 begin;
 
+-- A replaced physical phone may return later through email recovery. Keep historical
+-- rows, but allow a new session row for the same public-key fingerprint; the active
+-- device partial index still limits an account to one live installation.
+alter table beekeep_private.trusted_devices
+    drop constraint if exists trusted_devices_user_key_fingerprint_key;
+
 alter table beekeep_private.device_access_requests
     add column if not exists request_mode text not null default 'first_device_setup',
     add column if not exists challenge_hash text,
@@ -680,6 +686,18 @@ begin
     if request_row.id is null then
         raise exception 'This phone registration has expired or is no longer pending.'
             using errcode = 'P0002';
+    end if;
+
+    if request_row.request_mode = 'first_device_setup'
+       and exists (
+           select 1
+           from beekeep_private.trusted_devices d
+           where d.user_id = p_user_id
+             and d.device_status = 'active'
+             and d.revoked_at is null
+       ) then
+        raise exception 'This account already has a trusted phone. Start a replacement request instead.'
+            using errcode = '42501';
     end if;
 
     if not exists (
