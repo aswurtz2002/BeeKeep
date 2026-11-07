@@ -144,7 +144,21 @@ class SupabaseGateway(
     /** Email address awaiting the in-app six-digit signup verification code, if any. */
     val pendingSignupVerificationEmail: StateFlow<String?> =
         _pendingSignupVerificationEmail.asStateFlow()
-    /** True only after a password-recovery link has been returned to and processed by this app. */
+    private val _pendingPasswordResetEmail = MutableStateFlow(
+        appContext.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE).let { prefs ->
+            val email = prefs.getString(PENDING_PASSWORD_RESET_REQUEST_EMAIL_PREF, null)
+                ?.trim()?.takeIf { it.isNotEmpty() }
+            val requestedAt = prefs.getLong(PENDING_PASSWORD_RESET_REQUEST_AT_PREF, 0L)
+            val age = System.currentTimeMillis() - requestedAt
+            email?.takeIf {
+                requestedAt > 0L && age in 0L..PASSWORD_RESET_REQUEST_MAX_AGE_MS
+            }
+        }
+    )
+    /** Email awaiting an in-app six-digit password-reset code, if a recent request exists. */
+    val pendingPasswordResetEmail: StateFlow<String?> =
+        _pendingPasswordResetEmail.asStateFlow()
+    /** True after a recovery link or six-digit recovery code has established a recovery session. */
     val passwordRecoveryRequired: StateFlow<Boolean> = _passwordRecoveryRequired.asStateFlow()
     /** True after Supabase has restored the stored session and the account identity is known. */
     val accountInitialized: StateFlow<Boolean> = _accountInitialized.asStateFlow()
@@ -1079,29 +1093,78 @@ class SupabaseGateway(
     }
 
     /**
-     * Requests a recovery link without revealing whether the email address belongs to an account.
-     * The recovery-pending marker is only used to recognize a PKCE callback that has no type field.
+     * Requests a password-recovery email without revealing whether the address belongs to an account.
+     * The Reset Password email template must use {{ .Token }} so Supabase sends a numeric code.
      */
     suspend fun requestPasswordReset(email: String): CloudResult {
+        val cleanEmail = email.trim()
         val result = authEmailRequest { supabase ->
             supabase.auth.resetPasswordForEmail(
-                email = email.trim(),
+                email = cleanEmail,
                 redirectUrl = authRedirectUrl()
             )
         }
         if (result == CloudResult.Success) {
             appContext.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE).edit()
-                .putString(PENDING_PASSWORD_RESET_REQUEST_EMAIL_PREF, email.trim())
+                .putString(PENDING_PASSWORD_RESET_REQUEST_EMAIL_PREF, cleanEmail)
                 .putLong(PENDING_PASSWORD_RESET_REQUEST_AT_PREF, System.currentTimeMillis())
                 .apply()
+            _pendingPasswordResetEmail.value = cleanEmail
         }
         return result
     }
 
-    /** Updates the password only after a recovery callback has established an authenticated session. */
+    /** Verifies the six-digit recovery code and opens a recovery-only authenticated session. */
+    suspend fun verifyPasswordResetCode(email: String, code: String): CloudResult {
+        val cleanEmail = email.trim()
+        val cleanCode = code.trim()
+        if (cleanEmail.isBlank() || !cleanCode.matches(Regex("^[0-9]{6}$"))) {
+            return CloudResult.Failure("Enter the six-digit code from your BeeKeep password-reset email.")
+        }
+
+        val prefs = appContext.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
+        val requestedEmail = prefs.getString(PENDING_PASSWORD_RESET_REQUEST_EMAIL_PREF, null)
+            ?.trim().orEmpty()
+        val requestedAt = prefs.getLong(PENDING_PASSWORD_RESET_REQUEST_AT_PREF, 0L)
+        val requestAge = System.currentTimeMillis() - requestedAt
+        val requestIsFresh = requestedAt > 0L &&
+            requestAge in 0L..PASSWORD_RESET_REQUEST_MAX_AGE_MS
+        if (!requestIsFresh || !requestedEmail.equals(cleanEmail, ignoreCase = true)) {
+            clearPendingPasswordResetRequest()
+            return CloudResult.Failure("That password-reset request has expired. Request a new code and try again.")
+        }
+
+        // Do not publish a normal signed-in account state during password recovery.
+        // The recovery-only flag below keeps the app on the restricted password screen
+        // until the password is changed and the user explicitly continues.
+        val result = authEmailRequest { supabase ->
+            supabase.auth.verifyEmailOtp(
+                type = OtpType.Email.RECOVERY,
+                email = cleanEmail,
+                token = cleanCode
+            )
+        }
+        if (result == CloudResult.Success) {
+            prefs.edit()
+                .putBoolean(PASSWORD_RECOVERY_SESSION_PREF, true)
+                .remove(PENDING_PASSWORD_RESET_REQUEST_EMAIL_PREF)
+                .remove(PENDING_PASSWORD_RESET_REQUEST_AT_PREF)
+                .apply()
+            _passwordRecoveryRequired.value = true
+            _pendingPasswordResetEmail.value = null
+        }
+        return result
+    }
+
+    /** Cancels the pending code step without signing in or changing the account. */
+    fun cancelPendingPasswordReset() {
+        clearPendingPasswordResetRequest()
+    }
+
+    /** Updates the password only after a recovery link or recovery code has established a session. */
     suspend fun updatePassword(newPassword: String): CloudResult {
         if (!_passwordRecoveryRequired.value) {
-            return CloudResult.Failure("Open the password-reset link from your email before choosing a new password.")
+            return CloudResult.Failure("Verify your password-reset code before choosing a new password.")
         }
         if (newPassword.length < 8) {
             return CloudResult.Failure("Use a password with at least 8 characters.")
@@ -1131,6 +1194,7 @@ class SupabaseGateway(
             .remove(PENDING_PASSWORD_RESET_REQUEST_EMAIL_PREF)
             .remove(PENDING_PASSWORD_RESET_REQUEST_AT_PREF)
             .apply()
+        _pendingPasswordResetEmail.value = null
     }
 
     /** Leaves the recovery-only screen after the user acknowledges the successful password change. */
@@ -1141,6 +1205,7 @@ class SupabaseGateway(
             .remove(PASSWORD_RECOVERY_SESSION_PREF)
             .apply()
         _passwordRecoveryRequired.value = false
+        _pendingPasswordResetEmail.value = null
         refreshAccount()
     }
 
@@ -1180,6 +1245,7 @@ class SupabaseGateway(
             .apply()
         _passwordRecoveryRequired.value = false
         _pendingSignupVerificationEmail.value = null
+        _pendingPasswordResetEmail.value = null
         // Never leave another account viewing the previously selected team's local cache.
         repository.switchWorkspace(null)
         supabase.auth.signOut()
@@ -3043,6 +3109,7 @@ class SupabaseGateway(
                                     .remove(PENDING_PASSWORD_RESET_REQUEST_AT_PREF)
                                     .apply()
                                 _passwordRecoveryRequired.value = true
+                                _pendingPasswordResetEmail.value = null
                             } else {
                                 clearPendingPasswordResetRequest()
                                 _account.value = _account.value.copy(
