@@ -71,6 +71,12 @@ export function derEcdsaToP1363(der: Uint8Array): Uint8Array {
   return raw;
 }
 
+function toOwnedArrayBuffer(bytes: Uint8Array): ArrayBuffer {
+  const copy = new Uint8Array(bytes.length);
+  copy.set(bytes);
+  return copy.buffer;
+}
+
 export async function verifyEcdsaP256Signature(
   publicKeyBase64: string,
   signatureBase64: string,
@@ -81,7 +87,7 @@ export async function verifyEcdsaP256Signature(
   const signature = derEcdsaToP1363(derSignature);
   const publicKey = await crypto.subtle.importKey(
     "spki",
-    spki,
+    toOwnedArrayBuffer(spki),
     { name: "ECDSA", namedCurve: "P-256" },
     false,
     ["verify"],
@@ -89,7 +95,7 @@ export async function verifyEcdsaP256Signature(
   return await crypto.subtle.verify(
     { name: "ECDSA", hash: "SHA-256" },
     publicKey,
-    signature,
-    encoder.encode(message),
+    toOwnedArrayBuffer(signature),
+    toOwnedArrayBuffer(encoder.encode(message)),
   );
 }
