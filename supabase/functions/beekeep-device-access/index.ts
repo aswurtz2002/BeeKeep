@@ -225,7 +225,7 @@ Deno.serve(async (req: Request) => {
             typeof context.request_mode !== "string") {
           return respond(410, { success: false, error: "This phone request has expired. Start again." });
         }
-        if (!sameHex(await sha256Hex(challenge), context.challenge_hash) {
+        if (!sameHex(await sha256Hex(challenge), context.challenge_hash)) {
           return respond(403, { success: false, error: "The phone registration challenge is not valid." });
         }
         await requireValidSignature(context.public_key, signed, challenge);
@@ -270,7 +270,7 @@ Deno.serve(async (req: Request) => {
           return respond(410, { success: false, error: "The approval request expired. Open it again on the trusted phone." });
         }
         const approvalChallenge = requiredString(signedChallenge, "approval challenge", 256);
-        if (!sameHex(await sha256Hex(approvalChallenge), context.approval_challenge_hash) {
+        if (!sameHex(await sha256Hex(approvalChallenge), context.approval_challenge_hash)) {
           return respond(403, { success: false, error: "The approval challenge is not valid." });
         }
         await requireValidSignature(context.trusted_public_key, signed, approvalChallenge);
