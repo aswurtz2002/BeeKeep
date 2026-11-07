@@ -64,8 +64,7 @@ select set_config(
 
 insert into public.beekeep_documents (user_id, entity_type, entity_id, payload, updated_at, deleted, device_id)
 values
-    ('00000000-0000-0000-0000-000000000091', 'hive', 9101, '{"id":9101,"number":"Private owner hive"}', 1000, false, 'trusted-device-test'),
-    ('00000000-0000-0000-0000-000000000092', 'hive', 9201, '{"id":9201,"number":"Private member hive"}', 1000, false, 'trusted-device-test')
+    ('00000000-0000-0000-0000-000000000091', 'hive', 9101, '{"id":9101,"number":"Private owner hive"}', 1000, false, 'trusted-device-test')
 on conflict (user_id, entity_type, entity_id) do nothing;
 
 insert into public.beekeep_workspace_documents (
