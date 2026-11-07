@@ -24,10 +24,12 @@ internal data class TrustedDeviceKeyMaterial(
 internal class TrustedDeviceKeyStore {
     @Synchronized
     fun getOrCreateKeyMaterial(): TrustedDeviceKeyMaterial {
-        val keyStore = loadKeyStore()
-        if (!keyStore.containsAlias(KEY_ALIAS)) {
+        val existingKeyStore = loadKeyStore()
+        if (!existingKeyStore.containsAlias(KEY_ALIAS)) {
             generateKeyPair()
         }
+        // Reload after generation so this KeyStore view includes the new certificate.
+        val keyStore = loadKeyStore()
         val publicKey = keyStore.getCertificate(KEY_ALIAS)?.publicKey
             ?: error("BeeKeep couldn't load this phone's security key. Try again.")
         val encoded = publicKey.encoded
@@ -47,8 +49,8 @@ internal class TrustedDeviceKeyStore {
     }
 
     fun deviceLabel(): String {
-        val manufacturer = Build.MANUFACTURER?.trim()?.takeIf { it.isNotEmpty() }
-        val model = Build.MODEL?.trim()?.takeIf { it.isNotEmpty() }
+        val manufacturer = Build.MANUFACTURER.trim()?.takeIf { it.isNotEmpty() }
+        val model = Build.MODEL.trim()?.takeIf { it.isNotEmpty() }
         return listOfNotNull(manufacturer, model)
             .distinct()
             .joinToString(" ")
