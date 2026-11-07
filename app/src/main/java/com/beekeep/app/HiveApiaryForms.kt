@@ -177,14 +177,11 @@ internal fun AddHiveScreen(
             title = {
                 Text("Hive Limit Reached", fontWeight = FontWeight.ExtraBold)
             },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            text = if (currentPlan == BeeKeepPlan.HOBBYIST) {
+                null
+            } else {
+                {
                     Text(BeeKeepEntitlements.hiveLimitMessage(currentPlan, hiveLimit))
-                    // Commercial's primary limit message already contains the safety reassurance and support guidance.
-                    // Keep the extra explanation for lower plans only, so Commercial doesn't repeat itself.
-                    if (currentPlan != BeeKeepPlan.COMMERCIAL) {
-                        Text("Your existing hive records remain safe. Choose a plan with a higher limit to keep adding hives.")
-                    }
                 }
             },
             confirmButton = {
