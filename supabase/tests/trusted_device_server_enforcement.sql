@@ -55,6 +55,13 @@ values
     ('20000000-0000-0000-0000-000000000091', '00000000-0000-0000-0000-000000000092', 'member')
 on conflict (workspace_id, user_id) do nothing;
 
+-- Existing document triggers validate the authenticated owner even during test seeding.
+select set_config(
+    'request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-000000000091","role":"authenticated","session_id":"10000000-0000-0000-0000-000000000091"}',
+    true
+);
+
 insert into public.beekeep_documents (user_id, entity_type, entity_id, payload, updated_at, deleted, device_id)
 values
     ('00000000-0000-0000-0000-000000000091', 'hive', 9101, '{"id":9101,"number":"Private owner hive"}', 1000, false, 'trusted-device-test'),
