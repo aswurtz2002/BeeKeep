@@ -11,6 +11,7 @@ internal object TrustedDeviceLocalSessionState {
     private const val PREFS_NAME = "beekeep_prefs"
     private const val REPLACED_USER_ID_KEY = "trusted_device_replaced_local_user_id"
     private const val REPLACED_USER_EMAIL_KEY = "trusted_device_replaced_local_user_email"
+    private const val CONTINUE_OFFLINE_KEY = "trusted_device_replaced_continue_offline"
 
     fun isReplaced(context: Context): Boolean = replacedUserId(context) != null
 
@@ -21,11 +22,18 @@ internal object TrustedDeviceLocalSessionState {
     fun replacedUserEmail(context: Context): String =
         preferences(context).getString(REPLACED_USER_EMAIL_KEY, "").orEmpty()
 
+    fun isContinuingOffline(context: Context): Boolean =
+        preferences(context).getBoolean(CONTINUE_OFFLINE_KEY, false)
+
+    fun continueOffline(context: Context): Boolean =
+        preferences(context).edit().putBoolean(CONTINUE_OFFLINE_KEY, true).commit()
+
     fun markReplaced(context: Context, userId: String, email: String): Boolean {
         val cleanUserId = userId.trim().takeIf { it.isNotEmpty() } ?: return false
         return preferences(context).edit()
             .putString(REPLACED_USER_ID_KEY, cleanUserId)
             .putString(REPLACED_USER_EMAIL_KEY, email.trim())
+            .putBoolean(CONTINUE_OFFLINE_KEY, false)
             // Offline edits made by the replaced phone must be reviewed again before a later
             // personal upload. The review gate compares them with the current cloud inventory.
             .remove("cloud_data_attachment_reviewed_user_id")
@@ -42,6 +50,7 @@ internal object TrustedDeviceLocalSessionState {
         val editor = preferences(context).edit()
             .remove(REPLACED_USER_ID_KEY)
             .remove(REPLACED_USER_EMAIL_KEY)
+            .remove(CONTINUE_OFFLINE_KEY)
             .remove(trustedDeviceFingerprintKey(cleanCurrentUserId))
         if (oldUserId != null) editor.remove(trustedDeviceFingerprintKey(oldUserId))
         check(editor.commit()) { "BeeKeep couldn't restore this phone's device-verification state." }
@@ -52,6 +61,7 @@ internal object TrustedDeviceLocalSessionState {
             preferences(context).edit()
                 .remove(REPLACED_USER_ID_KEY)
                 .remove(REPLACED_USER_EMAIL_KEY)
+                .remove(CONTINUE_OFFLINE_KEY)
                 .commit()
         ) { "BeeKeep couldn't clear the previous device's local-only state." }
     }
