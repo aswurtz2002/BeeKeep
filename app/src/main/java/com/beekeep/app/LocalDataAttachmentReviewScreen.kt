@@ -146,6 +146,11 @@ internal fun BeeKeepLocalDataAttachmentReviewScreen(
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     Text("Local and cloud inventory", fontWeight = FontWeight.Bold)
+                    Text(
+                        "Local counts include saved rows on this phone; cloud counts exclude deleted cloud records.",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodySmall
+                    )
                     if (currentPreview == null) {
                         if (loading) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -174,7 +179,7 @@ internal fun BeeKeepLocalDataAttachmentReviewScreen(
                         InventoryRow("Events", localCounts["event"] ?: 0, cloudActiveCounts["event"] ?: 0)
                         val snapshot = currentPreview.localSnapshot
                         Text(
-                            "Also found: ${snapshot.pendingSyncWrites} queued writes, ${snapshot.pendingActionBatches} apiary action batches, ${snapshot.noteDrafts} note drafts, and ${snapshot.formDrafts} inspection drafts.",
+                            "Also found: ${snapshot.pendingSyncWrites} queued writes, ${snapshot.pendingActionBatches} apiary action batches, ${snapshot.pendingWorkspaceActions} activity entries, ${snapshot.noteDrafts} note drafts, and ${snapshot.formDrafts} inspection drafts.",
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             style = MaterialTheme.typography.bodySmall
                         )
@@ -198,6 +203,7 @@ internal fun BeeKeepLocalDataAttachmentReviewScreen(
                         InventorySummaryRow("ID collisions to remap safely", mergePlan.remapCount)
                         InventorySummaryRow("Records already present", mergePlan.duplicateCount)
                         InventorySummaryRow("Records kept local-only", mergePlan.localOnlyCount)
+                        InventorySummaryRow("Tasks kept on this phone", mergePlan.taskCount)
                         InventorySummaryRow("Items needing manual review", mergePlan.reviewRequiredCount)
                         if (mergePlan.reviewRequiredCount > 0) {
                             Spacer(Modifier.height(2.dp))
