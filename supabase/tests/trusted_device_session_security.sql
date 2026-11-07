@@ -31,6 +31,40 @@ values (
 )
 on conflict (session_id) do nothing;
 
+-- The per-account uniqueness rule prevents a second simultaneous active phone.
+do $single_active_device$
+begin
+    begin
+        insert into beekeep_private.trusted_devices (
+            user_id, session_id, key_fingerprint, public_key, device_label
+        )
+        values (
+            '00000000-0000-0000-0000-000000000071',
+            '10000000-0000-0000-0000-000000000072',
+            repeat('b', 64),
+            repeat('B', 128),
+            'Second test phone'
+        );
+        raise exception 'The database allowed two active devices for one BeeKeep account';
+    exception
+        when unique_violation then
+            null;
+    end;
+end;
+$single_active_device$;
+
+do $private_registry_acl$
+begin
+    if has_schema_privilege('anon', 'beekeep_private', 'USAGE')
+       or has_schema_privilege('authenticated', 'beekeep_private', 'USAGE')
+       or has_table_privilege('anon', 'beekeep_private.trusted_devices', 'SELECT')
+       or has_table_privilege('authenticated', 'beekeep_private.trusted_devices', 'SELECT')
+       or has_table_privilege('service_role', 'beekeep_private.trusted_devices', 'SELECT') then
+        raise exception 'A client or service role has direct access to the private trusted-device registry';
+    end if;
+end;
+$private_registry_acl$;
+
 set role authenticated;
 
 -- An authenticated token with a matching active installation is trusted.
@@ -116,7 +150,7 @@ where session_id = '10000000-0000-0000-0000-000000000074';
 set role authenticated;
 select set_config(
     'request.jwt.claims',
-    '{"sub":"00000000-0000-0000-0000-000000000071","role":"authenticated","session_id":"10000000-0000-0000-0000-000000000071"}',
+    '{"sub":"00000000-0000-0000-0000-000000000071","role":"authenticated","session_id":"10000000-0000-0000-0000-000000000074"}',
     true
 );
 do $revoked_session$
