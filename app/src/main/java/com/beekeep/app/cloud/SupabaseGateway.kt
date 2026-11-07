@@ -558,6 +558,10 @@ class SupabaseGateway(
 
         return if (verifyTrustedDeviceSession(supabase)) {
             _pendingTrustedDeviceRequests.value = emptyList()
+            // Switch the UI back to the authenticated app immediately after a same-phone
+            // rebind or verified recovery; don't leave the user on the sign-in screen while
+            // waiting for the next periodic authorization poll.
+            refreshAccount()
             CloudResult.Success
         } else {
             CloudResult.Failure(
@@ -644,13 +648,7 @@ class SupabaseGateway(
                         "The verification code belongs to a different BeeKeep account. Sign in to the correct account and try again."
                     )
                 }
-                val enrollment = finishTrustedDeviceRegistration(supabase, recoverByEmail = true)
-                if (enrollment == CloudResult.Success &&
-                    _trustedDeviceAccess.value.status == TrustedDeviceAccessStatus.TRUSTED
-                ) {
-                    syncMutex.withLock { refreshAccountUnlocked() }
-                }
-                enrollment
+                finishTrustedDeviceRegistration(supabase, recoverByEmail = true)
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Throwable) {
