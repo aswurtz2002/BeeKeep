@@ -731,9 +731,8 @@ class SupabaseGateway(
                         "The verification code belongs to a different BeeKeep account. Sign in to the correct account and try again."
                     )
                 }
-                if (verifiedUserId != null &&
-                    TrustedDeviceLocalSessionState.isReplaced(appContext)
-                ) {
+                if (verifiedUserId != null) {
+                    // Email verification can establish a fresh Auth session on the same phone.
                     TrustedDeviceLocalSessionState.clearForAuthenticatedSession(
                         appContext,
                         verifiedUserId
@@ -4427,11 +4426,9 @@ class SupabaseGateway(
                     block()
                     val authenticatedUserId = supabase.auth.currentSessionOrNull()
                         ?.user?.id?.trim()?.takeIf { it.isNotEmpty() }
-                    if (authenticatedUserId != null &&
-                        TrustedDeviceLocalSessionState.isReplaced(appContext)
-                    ) {
-                        // Only a deliberate, successful new authentication clears the marker.
-                        // Merely restoring a stale replaced session must keep forcing local sign-out.
+                    if (authenticatedUserId != null) {
+                        // Only a deliberate, successful new authentication clears the marker and
+                        // old-session offline fingerprint. Restoring stale auth never does this.
                         TrustedDeviceLocalSessionState.clearForAuthenticatedSession(
                             appContext,
                             authenticatedUserId
