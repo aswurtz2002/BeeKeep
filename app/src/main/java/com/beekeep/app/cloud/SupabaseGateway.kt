@@ -983,20 +983,38 @@ class SupabaseGateway(
                 this.password = password
             }
         }
-        when (result) {
+        val userFacingResult = when (result) {
+            is CloudResult.Failure -> {
+                val error = result.message.lowercase()
+                val invalidCredentials = listOf(
+                    "invalid login credentials",
+                    "invalid_credentials",
+                    "invalid credentials",
+                    "invalid email or password",
+                    "email or password is incorrect"
+                ).any(error::contains)
+                if (invalidCredentials) {
+                    CloudResult.Failure("The email or password you entered is incorrect.")
+                } else {
+                    result
+                }
+            }
+            else -> result
+        }
+        when (userFacingResult) {
             CloudResult.Success -> {
                 clearPendingSignupVerification()
                 clearPendingPasswordResetRequestUnlessEmailMatches(email)
             }
             is CloudResult.Failure -> {
-                val error = result.message.lowercase()
+                val error = userFacingResult.message.lowercase()
                 if ("not confirmed" in error || "not verified" in error || "email_not_confirmed" in error) {
                     setPendingSignupVerificationEmail(email)
                 }
             }
             else -> Unit
         }
-        return result
+        return userFacingResult
     }
 
     /**
