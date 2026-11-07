@@ -735,6 +735,14 @@ class SupabaseGateway(
                         "The verification code belongs to a different BeeKeep account. Sign in to the correct account and try again."
                     )
                 }
+                if (verifiedUserId != null &&
+                    TrustedDeviceLocalSessionState.isReplaced(appContext)
+                ) {
+                    TrustedDeviceLocalSessionState.clearForAuthenticatedSession(
+                        appContext,
+                        verifiedUserId
+                    )
+                }
                 finishTrustedDeviceRegistration(supabase, recoverByEmail = true)
             } catch (cancelled: CancellationException) {
                 throw cancelled
@@ -986,11 +994,6 @@ class SupabaseGateway(
             ensureAuthStorageInitialized(supabase)
             val session = supabase.auth.currentSessionOrNull()
             val userId = session?.user?.id?.trim()?.takeIf { it.isNotEmpty() }
-            if (userId != null && TrustedDeviceLocalSessionState.isReplaced(appContext)) {
-                // A successful new login explicitly leaves the replaced-phone local-only state.
-                // The pending local-data review still protects any personal upload to this account.
-                TrustedDeviceLocalSessionState.clearForAuthenticatedSession(appContext, userId)
-            }
             _passwordRecoveryRequired.value = appContext
                 .getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
                 .getBoolean(PASSWORD_RECOVERY_SESSION_PREF, false)
@@ -4426,6 +4429,18 @@ class SupabaseGateway(
                 syncMutex.withLock {
                     repository.switchWorkspace(null)
                     block()
+                    val authenticatedUserId = supabase.auth.currentSessionOrNull()
+                        ?.user?.id?.trim()?.takeIf { it.isNotEmpty() }
+                    if (authenticatedUserId != null &&
+                        TrustedDeviceLocalSessionState.isReplaced(appContext)
+                    ) {
+                        // Only a deliberate, successful new authentication clears the marker.
+                        // Merely restoring a stale replaced session must keep forcing local sign-out.
+                        TrustedDeviceLocalSessionState.clearForAuthenticatedSession(
+                            appContext,
+                            authenticatedUserId
+                        )
+                    }
                     refreshAccountUnlocked()
                 }
                 val workspaceToRestore = restoreWorkspaceId?.trim()?.takeIf { it.isNotEmpty() }
