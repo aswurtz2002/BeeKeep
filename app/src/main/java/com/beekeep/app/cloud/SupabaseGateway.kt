@@ -738,6 +738,9 @@ class SupabaseGateway(
                         verifiedUserId
                     )
                 }
+                _trustedDeviceAccess.value = TrustedDeviceAccessState(
+                    status = TrustedDeviceAccessStatus.CHECKING
+                )
                 finishTrustedDeviceRegistration(supabase, recoverByEmail = true)
             } catch (cancelled: CancellationException) {
                 throw cancelled
