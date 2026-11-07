@@ -224,6 +224,120 @@ Deno.serve(async (req: Request) => {
         return respond(200, { success: true, challenge: data });
       }
 
+      case "finalize_challenge": {
+        if (!isUuid(requestId)) return respond(400, { success: false, error: "Invalid phone request." });
+        const challenge = await rpcData<string>(
+          userClient,
+          "beekeep_device_issue_finalize_challenge",
+          { p_request_id: requestId },
+        );
+        return respond(200, { success: true, challenge });
+      }
+
+      case "finalize": {
+        if (!isUuid(requestId)) return respond(400, { success: false, error: "Invalid phone request." });
+        const challenge = requiredString(signedChallenge, "finalization challenge", 256);
+        const signed = requiredString(signature, "signature", 2048);
+        const rows = await rpcData<Array<JsonRecord>>(
+          adminClient,
+          "beekeep_internal_device_finalize_context",
+          {
+            p_request_id: requestId,
+            p_user_id: userId,
+            p_session_id: sessionId,
+          },
+        );
+        const context = Array.isArray(rows) ? rows[0] : null;
+
+        // A lost HTTP response after a successful database commit is safe to retry.
+        if (context?.request_status === "approved") {
+          const trusted = await rpcData<boolean>(
+            userClient,
+            "beekeep_device_session_is_trusted",
+            {},
+          );
+          if (trusted) return respond(200, { success: true, status: "approved" });
+          return respond(409, { success: false, error: "This phone approval is no longer active. Start verification again." });
+        }
+
+        if (!context ||
+            !["approved_pending_finalize", "finalizing"].includes(String(context.request_status)) ||
+            typeof context.public_key !== "string" ||
+            typeof context.finalization_challenge_hash !== "string" ||
+            typeof context.finalization_challenge_expires_at !== "string" ||
+            Date.parse(context.finalization_challenge_expires_at) <= Date.now()) {
+          return respond(410, { success: false, error: "This final phone approval challenge has expired. Request a new one." });
+        }
+
+        if (!sameHex(await sha256Hex(challenge), context.finalization_challenge_hash)) {
+          return respond(403, { success: false, error: "The final phone approval challenge is not valid." });
+        }
+        await requireValidSignature(context.public_key, signed, challenge);
+
+        const finalizationArgs = {
+          p_request_id: requestId,
+          p_user_id: userId,
+          p_session_id: sessionId,
+          p_finalization_challenge_hash: context.finalization_challenge_hash,
+        };
+
+        const begun = await rpcData<boolean>(
+          adminClient,
+          "beekeep_internal_device_begin_finalization",
+          finalizationArgs,
+        );
+        if (!begun) {
+          return respond(409, { success: false, error: "BeeKeep could not begin the phone approval. Request a new challenge and retry." });
+        }
+
+        const abortFinalization = async () => {
+          try {
+            await rpcData<boolean>(
+              adminClient,
+              "beekeep_internal_device_abort_finalization",
+              finalizationArgs,
+            );
+          } catch {
+            // A short finalizing lease can be reclaimed by a later retry if this cleanup fails.
+            console.error("Device finalization cleanup failed.");
+          }
+        };
+
+        // IMPORTANT: pass B's own authenticated JWT. Scope "others" revokes A and every
+        // other session while preserving the exact session that is completing this request.
+        let revocationError: unknown = null;
+        try {
+          const { error } = await adminClient.auth.admin.signOut(bearer, "others");
+          revocationError = error;
+        } catch (error) {
+          revocationError = error;
+        }
+        if (revocationError) {
+          await abortFinalization();
+          console.error("Previous BeeKeep session revocation failed.");
+          return respond(503, {
+            success: false,
+            error: "BeeKeep couldn't revoke the previous phone sessions. No new phone was activated. Please retry.",
+          });
+        }
+
+        try {
+          const deviceId = await rpcData<string>(
+            adminClient,
+            "beekeep_internal_device_finalize_request",
+            finalizationArgs,
+          );
+          return respond(200, { success: true, status: "approved", device_id: deviceId });
+        } catch (error) {
+          await abortFinalization();
+          console.error("Phone session revocation succeeded, but device activation needs a retry.");
+          return respond(503, {
+            success: false,
+            error: "Previous phone sessions were revoked, but BeeKeep couldn't finish activating this phone. Retry finalization on this phone.",
+          });
+        }
+      }
+
       case "complete": {
         if (!isUuid(requestId)) return respond(400, { success: false, error: "Invalid phone request." });
         const challenge = requiredString(signedChallenge, "challenge", 256);
@@ -259,13 +373,13 @@ Deno.serve(async (req: Request) => {
         if (!marked) return respond(410, { success: false, error: "This phone request has expired. Start again." });
 
         if (context.request_mode === "same_device_rebind") {
-          const deviceId = await rpcData<string>(adminClient, "beekeep_internal_device_rebind_session", {
+          await rpcData<unknown>(adminClient, "beekeep_internal_device_rebind_session", {
             p_request_id: requestId,
             p_user_id: userId,
             p_session_id: sessionId,
             p_challenge_hash: context.challenge_hash,
           });
-          return respond(200, { success: true, status: "approved", device_id: deviceId });
+          return respond(200, { success: true, status: "pending_finalization" });
         }
         return respond(200, { success: true, status: "pending_approval" });
       }
@@ -306,7 +420,7 @@ Deno.serve(async (req: Request) => {
         });
         return respond(200, {
           success: true,
-          status: action === "approve" ? "approved" : (result ? "denied" : "expired"),
+          status: action === "approve" ? "pending_finalization" : (result ? "denied" : "expired"),
         });
       }
 
@@ -348,13 +462,13 @@ Deno.serve(async (req: Request) => {
           p_challenge_hash: context.challenge_hash,
         });
         if (!marked) return respond(410, { success: false, error: "This phone recovery request has expired. Start again." });
-        const deviceId = await rpcData<string>(adminClient, "beekeep_internal_device_recover_request", {
+        await rpcData<unknown>(adminClient, "beekeep_internal_device_recover_request", {
           p_request_id: requestId,
           p_user_id: userId,
           p_session_id: sessionId,
           p_challenge_hash: context.challenge_hash,
         });
-        return respond(200, { success: true, status: "approved", device_id: deviceId });
+        return respond(200, { success: true, status: "pending_finalization" });
       }
 
       default:
