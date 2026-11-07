@@ -488,21 +488,9 @@ fun BeeKeepApp(
             TrustedDeviceAccessStatus.EXPIRED,
             TrustedDeviceAccessStatus.DENIED,
             TrustedDeviceAccessStatus.REPLACED,
+            TrustedDeviceAccessStatus.REPLACED_LOCAL,
             TrustedDeviceAccessStatus.UNAVAILABLE
         ) -> BeeKeepTrustedDeviceGateScreen(cloud, trustedDeviceAccess)
-        !account.signedIn -> BeeKeepAuthScreen(cloud)
-        accountSetupState is BeeKeepAccountSetupState.UsernameRequired -> {
-            BeeKeepAccountSetupScreen(
-                cloud = cloud,
-                setup = accountSetupState as BeeKeepAccountSetupState.UsernameRequired
-            )
-        }
-        accountSetupState is BeeKeepAccountSetupState.Unavailable -> {
-            BeeKeepAccountSetupUnavailableScreen(
-                cloud = cloud,
-                message = (accountSetupState as BeeKeepAccountSetupState.Unavailable).message
-            )
-        }
         account.userId != null &&
             trustedDeviceAccess.status == TrustedDeviceAccessStatus.REPLACED_LOCAL_OFFLINE -> {
             Column(modifier = Modifier.fillMaxSize()) {
@@ -545,6 +533,19 @@ fun BeeKeepApp(
                     )
                 }
             }
+        }
+        !account.signedIn -> BeeKeepAuthScreen(cloud)
+        accountSetupState is BeeKeepAccountSetupState.UsernameRequired -> {
+            BeeKeepAccountSetupScreen(
+                cloud = cloud,
+                setup = accountSetupState as BeeKeepAccountSetupState.UsernameRequired
+            )
+        }
+        accountSetupState is BeeKeepAccountSetupState.Unavailable -> {
+            BeeKeepAccountSetupUnavailableScreen(
+                cloud = cloud,
+                message = (accountSetupState as BeeKeepAccountSetupState.Unavailable).message
+            )
         }
         accountSetupState is BeeKeepAccountSetupState.Ready ||
             accountSetupState is BeeKeepAccountSetupState.Offline -> {
