@@ -115,6 +115,8 @@ internal fun BeeKeepTrustedDeviceGateScreen(
                         when (currentAccess.status) {
                             TrustedDeviceAccessStatus.PENDING_APPROVAL ->
                                 "A replacement phone request has been sent. Approve it from the BeeKeep phone you currently trust."
+                            TrustedDeviceAccessStatus.EXPIRED ->
+                                "The five-minute approval request expired. Start a new request or verify this phone by email."
                             TrustedDeviceAccessStatus.REPLACED ->
                                 "This phone has been replaced for BeeKeep Cloud access. You can still request access again or verify by email."
                             TrustedDeviceAccessStatus.DENIED ->
