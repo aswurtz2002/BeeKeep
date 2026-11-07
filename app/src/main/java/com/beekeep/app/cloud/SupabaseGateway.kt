@@ -459,8 +459,18 @@ class SupabaseGateway(
                         }.getOrDefault(false)
                     } ?: false
                     val nextStatus = when (request?.requestStatus?.lowercase()) {
-                        "approved_pending_finalize", "finalizing" ->
-                            TrustedDeviceAccessStatus.PENDING_FINALIZATION
+                        "approved_pending_finalize", "finalizing" -> {
+                            // The trusted phone that approved/recovered this request must sign out;
+                            // only the not-yet-trusted replacement session may finalize it.
+                            if (previous == TrustedDeviceAccessStatus.TRUSTED ||
+                                previous == TrustedDeviceAccessStatus.OFFLINE_LOCAL ||
+                                wasPreviouslyTrustedHere
+                            ) {
+                                TrustedDeviceAccessStatus.REPLACED_LOCAL
+                            } else {
+                                TrustedDeviceAccessStatus.PENDING_FINALIZATION
+                            }
+                        }
                         "pending" -> if (requestExpired) {
                             TrustedDeviceAccessStatus.EXPIRED
                         } else if (request.requestMode == "replacement") {
@@ -1142,6 +1152,10 @@ class SupabaseGateway(
             _accountInitialized.value = true
             if (session != null && userId != null) {
                 scheduleSessionRefresh(supabase, session)
+                if (deviceTrusted && !isLocalOnlyTrustedDeviceState()) {
+                    // Re-authentication after a replacement must restore the periodic worker.
+                    CloudSyncScheduler.schedule(appContext)
+                }
                 if (isLocalOnlyTrustedDeviceState()) {
                     // Local browsing remains available, but don't run profile/workspace RPCs
                     // or realtime until server authorization can be confirmed again.
