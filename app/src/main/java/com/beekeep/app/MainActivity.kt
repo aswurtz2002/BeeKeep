@@ -484,6 +484,7 @@ fun BeeKeepApp(
         account.userId != null && trustedDeviceAccess.status in setOf(
             TrustedDeviceAccessStatus.NOT_TRUSTED,
             TrustedDeviceAccessStatus.PENDING_APPROVAL,
+            TrustedDeviceAccessStatus.PENDING_FINALIZATION,
             TrustedDeviceAccessStatus.EXPIRED,
             TrustedDeviceAccessStatus.DENIED,
             TrustedDeviceAccessStatus.REPLACED,
@@ -501,6 +502,49 @@ fun BeeKeepApp(
                 cloud = cloud,
                 message = (accountSetupState as BeeKeepAccountSetupState.Unavailable).message
             )
+        }
+        account.userId != null &&
+            trustedDeviceAccess.status == TrustedDeviceAccessStatus.REPLACED_LOCAL_OFFLINE -> {
+            Column(modifier = Modifier.fillMaxSize()) {
+                Surface(
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            "Signed out on this phone. Local records remain available; cloud sync is off.",
+                            modifier = Modifier.weight(1f),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        TextButton(onClick = { cloud.openSignInAfterReplacement() }) {
+                            Text("Sign in")
+                        }
+                    }
+                }
+                Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                    BeeKeepAuthenticatedApp(
+                        vm = vm,
+                        nfc = nfc,
+                        activity = activity,
+                        locationController = locationController,
+                        cloud = cloud,
+                        darkMode = darkMode,
+                        incomingNfc = incomingNfc,
+                        repository = repository,
+                        onSpeakHiveNumber = onSpeakHiveNumber,
+                        largeFieldText = largeFieldText,
+                        onLargeFieldTextChange = onLargeFieldTextChange,
+                        compactHiveRows = compactHiveRows,
+                        onCompactHiveRowsChange = onCompactHiveRowsChange,
+                        onDarkModeChange = onDarkModeChange
+                    )
+                }
+            }
         }
         accountSetupState is BeeKeepAccountSetupState.Ready ||
             accountSetupState is BeeKeepAccountSetupState.Offline -> {
