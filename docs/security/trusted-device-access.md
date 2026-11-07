@@ -98,11 +98,24 @@ Email recovery is not equivalent to approval from an uncompromised old phone: an
 
 ### Stage 3 — Android enrolment and session gate
 
-- Generate and persist the installation key using Android Keystore.
-- Route email/password and Google sign-in through the same device-authorization state machine.
-- Keep pending sessions out of account setup, cloud sync, realtime, and cloud-backed screens.
-- Gate WorkManager and startup session restoration in the same way.
-- Preserve local/offline records and drafts on all device-lock states.
+#### 3A — Key store and API client (in progress)
+
+- Generate and persist a non-exportable P-256 signing key in Android Keystore.
+- Derive the installation fingerprint from the encoded public key and sign server challenges with SHA-256/ECDSA.
+- Add a typed Kotlin client for begin/status/list/complete/approve/deny/recovery Edge Function actions.
+- Add JVM cryptography tests for signature verification, challenge binding, and fingerprint formatting.
+
+#### 3B — Sign-in and foreground approval state machine (not started)
+
+- Route email/password, Google, email OTP verification, and restored sessions through one device gate.
+- Show the pending/recovery screen before account setup or cloud-backed data is loaded.
+- Let the existing trusted phone poll and review verified replacement requests while BeeKeep is open (FCM remains a later setup dependency).
+- Preserve local/offline records and drafts for pending, denied, or replaced sessions.
+
+#### 3C — Background and revocation handling (not started)
+
+- Gate WorkManager, startup restoration, realtime, and all cloud-backed entry points.
+- Detect a phone that has been replaced and switch it to local-only access without deleting its local cache.
 
 ### Stage 4 — Trusted-phone approval and recovery
 
