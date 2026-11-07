@@ -1592,6 +1592,8 @@ class SupabaseGateway(
             .apply()
         _passwordRecoveryRequired.value = false
         _pendingSignupVerificationEmail.value = null
+        _trustedDeviceAccess.value = TrustedDeviceAccessState()
+        _pendingTrustedDeviceRequests.value = emptyList()
         _pendingPasswordResetEmail.value = null
         // Never leave another account viewing the previously selected team's local cache.
         repository.switchWorkspace(null)
@@ -3999,6 +4001,10 @@ class SupabaseGateway(
             val supabase = client ?: return@run CloudResult.NotConfigured
             try {
                 ensureAuthStorageInitialized(supabase)
+                // Re-evaluate authorization for the identity being authenticated rather than
+                // carrying the previous account's in-memory trusted status across sign-in.
+                _trustedDeviceAccess.value = TrustedDeviceAccessState()
+                _pendingTrustedDeviceRequests.value = emptyList()
                 // Authentication can replace the signed-in account. Return to private/local data
                 // before that transition so a cached team dataset is not displayed to the next account.
                 // Serialize account transitions with sync so a background worker cannot
