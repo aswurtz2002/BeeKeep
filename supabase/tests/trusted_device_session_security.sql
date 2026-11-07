@@ -88,11 +88,30 @@ $wrong_account$;
 
 reset role;
 
+-- A session beyond its Supabase not_after time cannot use a registry entry.
+update beekeep_private.trusted_devices
+set session_id = '10000000-0000-0000-0000-000000000074'
+where user_id = '00000000-0000-0000-0000-000000000071';
+set role authenticated;
+select set_config(
+    'request.jwt.claims',
+    '{"sub":"00000000-0000-0000-0000-000000000071","role":"authenticated","session_id":"10000000-0000-0000-0000-000000000074"}',
+    true
+);
+do $expired_auth_session$
+begin
+    if public.beekeep_device_session_is_trusted() then
+        raise exception 'An expired Supabase Auth session was still considered trusted';
+    end if;
+end;
+$expired_auth_session$;
+reset role;
+
 -- Revoking a trusted installation immediately makes the still-existing Auth
 -- session untrusted at the database authorization layer.
 update beekeep_private.trusted_devices
 set device_status = 'revoked', revoked_at = now(), revoked_reason = 'security test'
-where session_id = '10000000-0000-0000-0000-000000000071';
+where session_id = '10000000-0000-0000-0000-000000000074';
 
 set role authenticated;
 select set_config(
