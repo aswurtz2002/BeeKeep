@@ -31,7 +31,7 @@ object CloudSyncScheduler {
     fun cancel(context: Context) {
         val workManager = WorkManager.getInstance(context)
         workManager.cancelUniqueWork(NOW_NAME)
-        workManager.cancelUniquePeriodicWork(PERIODIC_NAME)
+        workManager.cancelUniqueWork(PERIODIC_NAME)
     }
 
     fun runNow(context: Context) {
