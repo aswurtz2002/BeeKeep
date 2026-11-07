@@ -81,6 +81,8 @@ enum class TrustedDeviceAccessStatus {
     PENDING_APPROVAL,
     DENIED,
     REPLACED,
+    OFFLINE_LOCAL,
+    REPLACED_LOCAL,
     UNAVAILABLE
 }
 
@@ -389,11 +391,44 @@ class SupabaseGateway(
      * Checks device authorization with the server. A failed or unavailable check is closed:
      * local Room data remains available, but no cloud read/write is granted.
      */
+    private fun trustedDeviceOfflineFingerprintKey(userId: String): String =
+        "trusted_device_cached_fingerprint_$userId"
+
+    private fun rememberTrustedDeviceForOffline(supabase: SupabaseClient) {
+        val userId = supabase.auth.currentSessionOrNull()?.user?.id
+            ?.trim()?.takeIf { it.isNotEmpty() } ?: return
+        runCatching {
+            val fingerprint = trustedDeviceKeyStore.getOrCreateKeyMaterial().fingerprint
+            appContext.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE).edit()
+                .putString(trustedDeviceOfflineFingerprintKey(userId), fingerprint)
+                .apply()
+        }
+    }
+
+    private fun hasTrustedDeviceOfflineCache(supabase: SupabaseClient): Boolean {
+        val userId = supabase.auth.currentSessionOrNull()?.user?.id
+            ?.trim()?.takeIf { it.isNotEmpty() } ?: return false
+        val savedFingerprint = appContext.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
+            .getString(trustedDeviceOfflineFingerprintKey(userId), null)
+            ?.trim()?.takeIf { it.isNotEmpty() } ?: return false
+        val currentFingerprint = runCatching {
+            trustedDeviceKeyStore.getOrCreateKeyMaterial().fingerprint
+        }.getOrNull() ?: return false
+        return savedFingerprint == currentFingerprint
+    }
+
+    private fun isLocalOnlyTrustedDeviceState(): Boolean =
+        _trustedDeviceAccess.value.status in setOf(
+            TrustedDeviceAccessStatus.OFFLINE_LOCAL,
+            TrustedDeviceAccessStatus.REPLACED_LOCAL
+        )
+
     private suspend fun verifyTrustedDeviceSession(supabase: SupabaseClient): Boolean {
         val api = TrustedDeviceAccessApi(supabase)
         return when (val access = api.currentSessionTrusted()) {
             is TrustedDeviceApiResult.Success -> {
                 if (access.value) {
+                    rememberTrustedDeviceForOffline(supabase)
                     _trustedDeviceAccess.value = TrustedDeviceAccessState(
                         status = TrustedDeviceAccessStatus.TRUSTED
                     )
@@ -409,8 +444,10 @@ class SupabaseGateway(
                             TrustedDeviceAccessStatus.NOT_TRUSTED
                         }
                         "denied" -> TrustedDeviceAccessStatus.DENIED
-                        else -> if (previous == TrustedDeviceAccessStatus.TRUSTED) {
-                            TrustedDeviceAccessStatus.REPLACED
+                        else -> if (previous == TrustedDeviceAccessStatus.TRUSTED ||
+                            previous == TrustedDeviceAccessStatus.OFFLINE_LOCAL
+                        ) {
+                            TrustedDeviceAccessStatus.REPLACED_LOCAL
                         } else {
                             TrustedDeviceAccessStatus.NOT_TRUSTED
                         }
@@ -426,6 +463,8 @@ class SupabaseGateway(
                                 "The phone approval request was denied. You can request access again."
                             TrustedDeviceAccessStatus.REPLACED ->
                                 "This phone has been replaced for cloud access. Your local records remain on this device."
+                            TrustedDeviceAccessStatus.REPLACED_LOCAL ->
+                                "This phone was replaced for cloud access. You can still open local records on this phone, but it cannot sync or access cloud workspaces."
                             else ->
                                 "This phone needs to be verified before it can access BeeKeep Cloud."
                         }
@@ -434,9 +473,18 @@ class SupabaseGateway(
                 }
             }
             is TrustedDeviceApiResult.Failure -> {
+                val cachedTrustedPhone = hasTrustedDeviceOfflineCache(supabase)
                 _trustedDeviceAccess.value = TrustedDeviceAccessState(
-                    status = TrustedDeviceAccessStatus.UNAVAILABLE,
-                    message = access.message
+                    status = if (cachedTrustedPhone) {
+                        TrustedDeviceAccessStatus.OFFLINE_LOCAL
+                    } else {
+                        TrustedDeviceAccessStatus.UNAVAILABLE
+                    },
+                    message = if (cachedTrustedPhone) {
+                        "BeeKeep can't reach the security service. Local hive records are available, but cloud sync is paused until this phone can be verified online."
+                    } else {
+                        access.message
+                    }
                 )
                 false
             }
@@ -619,16 +667,33 @@ class SupabaseGateway(
             val wasTrusted = _trustedDeviceAccess.value.status == TrustedDeviceAccessStatus.TRUSTED
             val trusted = verifyTrustedDeviceSession(supabase)
             if (trusted) {
+                val wasLocalOnly = wasTrusted.not() &&
+                    _trustedDeviceAccess.value.status == TrustedDeviceAccessStatus.TRUSTED &&
+                    _account.value.signedIn
                 when (val requests = TrustedDeviceAccessApi(supabase).pendingRequests()) {
                     is TrustedDeviceApiResult.Success -> _pendingTrustedDeviceRequests.value = requests.value
                     is TrustedDeviceApiResult.Failure -> {
                         // Keep the last list visible through a transient poll failure.
                     }
                 }
-                if (!_account.value.signedIn) refreshAccount()
+                if (wasLocalOnly || !_account.value.signedIn) refreshAccount()
             } else {
                 _pendingTrustedDeviceRequests.value = emptyList()
-                if (wasTrusted || _account.value.signedIn) {
+                if (isLocalOnlyTrustedDeviceState()) {
+                    val userId = supabase.auth.currentSessionOrNull()?.user?.id
+                        ?.trim()?.takeIf { it.isNotEmpty() }
+                    if (userId != null) {
+                        _accountSetupState.value = cachedAccountSetupState(userId)
+                            ?: BeeKeepAccountSetupState.Offline
+                        _account.value = _account.value.copy(
+                            signedIn = true,
+                            syncing = false,
+                            error = _trustedDeviceAccess.value.message
+                        )
+                    }
+                    accountVerificationJob?.cancel()
+                    stopRealtime()
+                } else if (wasTrusted || _account.value.signedIn) {
                     accountVerificationJob?.cancel()
                     stopRealtime()
                     _accountSetupState.value = BeeKeepAccountSetupState.SignedOut
@@ -737,8 +802,11 @@ class SupabaseGateway(
             _passwordRecoveryRequired.value = appContext
                 .getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
                 .getBoolean(PASSWORD_RECOVERY_SESSION_PREF, false)
+            val deviceTrusted = userId == null || _passwordRecoveryRequired.value ||
+                verifyTrustedDeviceSession(supabase)
+            val localOnlyDevice = !deviceTrusted && isLocalOnlyTrustedDeviceState()
             if (userId != null && !_passwordRecoveryRequired.value &&
-                !verifyTrustedDeviceSession(supabase)
+                !deviceTrusted && !localOnlyDevice
             ) {
                 // The phone may keep using its local Room database, but must not restore a
                 // workspace, start realtime, or run account RPCs until device verification passes.
@@ -840,8 +908,15 @@ class SupabaseGateway(
             _accountInitialized.value = true
             if (session != null && userId != null) {
                 scheduleSessionRefresh(supabase, session)
-                scheduleAccountVerification(supabase, userId)
-                if (enableRealtime) startRealtime() else stopRealtime()
+                if (isLocalOnlyTrustedDeviceState()) {
+                    // Local browsing remains available, but don't run profile/workspace RPCs
+                    // or realtime until server authorization can be confirmed again.
+                    accountVerificationJob?.cancel()
+                    stopRealtime()
+                } else {
+                    scheduleAccountVerification(supabase, userId)
+                    if (enableRealtime) startRealtime() else stopRealtime()
+                }
             } else {
                 sessionRefreshJob?.cancel()
                 stopRealtime()
@@ -2748,7 +2823,7 @@ class SupabaseGateway(
         }
         if (!verifyTrustedDeviceSession(client)) {
             _account.value = _account.value.copy(
-                signedIn = false,
+                signedIn = isLocalOnlyTrustedDeviceState() && _account.value.userId != null,
                 syncing = false,
                 error = _trustedDeviceAccess.value.message
                     ?: "Verify this phone before syncing BeeKeep data."
