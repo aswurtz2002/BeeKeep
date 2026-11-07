@@ -42,9 +42,16 @@ function readDerInteger(bytes: Uint8Array, offset: number): { value: Uint8Array;
   const end = parsedLength.next + parsedLength.length;
   if (parsedLength.length < 1 || end > bytes.length) throw new Error("Truncated ECDSA signature integer.");
   let value = bytes.slice(parsedLength.next, end);
-  if ((value[0] & 0x80) !== 0) throw new Error("Negative ECDSA signature integer.");
-  while (value.length > 1 && value[0] === 0) value = value.slice(1);
-  if (value.length > 32) throw new Error("ECDSA P-256 signature integer is too large.");
+  if (value.length > 33) throw new Error("ECDSA P-256 signature integer is too large.");
+  if (value.length > 1 && value[0] === 0) {
+    if ((value[1] & 0x80) === 0) throw new Error("Non-canonical ECDSA signature integer.");
+    value = value.slice(1);
+  } else if ((value[0] & 0x80) !== 0) {
+    throw new Error("Negative ECDSA signature integer.");
+  }
+  if (value.length > 32 || value.every((byte) => byte === 0)) {
+    throw new Error("ECDSA P-256 signature integer is out of range.");
+  }
   return { value, next: end };
 }
 
