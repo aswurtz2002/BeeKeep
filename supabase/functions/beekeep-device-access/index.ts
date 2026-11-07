@@ -168,7 +168,11 @@ Deno.serve(async (req: Request) => {
 
     let body: JsonRecord;
     try {
-      const parsed: unknown = await req.json();
+      const rawBody = await req.text();
+      if (new TextEncoder().encode(rawBody).length > 16384) {
+        return respond(413, { success: false, error: "The phone approval request is too large." });
+      }
+      const parsed: unknown = JSON.parse(rawBody);
       if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
         return respond(400, { success: false, error: "Expected a JSON request body." });
       }
