@@ -248,9 +248,14 @@ internal fun BeeKeepAuthScreen(cloud: SupabaseGateway) {
     val scope = rememberCoroutineScope()
     val account by cloud.account.collectAsStateWithLifecycle()
     val passwordRecoveryRequired by cloud.passwordRecoveryRequired.collectAsStateWithLifecycle()
+    val pendingPasswordResetEmail by cloud.pendingPasswordResetEmail.collectAsStateWithLifecycle()
     val pendingSignupVerificationEmail by cloud.pendingSignupVerificationEmail.collectAsStateWithLifecycle()
     if (passwordRecoveryRequired) {
         BeeKeepPasswordRecoveryScreen(cloud)
+        return
+    }
+    if (!pendingPasswordResetEmail.isNullOrBlank()) {
+        BeeKeepPasswordResetCodeScreen(cloud, pendingPasswordResetEmail.orEmpty())
         return
     }
     if (!pendingSignupVerificationEmail.isNullOrBlank()) {
@@ -342,7 +347,7 @@ internal fun BeeKeepAuthScreen(cloud: SupabaseGateway) {
                         when {
                             forgotPasswordMode -> {
                                 forgotPasswordMode = false
-                                showMessage("If an account exists for that address, a password reset link has been sent. Check your inbox.")
+                                showMessage("If an account exists for that address, a six-digit password-reset code has been sent. Check your inbox.")
                             }
                             createAccount && !cloud.account.value.signedIn -> {
                                 showMessage("We sent a six-digit verification code to $cleanEmail.")
@@ -649,7 +654,7 @@ internal fun BeeKeepAuthScreen(cloud: SupabaseGateway) {
                             }
                             Text(
                                 when {
-                                    forgotPasswordMode -> "SEND RESET LINK"
+                                    forgotPasswordMode -> "SEND RESET CODE"
                                     createAccount -> "CREATE ACCOUNT"
                                     else -> "SIGN IN"
                                 },
@@ -906,6 +911,177 @@ private fun BeeKeepSignupVerificationScreen(
 }
 
 @Composable
+private fun BeeKeepPasswordResetCodeScreen(
+    cloud: SupabaseGateway,
+    email: String
+) {
+    BackHandler(enabled = true) { /* Stay on recovery until completed or cancelled. */ }
+
+    val scope = rememberCoroutineScope()
+    var code by rememberSaveable(email) { mutableStateOf("") }
+    var busy by rememberSaveable { mutableStateOf(false) }
+    var message by rememberSaveable { mutableStateOf("") }
+    var messageIsError by rememberSaveable { mutableStateOf(false) }
+
+    fun showMessage(value: String, isError: Boolean = false) {
+        message = value
+        messageIsError = isError
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(
+                Brush.verticalGradient(
+                    listOf(
+                        MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
+                        MaterialTheme.colorScheme.background,
+                        MaterialTheme.colorScheme.background
+                    )
+                )
+            )
+            .imePadding(),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 22.dp, vertical = 30.dp)
+                .widthIn(max = 460.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(18.dp)
+        ) {
+            androidx.compose.foundation.Image(
+                painter = painterResource(R.drawable.beekeep_header_logo),
+                contentDescription = "BeeKeep logo",
+                modifier = Modifier.size(88.dp)
+            )
+            Text(
+                "Reset your password",
+                style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.ExtraBold,
+                textAlign = TextAlign.Center
+            )
+            Text(
+                "We sent a six-digit password-reset code to $email. Enter it below to verify your request.",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center
+            )
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                color = MaterialTheme.colorScheme.surface,
+                shape = RoundedCornerShape(24.dp),
+                tonalElevation = 2.dp,
+                shadowElevation = 6.dp
+            ) {
+                Column(
+                    modifier = Modifier.padding(22.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp)
+                ) {
+                    OutlinedTextField(
+                        value = code,
+                        onValueChange = { value ->
+                            code = value.filter { it in '0'..'9' }.take(6)
+                            message = ""
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        enabled = !busy,
+                        singleLine = true,
+                        label = { Text("6-digit password-reset code") },
+                        placeholder = { Text("000000") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        textStyle = androidx.compose.ui.text.TextStyle(
+                            textAlign = TextAlign.Center,
+                            letterSpacing = 8.sp,
+                            fontSize = 24.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    )
+                    Button(
+                        onClick = {
+                            scope.launch {
+                                busy = true
+                                showMessage("")
+                                try {
+                                    when (val result = cloud.verifyPasswordResetCode(email, code)) {
+                                        CloudResult.Success -> showMessage("Code verified. Choose your new password.")
+                                        CloudResult.NotConfigured -> showMessage("BeeKeep Cloud is not configured for this app build.", true)
+                                        CloudResult.NotSignedIn -> showMessage("The recovery session could not be established. Request a new code and try again.", true)
+                                        is CloudResult.Failure -> showMessage(result.message, true)
+                                    }
+                                } catch (cancelled: CancellationException) {
+                                    throw cancelled
+                                } catch (_: Throwable) {
+                                    showMessage("BeeKeep couldn't verify that code. Check it and try again.", true)
+                                } finally {
+                                    busy = false
+                                }
+                            }
+                        },
+                        enabled = !busy && code.length == 6,
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 54.dp),
+                        shape = RoundedCornerShape(16.dp)
+                    ) {
+                        if (busy) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(19.dp),
+                                strokeWidth = 2.dp,
+                                color = MaterialTheme.colorScheme.onPrimary
+                            )
+                            Spacer(Modifier.width(10.dp))
+                        }
+                        Text(if (busy) "VERIFYING..." else "VERIFY CODE", fontWeight = FontWeight.ExtraBold)
+                    }
+                    TextButton(
+                        onClick = {
+                            scope.launch {
+                                busy = true
+                                showMessage("")
+                                try {
+                                    when (val result = cloud.requestPasswordReset(email)) {
+                                        CloudResult.Success -> showMessage("A new six-digit password-reset code has been sent. Check your inbox.")
+                                        CloudResult.NotConfigured -> showMessage("BeeKeep Cloud is not configured for this app build.", true)
+                                        CloudResult.NotSignedIn -> showMessage("Please return to sign in and request a new code.", true)
+                                        is CloudResult.Failure -> showMessage(result.message, true)
+                                    }
+                                } catch (cancelled: CancellationException) {
+                                    throw cancelled
+                                } catch (_: Throwable) {
+                                    showMessage("BeeKeep couldn't resend the code. Check your connection and try again.", true)
+                                } finally {
+                                    busy = false
+                                }
+                            }
+                        },
+                        enabled = !busy,
+                        modifier = Modifier.align(Alignment.CenterHorizontally)
+                    ) {
+                        Text("Resend code")
+                    }
+                    if (message.isNotBlank()) {
+                        Text(
+                            message,
+                            color = if (messageIsError) MaterialTheme.colorScheme.error
+                            else MaterialTheme.colorScheme.onSurfaceVariant,
+                            style = MaterialTheme.typography.bodySmall,
+                            textAlign = TextAlign.Center
+                        )
+                    }
+                    TextButton(
+                        onClick = { cloud.cancelPendingPasswordReset() },
+                        enabled = !busy,
+                        modifier = Modifier.align(Alignment.CenterHorizontally)
+                    ) {
+                        Text("Use a different email")
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun BeeKeepPasswordRecoveryScreen(cloud: SupabaseGateway) {
     val scope = rememberCoroutineScope()
     var newPassword by rememberSaveable { mutableStateOf("") }
@@ -955,7 +1131,7 @@ private fun BeeKeepPasswordRecoveryScreen(cloud: SupabaseGateway) {
                 textAlign = TextAlign.Center
             )
             Text(
-                "Your email link is verified. Set a new password for your BeeKeep account.",
+                "Your recovery request is verified. Set a new password for your BeeKeep account.",
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center
             )
@@ -1055,7 +1231,7 @@ private fun BeeKeepPasswordRecoveryScreen(cloud: SupabaseGateway) {
                                         messageIsError = true
                                     }
                                     CloudResult.NotSignedIn -> {
-                                        message = "This recovery link is no longer valid. Request a new password reset link."
+                                        message = "This recovery session is no longer valid. Request a new password reset code."
                                         messageIsError = true
                                     }
                                     is CloudResult.Failure -> {
