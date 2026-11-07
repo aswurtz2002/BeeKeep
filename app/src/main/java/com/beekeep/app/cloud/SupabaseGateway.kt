@@ -191,7 +191,7 @@ class SupabaseGateway(
         _pendingPasswordResetEmail.asStateFlow()
     /** True after a recovery link or six-digit recovery code has established a recovery session. */
     val passwordRecoveryRequired: StateFlow<Boolean> = _passwordRecoveryRequired.asStateFlow()
-    /** True after Supabase has restored the stored session and the account identity is known. */
+    /** True after the initial stored-session restore; routine account refreshes do not reset it. */
     val accountInitialized: StateFlow<Boolean> = _accountInitialized.asStateFlow()
     private val _accountSetupState = MutableStateFlow<BeeKeepAccountSetupState>(
         BeeKeepAccountSetupState.SignedOut
@@ -766,7 +766,8 @@ class SupabaseGateway(
     }
 
     private suspend fun refreshAccountUnlocked() {
-        _accountInitialized.value = false
+        // This flag is the one-time local-session startup barrier, not a general refresh spinner.
+        // Routine refreshes must leave the active BeeKeep screen mounted while cloud state updates.
         val supabase = client
         if (!configured || supabase == null) {
             try {
@@ -4088,9 +4089,9 @@ class SupabaseGateway(
     ): CloudResult {
         if (!configured || client == null) return CloudResult.NotConfigured
 
-        // The login/signup screen is replaced as soon as refreshAccountUnlocked marks startup
-        // as pending. Run the session transition in this gateway-owned scope so disposing that
-        // Compose screen cannot cancel the operation and strand accountInitialized=false.
+        // Keep auth transitions in the gateway-owned scope. Once the authenticated account is
+        // published, Compose may dispose the login screen before workspace restoration and
+        // realtime setup finish; disposing that caller must not cancel the session transition.
         return authOperationRunner.run {
             val supabase = client ?: return@run CloudResult.NotConfigured
             try {
