@@ -15,6 +15,7 @@ object CloudSyncScheduler {
     private const val NOW_NAME = "beekeep-cloud-sync-now"
 
     fun schedule(context: Context) {
+        if (TrustedDeviceLocalSessionState.isReplaced(context)) return
         val constraints = Constraints.Builder()
             .setRequiredNetworkType(NetworkType.CONNECTED)
             .build()
@@ -27,7 +28,14 @@ object CloudSyncScheduler {
         )
     }
 
+    fun cancel(context: Context) {
+        val workManager = WorkManager.getInstance(context)
+        workManager.cancelUniqueWork(NOW_NAME)
+        workManager.cancelUniquePeriodicWork(PERIODIC_NAME)
+    }
+
     fun runNow(context: Context) {
+        if (TrustedDeviceLocalSessionState.isReplaced(context)) return
         val constraints = Constraints.Builder()
             .setRequiredNetworkType(NetworkType.CONNECTED)
             .build()
