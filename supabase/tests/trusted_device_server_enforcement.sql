@@ -221,6 +221,28 @@ begin
     where bucket_id = 'inspection-photos' and owner_id = auth.uid();
     if row_count <> 0 then raise exception 'An untrusted phone read inspection photos'; end if;
 
+    denied := false;
+    row_count := 0;
+    begin
+        select count(*) into row_count from public.beekeep_workspace_documents
+        where workspace_id = '20000000-0000-0000-0000-000000000091';
+    exception when insufficient_privilege then
+        denied := true;
+    end;
+    if not denied and row_count <> 0 then
+        raise exception 'An untrusted phone read shared workspace records';
+    end if;
+
+    denied := false;
+    begin
+        perform public.beekeep_device_list_pending_requests();
+    exception when insufficient_privilege then
+        denied := true;
+    end;
+    if not denied then
+        raise exception 'An untrusted phone could list pending approvals on the trusted phone';
+    end if;
+
     begin
         insert into public.beekeep_documents (user_id, entity_type, entity_id, payload, updated_at, device_id)
         values (auth.uid(), 'hive', 9102, '{"id":9102}', 2000, 'untrusted-phone');
