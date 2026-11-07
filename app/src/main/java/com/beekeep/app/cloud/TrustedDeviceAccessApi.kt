@@ -100,6 +100,31 @@ internal class TrustedDeviceAccessApi(
             ?: error("BeeKeep didn't return an approval challenge. Open the request again.")
     }
 
+    suspend fun finalizationChallenge(
+        requestId: String
+    ): TrustedDeviceApiResult<String> = call {
+        invoke(
+            action = "finalize_challenge",
+            args = buildJsonObject { put("request_id", requestId) }
+        ).challenge?.takeIf { it.isNotBlank() }
+            ?: error("BeeKeep didn't return a final phone approval challenge. Try again.")
+    }
+
+    suspend fun finalize(
+        requestId: String,
+        challenge: String,
+        signature: String
+    ): TrustedDeviceApiResult<TrustedDeviceFunctionResponse> = call {
+        invoke(
+            action = "finalize",
+            args = buildJsonObject {
+                put("request_id", requestId)
+                put("challenge", challenge)
+                put("signature", signature)
+            }
+        )
+    }
+
     suspend fun approve(
         requestId: String,
         challenge: String,

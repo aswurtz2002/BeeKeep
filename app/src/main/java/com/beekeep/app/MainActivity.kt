@@ -462,7 +462,15 @@ fun BeeKeepApp(
     // the old phone transitions to local-only mode without waiting for a manual sign-out.
     androidx.compose.runtime.LaunchedEffect(account.userId) {
         while (account.userId != null) {
+            // Do not key this effect to trustedDeviceAccess.status: publishing REPLACED_LOCAL
+            // happens inside refreshTrustedDeviceAccess, and cancelling that call here could
+            // interrupt the local sign-out before its Auth session and workers are cleared.
             cloud.refreshTrustedDeviceAccess()
+            if (cloud.trustedDeviceAccess.value.status in setOf(
+                    TrustedDeviceAccessStatus.REPLACED_LOCAL,
+                    TrustedDeviceAccessStatus.REPLACED_LOCAL_OFFLINE
+                )
+            ) break
             kotlinx.coroutines.delay(15_000L)
         }
     }
@@ -484,11 +492,56 @@ fun BeeKeepApp(
         account.userId != null && trustedDeviceAccess.status in setOf(
             TrustedDeviceAccessStatus.NOT_TRUSTED,
             TrustedDeviceAccessStatus.PENDING_APPROVAL,
+            TrustedDeviceAccessStatus.PENDING_FINALIZATION,
             TrustedDeviceAccessStatus.EXPIRED,
             TrustedDeviceAccessStatus.DENIED,
             TrustedDeviceAccessStatus.REPLACED,
+            TrustedDeviceAccessStatus.REPLACED_LOCAL,
             TrustedDeviceAccessStatus.UNAVAILABLE
         ) -> BeeKeepTrustedDeviceGateScreen(cloud, trustedDeviceAccess)
+        account.userId != null &&
+            trustedDeviceAccess.status == TrustedDeviceAccessStatus.REPLACED_LOCAL_OFFLINE -> {
+            Column(modifier = Modifier.fillMaxSize()) {
+                Surface(
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            "Signed out on this phone. Local records remain available; cloud sync is off.",
+                            modifier = Modifier.weight(1f),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        TextButton(onClick = { cloud.openSignInAfterReplacement() }) {
+                            Text("Sign in")
+                        }
+                    }
+                }
+                Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                    BeeKeepAuthenticatedApp(
+                        vm = vm,
+                        nfc = nfc,
+                        activity = activity,
+                        locationController = locationController,
+                        cloud = cloud,
+                        darkMode = darkMode,
+                        incomingNfc = incomingNfc,
+                        repository = repository,
+                        onSpeakHiveNumber = onSpeakHiveNumber,
+                        largeFieldText = largeFieldText,
+                        onLargeFieldTextChange = onLargeFieldTextChange,
+                        compactHiveRows = compactHiveRows,
+                        onCompactHiveRowsChange = onCompactHiveRowsChange,
+                        onDarkModeChange = onDarkModeChange
+                    )
+                }
+            }
+        }
         !account.signedIn -> BeeKeepAuthScreen(cloud)
         accountSetupState is BeeKeepAccountSetupState.UsernameRequired -> {
             BeeKeepAccountSetupScreen(
