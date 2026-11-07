@@ -460,8 +460,14 @@ fun BeeKeepApp(
 
     // Poll while the account is open so a newly approved phone takes effect promptly and
     // the old phone transitions to local-only mode without waiting for a manual sign-out.
-    androidx.compose.runtime.LaunchedEffect(account.userId) {
-        while (account.userId != null) {
+    androidx.compose.runtime.LaunchedEffect(account.userId, trustedDeviceAccess.status) {
+        while (
+            account.userId != null &&
+            trustedDeviceAccess.status !in setOf(
+                TrustedDeviceAccessStatus.REPLACED_LOCAL,
+                TrustedDeviceAccessStatus.REPLACED_LOCAL_OFFLINE
+            )
+        ) {
             cloud.refreshTrustedDeviceAccess()
             kotlinx.coroutines.delay(15_000L)
         }
