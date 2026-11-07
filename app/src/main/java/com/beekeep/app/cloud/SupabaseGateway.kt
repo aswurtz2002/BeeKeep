@@ -1134,8 +1134,10 @@ class SupabaseGateway(
             return CloudResult.Failure("That password-reset request has expired. Request a new code and try again.")
         }
 
-        val result = authCall {
-            val supabase = client ?: return@authCall
+        // Do not publish a normal signed-in account state during password recovery.
+        // The recovery-only flag below keeps the app on the restricted password screen
+        // until the password is changed and the user explicitly continues.
+        val result = authEmailRequest { supabase ->
             supabase.auth.verifyEmailOtp(
                 type = OtpType.Email.RECOVERY,
                 email = cleanEmail,
