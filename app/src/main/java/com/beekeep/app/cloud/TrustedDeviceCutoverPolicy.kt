@@ -9,11 +9,8 @@ internal object TrustedDeviceCutoverPolicy {
         requestStatus: String?,
         previouslyTrustedHere: Boolean
     ): TrustedDeviceAccessStatus? {
-        if (requestStatus?.trim()?.lowercase() !in setOf(
-                "approved_pending_finalize",
-                "finalizing"
-            )
-        ) {
+        val normalizedStatus = requestStatus?.trim()?.lowercase() ?: return null
+        if (normalizedStatus !in setOf("approved_pending_finalize", "finalizing")) {
             return null
         }
         return if (previouslyTrustedHere) {
