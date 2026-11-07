@@ -187,6 +187,15 @@ Deno.serve(async (req: Request) => {
     const signature = body.signature;
 
     switch (action) {
+      case "access": {
+        const trusted = await rpcData<boolean>(
+          userClient,
+          "beekeep_device_session_is_trusted",
+          {},
+        );
+        return respond(200, { success: true, trusted: trusted === true });
+      }
+
       case "begin": {
         const publicDeviceKey = requiredString(body.public_key, "public key", 4096);
         const label = requiredString(body.device_label, "device label", 80);
