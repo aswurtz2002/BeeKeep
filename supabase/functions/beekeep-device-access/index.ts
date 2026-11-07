@@ -91,6 +91,15 @@ async function rpcData<T>(
   return data as T;
 }
 
+function sameHex(left: string, right: string): boolean {
+  if (left.length !== right.length) return false;
+  let difference = 0;
+  for (let i = 0; i < left.length; i++) {
+    difference |= left.charCodeAt(i) ^ right.charCodeAt(i);
+  }
+  return difference === 0;
+}
+
 async function requireValidSignature(
   publicKey: string,
   signature: string,
@@ -113,8 +122,10 @@ Deno.serve(async (req: Request) => {
     const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
     const publicKey = readKeySet("SUPABASE_PUBLISHABLE_KEYS", "SUPABASE_ANON_KEY") ||
       Deno.env.get("SUPABASE_PUBLISHABLE_KEY") || "";
-    const secretKey = readKeySet("SUPABASE_SECRET_KEYS", "SUPABASE_SERVICE_ROLE_KEY") ||
-      Deno.env.get("SUPABASE_SECRET_KEY") || "";
+    // The project currently exposes its legacy service_role JWT to Edge Functions.
+    // A new sb_secret_ key is not a JWT and must not be sent as Authorization: Bearer.
+    // Migrate this client to @supabase/server before switching to a secret API key.
+    const secretKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
     if (!supabaseUrl || !publicKey || !secretKey) {
       return respond(503, { success: false, error: "BeeKeep phone approval is not configured on this server." });
     }
@@ -214,7 +225,7 @@ Deno.serve(async (req: Request) => {
             typeof context.request_mode !== "string") {
           return respond(410, { success: false, error: "This phone request has expired. Start again." });
         }
-        if (await sha256Hex(challenge) !== context.challenge_hash) {
+        if (!sameHex(await sha256Hex(challenge), context.challenge_hash) {
           return respond(403, { success: false, error: "The phone registration challenge is not valid." });
         }
         await requireValidSignature(context.public_key, signed, challenge);
@@ -259,7 +270,7 @@ Deno.serve(async (req: Request) => {
           return respond(410, { success: false, error: "The approval request expired. Open it again on the trusted phone." });
         }
         const approvalChallenge = requiredString(signedChallenge, "approval challenge", 256);
-        if (await sha256Hex(approvalChallenge) !== context.approval_challenge_hash) {
+        if (!sameHex(await sha256Hex(approvalChallenge), context.approval_challenge_hash) {
           return respond(403, { success: false, error: "The approval challenge is not valid." });
         }
         await requireValidSignature(context.trusted_public_key, signed, approvalChallenge);
