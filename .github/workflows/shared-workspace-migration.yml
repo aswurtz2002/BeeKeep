@@ -203,3 +203,8 @@ jobs:
         run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261107050000_beekeep_trusted_device_server_enforcement.sql
       - name: Verify trusted-device data, workspace, Storage and RPC enforcement
         run: psql -v ON_ERROR_STOP=1 -f supabase/tests/trusted_device_server_enforcement.sql
+
+      - name: Apply trusted-device session cutover and finalization
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261107150000_beekeep_trusted_device_cutover_finalization.sql
+      - name: Verify trusted-device approval, recovery, rebind and session finalization
+        run: psql -v ON_ERROR_STOP=1 -f supabase/tests/trusted_device_cutover_finalization.sql
