@@ -161,7 +161,7 @@ internal class TrustedDeviceAccessApi(
         return response
     }
 
-    private suspend inline fun <T> call(crossinline operation: suspend () -> T): TrustedDeviceApiResult<T> =
+    private suspend fun <T> call(operation: suspend () -> T): TrustedDeviceApiResult<T> =
         try {
             TrustedDeviceApiResult.Success(operation())
         } catch (cancelled: CancellationException) {
