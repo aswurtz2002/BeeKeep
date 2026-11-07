@@ -26,16 +26,36 @@ create table auth.users (
     raw_app_meta_data jsonb not null default '{}'::jsonb
 );
 
+create table if not exists auth.sessions (
+    id uuid primary key,
+    user_id uuid not null references auth.users(id) on delete cascade,
+    created_at timestamptz,
+    updated_at timestamptz,
+    not_after timestamptz
+);
+
+create or replace function auth.jwt()
+returns jsonb
+language sql
+stable
+as $function$
+    select coalesce(nullif(current_setting('request.jwt.claims', true), '')::jsonb, '{}'::jsonb);
+$function$;
+
 create or replace function auth.uid()
 returns uuid
 language sql
 stable
 as $function$
-    select nullif(current_setting('request.jwt.claim.sub', true), '')::uuid;
+    select coalesce(
+        nullif(current_setting('request.jwt.claim.sub', true), ''),
+        nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'sub'
+    )::uuid;
 $function$;
 
 grant usage on schema auth to anon, authenticated;
 grant execute on function auth.uid() to anon, authenticated;
+grant execute on function auth.jwt() to anon, authenticated;
 grant usage on schema public to authenticated;
 
 -- Start with the existing per-user cloud table and its current RLS model.
