@@ -498,9 +498,13 @@ begin
 
         perform *
         from public.beekeep_device_begin_request(
-            pg_catalog.encode(
-                pg_catalog.convert_to(pg_catalog.repeat(pg_catalog.chr(65 + attempt), 100), 'UTF8'),
-                'base64'
+            pg_catalog.replace(
+                pg_catalog.encode(
+                    pg_catalog.convert_to(pg_catalog.repeat(pg_catalog.chr(65 + attempt), 100), 'UTF8'),
+                    'base64'
+                ),
+                E'\n',
+                ''
             ),
             pg_catalog.format('Rate-limit test phone %s', attempt)
         );
@@ -515,9 +519,13 @@ begin
     begin
         perform *
         from public.beekeep_device_begin_request(
-            pg_catalog.encode(
-                pg_catalog.convert_to(pg_catalog.repeat('Z', 100), 'UTF8'),
-                'base64'
+            pg_catalog.replace(
+                pg_catalog.encode(
+                    pg_catalog.convert_to(pg_catalog.repeat('Z', 100), 'UTF8'),
+                    'base64'
+                ),
+                E'\n',
+                ''
             ),
             'Rate-limit overflow phone'
         );
@@ -551,9 +559,13 @@ do $device_request_rate_limit_expires$
 begin
     perform *
     from public.beekeep_device_begin_request(
-        pg_catalog.encode(
-            pg_catalog.convert_to(pg_catalog.repeat('Y', 100), 'UTF8'),
-            'base64'
+        pg_catalog.replace(
+            pg_catalog.encode(
+                pg_catalog.convert_to(pg_catalog.repeat('Y', 100), 'UTF8'),
+                'base64'
+            ),
+            E'\n',
+            ''
         ),
         'Rate-limit recovery phone'
     );
