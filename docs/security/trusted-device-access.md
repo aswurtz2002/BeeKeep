@@ -71,13 +71,23 @@ Email recovery is not equivalent to approval from an uncompromised old phone: an
 
 ### Stage 2 — Backend foundation
 
-- Add migration(s) for trusted installations and expiring access requests in a non-exposed schema.
-- Add narrowly scoped registration/status/approval/recovery operations.
-- Add a single reusable server predicate for the current JWT session and active installation.
+#### 2A — Trusted-session registry (in progress)
+
+- Add private registry tables for trusted installations and expiring access requests.
+- Add a reusable server predicate that binds the JWT `session_id` to an active device row and a live `auth.sessions` row.
+- Add a fail-closed guard helper for later RPCs.
+- Add SQL tests for matching, unknown, cross-account, and revoked sessions.
+- This first migration deliberately does not attach the guard to live data policies, so it cannot lock out existing app versions.
+
+#### 2B — Access enforcement (not started)
+
 - Add restrictive device authorization to personal/workspace table policies and photo Storage policies.
 - Add explicit guards to user-callable `SECURITY DEFINER` functions and sensitive Edge Functions.
 - Add SQL security tests proving a pending/replaced device cannot read or write personal records, shared workspace records, action data, or private photos, while a trusted device and another legitimate workspace member still can.
-- Apply and verify migrations only on the BeeKeep staging project `nnmcwsdunpwdktexgivr`; never change BeeKeep Production as part of this work.
+
+#### 2C — Deployment and verification (not started)
+
+- Apply and verify the fully coordinated database migrations only on BeeKeep staging project `nnmcwsdunpwdktexgivr`; never change BeeKeep Production as part of this work.
 
 ### Stage 3 — Android enrolment and session gate
 
