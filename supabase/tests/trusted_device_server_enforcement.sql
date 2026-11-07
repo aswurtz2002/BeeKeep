@@ -17,9 +17,19 @@ values
     ('10000000-0000-0000-0000-000000000094', '00000000-0000-0000-0000-000000000091', now(), now(), now() + interval '30 days')
 on conflict (id) do nothing;
 
+-- The team owner needs an active Commercial entitlement for the existing
+-- workspace-owner triggers and the same checks used by production RPCs.
+update auth.users
+set raw_app_meta_data = coalesce(raw_app_meta_data, '{}'::jsonb) ||
+    jsonb_build_object(
+        'beekeep_plan', 'commercial_monthly',
+        'beekeep_subscription_expires_at', (now() + interval '30 days')::text
+    )
+where id = '00000000-0000-0000-0000-000000000091';
+
 -- Owner's current phone and the invited workspace member's own current phone.
 insert into beekeep_private.trusted_devices (
-    user_id, session_id, key_fingerprint, public_key, device_label, device_status
+    user_id, session_id, key_fingerprint, public_key, device_label, device_status, revoked_at
 )
 values
     ('00000000-0000-0000-0000-000000000091', '10000000-0000-0000-0000-000000000091',
@@ -27,13 +37,8 @@ values
     ('00000000-0000-0000-0000-000000000092', '10000000-0000-0000-0000-000000000093',
      repeat('2', 64), repeat('B', 128), 'Member trusted phone', 'active'),
     ('00000000-0000-0000-0000-000000000091', '10000000-0000-0000-0000-000000000094',
-     repeat('3', 64), repeat('C', 128), 'Old replaced phone', 'replaced')
+     repeat('3', 64), repeat('C', 128), 'Old replaced phone', 'replaced', now())
 on conflict (session_id) do nothing;
-
-update beekeep_private.trusted_devices
-set revoked_at = now(), revoked_reason = 'enforcement test replaced phone'
-where session_id = '10000000-0000-0000-0000-000000000094'
-  and device_status = 'replaced' and revoked_at is null;
 
 insert into public.beekeep_workspaces (id, name, owner_user_id, is_personal)
 values (
@@ -291,8 +296,9 @@ select set_config(
 do $trusted_rpc$
 declare row_count integer;
 begin
-    select count(*) into row_count from public.beekeep_list_workspaces();
-    if row_count < 1 then raise exception 'Trusted owner could not use the workspace-list RPC'; end if;
+    select count(*) into row_count from public.beekeep_list_workspaces()
+    where id = '20000000-0000-0000-0000-000000000091';
+    if row_count <> 1 then raise exception 'Trusted owner could not list its team workspace through the guarded RPC'; end if;
 end;
 $trusted_rpc$;
 
