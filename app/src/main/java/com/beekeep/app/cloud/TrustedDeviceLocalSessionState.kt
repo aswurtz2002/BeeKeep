@@ -48,7 +48,6 @@ internal object TrustedDeviceLocalSessionState {
 
     /** A deliberate successful sign-in starts a fresh verification attempt. */
     fun clearForAuthenticatedSession(context: Context, currentUserId: String) {
-        val cleanUserId = currentUserId.trim()
         check(
             preferences(context).edit()
                 .remove(REPLACED_USER_ID_KEY)
