@@ -746,6 +746,7 @@ class SupabaseGateway(
                             )
                         }
                         accountVerificationJob?.cancel()
+                        CloudSyncScheduler.cancel(appContext)
                         stopRealtime()
                     }
                     else -> {
