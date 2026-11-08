@@ -777,9 +777,11 @@ class SupabaseGateway(
         val session = supabase.auth.currentSessionOrNull() ?: return
         if (session.user?.id?.trim() != userId) return
         val email = session.user?.email.orEmpty().ifBlank { _account.value.email }
-        check(TrustedDeviceLocalSessionState.markReplaced(appContext, userId, email)) {
-            "BeeKeep couldn't save the local-only device state. Your records have not been changed."
-        }
+        val localMarkerSaved = TrustedDeviceLocalSessionState.markReplaced(
+            appContext,
+            userId,
+            email
+        )
 
         accountVerificationJob?.cancel()
         sessionRefreshJob?.cancel()
@@ -799,7 +801,11 @@ class SupabaseGateway(
             signedIn = false,
             email = email,
             userId = userId,
-            error = "You were signed out because another phone was approved. Your local records have been kept; cloud sync is off."
+            error = if (localMarkerSaved) {
+                "You were signed out because another phone was approved. Your local records have been kept; cloud sync is off."
+            } else {
+                "Your old cloud session has been cleared. Local records remain on this phone; restart BeeKeep to restore its offline-only screen."
+            }
         )
         _trustedDeviceAccess.value = TrustedDeviceAccessState(
             status = TrustedDeviceAccessStatus.REPLACED_LOCAL,
