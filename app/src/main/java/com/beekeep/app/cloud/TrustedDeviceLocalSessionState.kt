@@ -33,6 +33,10 @@ internal object TrustedDeviceLocalSessionState {
         preferences(context).getString(LAST_TRUSTED_USER_ID_KEY, null)
             ?.trim() == userId.trim()
 
+    fun lastTrustedUserId(context: Context): String? =
+        preferences(context).getString(LAST_TRUSTED_USER_ID_KEY, null)
+            ?.trim()?.takeIf { it.isNotEmpty() }
+
     fun markReplaced(context: Context, userId: String, email: String): Boolean {
         val cleanUserId = userId.trim().takeIf { it.isNotEmpty() } ?: return false
         return preferences(context).edit()
