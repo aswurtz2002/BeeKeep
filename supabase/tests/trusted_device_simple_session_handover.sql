@@ -234,6 +234,21 @@ select public.beekeep_internal_device_simple_finalize_request(
     '10000000-0000-0000-0000-000000000107'
 );
 
+-- Inspect the private registry as the migration-test owner, not as an application user.
+do $recovery_leaves_one_active_phone$
+declare active_count integer;
+begin
+    select count(*)::integer into active_count
+    from beekeep_private.trusted_devices
+    where user_id = '00000000-0000-0000-0000-000000000104'
+      and device_status = 'active'
+      and revoked_at is null;
+    if active_count <> 1 then
+        raise exception 'Email recovery did not leave exactly one active phone';
+    end if;
+end;
+$recovery_leaves_one_active_phone$;
+
 set role authenticated;
 select set_config(
     'request.jwt.claims',
@@ -253,18 +268,9 @@ select set_config(
     true
 );
 do $recovery_activates_new_phone$
-declare active_count integer;
 begin
     if not public.beekeep_device_session_is_trusted() then
         raise exception 'Email recovery did not activate the replacement phone';
-    end if;
-    select count(*)::integer into active_count
-    from beekeep_private.trusted_devices
-    where user_id = '00000000-0000-0000-0000-000000000104'
-      and device_status = 'active'
-      and revoked_at is null;
-    if active_count <> 1 then
-        raise exception 'Email recovery did not leave exactly one active phone';
     end if;
 end;
 $recovery_activates_new_phone$;
