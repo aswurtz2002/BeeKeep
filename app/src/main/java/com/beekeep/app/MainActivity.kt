@@ -466,11 +466,7 @@ fun BeeKeepApp(
             // happens inside refreshTrustedDeviceAccess, and cancelling that call here could
             // interrupt the local sign-out before its Auth session and workers are cleared.
             cloud.refreshTrustedDeviceAccess()
-            if (cloud.trustedDeviceAccess.value.status in setOf(
-                    TrustedDeviceAccessStatus.REPLACED_LOCAL,
-                    TrustedDeviceAccessStatus.REPLACED_LOCAL_OFFLINE
-                )
-            ) break
+            if (cloud.trustedDeviceAccess.value.status == TrustedDeviceAccessStatus.REPLACED_LOCAL) break
             kotlinx.coroutines.delay(15_000L)
         }
     }
@@ -495,12 +491,10 @@ fun BeeKeepApp(
             TrustedDeviceAccessStatus.PENDING_FINALIZATION,
             TrustedDeviceAccessStatus.EXPIRED,
             TrustedDeviceAccessStatus.DENIED,
-            TrustedDeviceAccessStatus.REPLACED,
-            TrustedDeviceAccessStatus.REPLACED_LOCAL,
             TrustedDeviceAccessStatus.UNAVAILABLE
         ) -> BeeKeepTrustedDeviceGateScreen(cloud, trustedDeviceAccess)
         account.userId != null &&
-            trustedDeviceAccess.status == TrustedDeviceAccessStatus.REPLACED_LOCAL_OFFLINE -> {
+            trustedDeviceAccess.status == TrustedDeviceAccessStatus.REPLACED_LOCAL -> {
             Column(modifier = Modifier.fillMaxSize()) {
                 Surface(
                     color = MaterialTheme.colorScheme.surfaceVariant,
