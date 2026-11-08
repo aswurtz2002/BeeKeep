@@ -727,6 +727,7 @@ class SupabaseGateway(
                     TrustedDeviceAccessStatus.REPLACED_LOCAL -> {
                         val userId = supabase.auth.currentSessionOrNull()?.user?.id
                             ?.trim()?.takeIf { it.isNotEmpty() }
+                            ?: _account.value.userId?.trim()?.takeIf { it.isNotEmpty() }
                         if (userId != null) {
                             syncMutex.withLock {
                                 signOutReplacedDeviceLocallyUnlocked(supabase, userId)
@@ -736,6 +737,7 @@ class SupabaseGateway(
                     TrustedDeviceAccessStatus.OFFLINE_LOCAL -> {
                         val userId = supabase.auth.currentSessionOrNull()?.user?.id
                             ?.trim()?.takeIf { it.isNotEmpty() }
+                            ?: _account.value.userId?.trim()?.takeIf { it.isNotEmpty() }
                         if (userId != null) {
                             _accountSetupState.value = cachedAccountSetupState(userId)
                                 ?: BeeKeepAccountSetupState.Offline
@@ -775,9 +777,15 @@ class SupabaseGateway(
         supabase: SupabaseClient,
         userId: String
     ) {
-        val session = supabase.auth.currentSessionOrNull() ?: return
-        if (session.user?.id?.trim() != userId) return
-        val email = session.user?.email.orEmpty().ifBlank { _account.value.email }
+        val session = supabase.auth.currentSessionOrNull()
+        val activeUserId = session?.user?.id?.trim()?.takeIf { it.isNotEmpty() }
+            ?: _account.value.userId?.trim()?.takeIf { it.isNotEmpty() }
+        if (activeUserId != userId) return
+        val cachedEmail = appContext.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
+            .getString("last_cloud_user_email", "").orEmpty()
+        val email = session?.user?.email.orEmpty()
+            .ifBlank { _account.value.email }
+            .ifBlank { cachedEmail }
         val localMarkerSaved = TrustedDeviceLocalSessionState.markReplaced(
             appContext,
             userId,
@@ -794,7 +802,7 @@ class SupabaseGateway(
         CloudSyncScheduler.cancel(appContext)
 
         // The server has already revoked this session; clear only the local credential.
-        supabase.auth.clearSession()
+        runCatching { supabase.auth.clearSession() }
         _pendingTrustedDeviceRequests.value = emptyList()
         _accountSetupState.value = BeeKeepAccountSetupState.Offline
         _account.value = CloudAccountState(
