@@ -350,34 +350,3 @@ private fun InventorySummaryRow(label: String, count: Int) {
         Text(count.toString(), fontWeight = FontWeight.Bold)
     }
 }
-
-@Composable
-internal fun BeeKeepLocalDataAttachmentPendingBanner(onReview: () -> Unit) {
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 8.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
-        shape = RoundedCornerShape(16.dp)
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 14.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text("Personal cloud sync paused", fontWeight = FontWeight.Bold)
-                Text(
-                    "Local records need review.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-            TextButton(onClick = onReview) {
-                Text("Review")
-            }
-        }
-    }
-}
