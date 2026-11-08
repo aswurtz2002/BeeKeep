@@ -24,8 +24,7 @@ internal data class TrustedDeviceRequestRow(
     @SerialName("created_at") val createdAt: String? = null,
     @SerialName("expires_at") val expiresAt: String? = null,
     @SerialName("challenge_verified_at") val challengeVerifiedAt: String? = null,
-    @SerialName("approval_method") val approvalMethod: String? = null,
-    val challenge: String? = null
+    @SerialName("approval_method") val approvalMethod: String? = null
 )
 
 @Serializable
@@ -34,16 +33,14 @@ internal data class TrustedDeviceFunctionResponse(
     val error: String? = null,
     val request: List<TrustedDeviceRequestRow>? = null,
     val requests: List<TrustedDeviceRequestRow>? = null,
-    val challenge: String? = null,
     val status: String? = null,
-    val trusted: Boolean? = null,
-    @SerialName("device_id") val deviceId: String? = null
+    val trusted: Boolean? = null
 )
 
 /**
- * Typed Android wrapper around the beekeep-device-access Edge Function.
- * All server authorization decisions remain in Supabase; this object only transports
- * the authenticated request and validates the shape of the response.
+ * Small authenticated API for the one-session handover.
+ * The Supabase JWT session_id identifies the phone session; no client-created
+ * device key or client-side cryptographic approval protocol is involved.
  */
 internal class TrustedDeviceAccessApi(
     private val supabase: SupabaseClient
@@ -52,34 +49,13 @@ internal class TrustedDeviceAccessApi(
         invoke("access").trusted == true
     }
 
-    suspend fun begin(
-        keyMaterial: TrustedDeviceKeyMaterial,
-        deviceLabel: String
-    ): TrustedDeviceApiResult<TrustedDeviceRequestRow> = call {
+    suspend fun begin(deviceLabel: String): TrustedDeviceApiResult<TrustedDeviceRequestRow> = call {
         val response = invoke(
             action = "begin",
-            args = buildJsonObject {
-                put("public_key", keyMaterial.publicKeyBase64)
-                put("device_label", deviceLabel.take(80))
-            }
+            args = buildJsonObject { put("device_label", deviceLabel.take(80)) }
         )
         response.request?.singleOrNull()
-            ?: error("BeeKeep didn't return a phone registration request. Try again.")
-    }
-
-    suspend fun complete(
-        requestId: String,
-        challenge: String,
-        signature: String
-    ): TrustedDeviceApiResult<TrustedDeviceFunctionResponse> = call {
-        invoke(
-            action = "complete",
-            args = buildJsonObject {
-                put("request_id", requestId)
-                put("challenge", challenge)
-                put("signature", signature)
-            }
-        )
+            ?: error("BeeKeep didn't return a phone approval request. Try again.")
     }
 
     suspend fun requestStatus(): TrustedDeviceApiResult<TrustedDeviceRequestRow?> = call {
@@ -90,84 +66,32 @@ internal class TrustedDeviceAccessApi(
         invoke("list").requests.orEmpty()
     }
 
-    suspend fun approvalChallenge(
-        requestId: String
-    ): TrustedDeviceApiResult<String> = call {
+    suspend fun approve(requestId: String): TrustedDeviceApiResult<String> = call {
         invoke(
-            action = "approval_challenge",
+            action = "approve",
             args = buildJsonObject { put("request_id", requestId) }
-        ).challenge?.takeIf { it.isNotBlank() }
-            ?: error("BeeKeep didn't return an approval challenge. Open the request again.")
+        ).status.orEmpty()
     }
 
-    suspend fun finalizationChallenge(
-        requestId: String
-    ): TrustedDeviceApiResult<String> = call {
+    suspend fun deny(requestId: String): TrustedDeviceApiResult<String> = call {
         invoke(
-            action = "finalize_challenge",
+            action = "deny",
             args = buildJsonObject { put("request_id", requestId) }
-        ).challenge?.takeIf { it.isNotBlank() }
-            ?: error("BeeKeep didn't return a final phone approval challenge. Try again.")
+        ).status.orEmpty()
     }
 
-    suspend fun finalize(
-        requestId: String,
-        challenge: String,
-        signature: String
-    ): TrustedDeviceApiResult<TrustedDeviceFunctionResponse> = call {
+    suspend fun finalize(requestId: String): TrustedDeviceApiResult<String> = call {
         invoke(
             action = "finalize",
-            args = buildJsonObject {
-                put("request_id", requestId)
-                put("challenge", challenge)
-                put("signature", signature)
-            }
-        )
+            args = buildJsonObject { put("request_id", requestId) }
+        ).status.orEmpty()
     }
 
-    suspend fun approve(
-        requestId: String,
-        challenge: String,
-        signature: String
-    ): TrustedDeviceApiResult<TrustedDeviceFunctionResponse> =
-        decide("approve", requestId, challenge, signature)
-
-    suspend fun deny(
-        requestId: String,
-        challenge: String,
-        signature: String
-    ): TrustedDeviceApiResult<TrustedDeviceFunctionResponse> =
-        decide("deny", requestId, challenge, signature)
-
-    suspend fun recover(
-        requestId: String,
-        challenge: String,
-        signature: String
-    ): TrustedDeviceApiResult<TrustedDeviceFunctionResponse> = call {
+    suspend fun recover(requestId: String): TrustedDeviceApiResult<String> = call {
         invoke(
             action = "recover",
-            args = buildJsonObject {
-                put("request_id", requestId)
-                put("challenge", challenge)
-                put("signature", signature)
-            }
-        )
-    }
-
-    private suspend fun decide(
-        action: String,
-        requestId: String,
-        challenge: String,
-        signature: String
-    ): TrustedDeviceApiResult<TrustedDeviceFunctionResponse> = call {
-        invoke(
-            action = action,
-            args = buildJsonObject {
-                put("request_id", requestId)
-                put("challenge", challenge)
-                put("signature", signature)
-            }
-        )
+            args = buildJsonObject { put("request_id", requestId) }
+        ).status.orEmpty()
     }
 
     private suspend fun invoke(
@@ -185,7 +109,7 @@ internal class TrustedDeviceAccessApi(
         if (!response.success) {
             throw IllegalStateException(
                 response.error?.takeIf { it.isNotBlank() }
-                    ?: "BeeKeep couldn't complete phone approval. Try again."
+                    ?: "BeeKeep couldn't complete the phone handover. Try again."
             )
         }
         return response
