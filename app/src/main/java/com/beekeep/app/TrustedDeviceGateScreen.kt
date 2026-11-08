@@ -220,7 +220,7 @@ internal fun BeeKeepTrustedDeviceGateScreen(
                         }
                     }
 
-                    if (!waiting && !finalizing && !codeRequested) {
+                    if (!finalizing && !codeRequested) {
                         TextButton(
                             enabled = !busy,
                             onClick = {
@@ -238,7 +238,7 @@ internal fun BeeKeepTrustedDeviceGateScreen(
                         ) {
                             Text("Verify with email instead")
                         }
-                    } else if (!waiting && !finalizing) {
+                    } else if (!finalizing) {
                         OutlinedTextField(
                             value = code,
                             onValueChange = { value ->
