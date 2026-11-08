@@ -907,6 +907,23 @@ class SupabaseGateway(
                 verifyTrustedDeviceSession(supabase)
             val localOnlyDevice = !deviceTrusted && isLocalOnlyTrustedDeviceState()
 
+            if (userId == null && !_passwordRecoveryRequired.value &&
+                !TrustedDeviceLocalSessionState.isReplaced(appContext)
+            ) {
+                // If Supabase has already discarded a revoked/expired session before BeeKeep
+                // could poll it, the last trusted account is enough to keep this install local-only.
+                val lastTrustedUserId = TrustedDeviceLocalSessionState.lastTrustedUserId(appContext)
+                if (lastTrustedUserId != null) {
+                    val lastEmail = appContext.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
+                        .getString("last_cloud_user_email", "").orEmpty()
+                    TrustedDeviceLocalSessionState.markReplaced(
+                        appContext,
+                        lastTrustedUserId,
+                        lastEmail
+                    )
+                }
+            }
+
             if (userId == null && TrustedDeviceLocalSessionState.isReplaced(appContext)) {
                 stopRealtime()
                 accountVerificationJob?.cancel()
@@ -932,26 +949,16 @@ class SupabaseGateway(
                     repository.switchWorkspace(null)
                 }
                 _accountSetupState.value = BeeKeepAccountSetupState.Offline
-                val continueOffline =
-                    TrustedDeviceLocalSessionState.isContinuingOffline(appContext)
                 _trustedDeviceAccess.value = TrustedDeviceAccessState(
-                    status = if (continueOffline) {
-                        TrustedDeviceAccessStatus.REPLACED_LOCAL_OFFLINE
-                    } else {
-                        TrustedDeviceAccessStatus.REPLACED_LOCAL
-                    },
-                    message = if (continueOffline) {
-                        "This phone is signed out. Local records are available, but cloud sync is off."
-                    } else {
-                        "You were signed out because another phone was approved. Continue offline to view this phone's local records, or sign in again."
-                    }
+                    status = TrustedDeviceAccessStatus.REPLACED_LOCAL,
+                    message = "Signed out on this phone. Local records remain available; cloud sync is off."
                 )
                 _account.value = CloudAccountState(
                     configured = true,
                     signedIn = false,
                     email = replacedEmail,
                     userId = replacedUserId,
-                    error = "Your BeeKeep account was approved on another phone. This phone is signed out; its local records have been kept."
+                    error = "Your BeeKeep session ended after another phone was approved. Local records have been kept."
                 )
                 repository.completeStartupWorkspaceAccessResolution()
                 _accountInitialized.value = true
@@ -1855,6 +1862,8 @@ class SupabaseGateway(
         _trustedDeviceAccess.value = TrustedDeviceAccessState()
         _pendingTrustedDeviceRequests.value = emptyList()
         _pendingPasswordResetEmail.value = null
+        TrustedDeviceLocalSessionState.clear(appContext)
+        CloudSyncScheduler.cancel(appContext)
         // Never leave another account viewing the previously selected team's local cache.
         repository.switchWorkspace(null)
         supabase.auth.signOut()
