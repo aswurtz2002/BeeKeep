@@ -407,6 +407,7 @@ enum class Screen {
     WORKSPACE,
     SCAN,
     MORE,
+    LOCAL_DATA_REVIEW,
     SUPPORT_ADMIN,
     SETTINGS,
     TAG_MANAGER,
@@ -445,19 +446,9 @@ fun BeeKeepApp(
     val accountSetupState by cloud.accountSetupState.collectAsStateWithLifecycle()
     val trustedDeviceAccess by cloud.trustedDeviceAccess.collectAsStateWithLifecycle()
     val pendingTrustedDeviceRequests by cloud.pendingTrustedDeviceRequests.collectAsStateWithLifecycle()
-    val localDataAttachmentPending by cloud.localDataAttachmentPending.collectAsStateWithLifecycle()
-    val activeWorkspaceId by repository.activeWorkspaceId.collectAsStateWithLifecycle()
     val trustedDeviceScope = androidx.compose.runtime.rememberCoroutineScope()
     var trustedDeviceDecisionBusy by rememberSaveable { mutableStateOf(false) }
     var startupWatchdogElapsed by rememberSaveable { mutableStateOf(false) }
-    var localDataReviewDismissed by rememberSaveable(account.userId) { mutableStateOf(false) }
-
-    androidx.compose.runtime.LaunchedEffect(localDataAttachmentPending, activeWorkspaceId) {
-        if (!localDataAttachmentPending || activeWorkspaceId != null) {
-            localDataReviewDismissed = false
-        }
-    }
-
     // Poll while the account is open so a newly approved phone takes effect promptly and
     // the old phone transitions to local-only mode without waiting for a manual sign-out.
     androidx.compose.runtime.LaunchedEffect(account.userId) {
@@ -551,35 +542,24 @@ fun BeeKeepApp(
         }
         accountSetupState is BeeKeepAccountSetupState.Ready ||
             accountSetupState is BeeKeepAccountSetupState.Offline -> {
-            if (localDataAttachmentPending && activeWorkspaceId == null && !localDataReviewDismissed) {
-                BeeKeepLocalDataAttachmentReviewScreen(cloud = cloud) {
-                    localDataReviewDismissed = true
-                }
-            } else {
-                Column(modifier = Modifier.fillMaxSize()) {
-                    if (localDataAttachmentPending && activeWorkspaceId == null) {
-                        BeeKeepLocalDataAttachmentPendingBanner {
-                            localDataReviewDismissed = false
-                        }
-                    }
-                    Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
-                        BeeKeepAuthenticatedApp(
-                            vm = vm,
-                            nfc = nfc,
-                            activity = activity,
-                            locationController = locationController,
-                            cloud = cloud,
-                            darkMode = darkMode,
-                            incomingNfc = incomingNfc,
-                            repository = repository,
-                            onSpeakHiveNumber = onSpeakHiveNumber,
-                            largeFieldText = largeFieldText,
-                            onLargeFieldTextChange = onLargeFieldTextChange,
-                            compactHiveRows = compactHiveRows,
-                            onCompactHiveRowsChange = onCompactHiveRowsChange,
-                            onDarkModeChange = onDarkModeChange
-                        )
-                    }
+            Column(modifier = Modifier.fillMaxSize()) {
+                Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                    BeeKeepAuthenticatedApp(
+                        vm = vm,
+                        nfc = nfc,
+                        activity = activity,
+                        locationController = locationController,
+                        cloud = cloud,
+                        darkMode = darkMode,
+                        incomingNfc = incomingNfc,
+                        repository = repository,
+                        onSpeakHiveNumber = onSpeakHiveNumber,
+                        largeFieldText = largeFieldText,
+                        onLargeFieldTextChange = onLargeFieldTextChange,
+                        compactHiveRows = compactHiveRows,
+                        onCompactHiveRowsChange = onCompactHiveRowsChange,
+                        onDarkModeChange = onDarkModeChange
+                    )
                 }
             }
         }
@@ -3275,6 +3255,8 @@ vm.saveHarvestToApiary(
             )
             Screen.MORE -> MoreScreen(
                 padding = padding,
+                canReviewLocalData = activeWorkspaceId.isNullOrBlank(),
+                onOpenLocalDataReview = { screen = Screen.LOCAL_DATA_REVIEW },
                 onBack = { screen = Screen.SETTINGS },
                 onWorkspaceJoined = { joinedMessage ->
                     hasJoinedTeamWorkspace = true
@@ -3315,6 +3297,9 @@ vm.saveHarvestToApiary(
                 activity = activity,
                 cloud = cloud
             )
+            Screen.LOCAL_DATA_REVIEW -> BeeKeepLocalDataAttachmentReviewScreen(cloud = cloud) {
+                screen = Screen.MORE
+            }
             Screen.SUPPORT_ADMIN -> AdminHiveLimitScreen(
                 padding = padding,
                 cloud = cloud,
@@ -4278,6 +4263,8 @@ private fun TagManagementScreen(
 @Composable
 private fun MoreScreen(
     padding: PaddingValues,
+    canReviewLocalData: Boolean,
+    onOpenLocalDataReview: () -> Unit,
     onBack: () -> Unit,
     onWorkspaceJoined: (String) -> Unit,
     onTagManager: () -> Unit,
@@ -4293,6 +4280,7 @@ private fun MoreScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val account by cloud.account.collectAsStateWithLifecycle()
+    val localDataAttachmentPending by cloud.localDataAttachmentPending.collectAsStateWithLifecycle()
     var email by rememberSaveable { mutableStateOf("") }
     var password by rememberSaveable { mutableStateOf("") }
     var username by rememberSaveable { mutableStateOf("") }
@@ -4353,6 +4341,38 @@ private fun MoreScreen(
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text("More", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.ExtraBold)
                 Text("Additional tools and account controls", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+            }
+        }
+
+        if (account.signedIn && localDataAttachmentPending && canReviewLocalData) {
+            Card(
+                onClick = onOpenLocalDataReview,
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(20.dp),
+                border = androidx.compose.foundation.BorderStroke(
+                    1.dp,
+                    MaterialTheme.colorScheme.outlineVariant
+                )
+            ) {
+                Row(
+                    Modifier.fillMaxWidth().padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(
+                        Modifier.weight(1f),
+                        verticalArrangement = Arrangement.spacedBy(3.dp)
+                    ) {
+                        Text("Review local data", fontWeight = FontWeight.Bold)
+                        Text(
+                            "Personal cloud sync is paused until local records are reviewed. Nothing is uploaded automatically.",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                    TextButton(onClick = onOpenLocalDataReview) {
+                        Text("REVIEW")
+                    }
+                }
             }
         }
 
