@@ -4369,9 +4369,11 @@ private fun MoreScreen(
                             style = MaterialTheme.typography.bodySmall
                         )
                     }
-                    TextButton(onClick = onOpenLocalDataReview) {
-                        Text("REVIEW")
-                    }
+                    Text(
+                        "REVIEW",
+                        color = MaterialTheme.colorScheme.primary,
+                        fontWeight = FontWeight.Bold
+                    )
                 }
             }
         }
