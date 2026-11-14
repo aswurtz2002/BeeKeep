@@ -506,7 +506,15 @@ class SupabaseGateway(
                         "pending" -> if (expired) {
                             TrustedDeviceAccessStatus.EXPIRED
                         } else {
-                            TrustedDeviceAccessStatus.PENDING_EMAIL_CODE
+                            val currentUserId = supabase.auth.currentSessionOrNull()?.user?.id
+                                ?.trim()?.takeIf { it.isNotEmpty() }
+                            if (currentUserId != null &&
+                                isPendingTrustedDeviceEmailRequestVerified(currentUserId)
+                            ) {
+                                TrustedDeviceAccessStatus.PENDING_FINALIZATION
+                            } else {
+                                TrustedDeviceAccessStatus.PENDING_EMAIL_CODE
+                            }
                         }
                         "approved_pending_finalize", "finalizing" ->
                             TrustedDeviceAccessStatus.PENDING_FINALIZATION
