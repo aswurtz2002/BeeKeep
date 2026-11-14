@@ -445,9 +445,6 @@ fun BeeKeepApp(
     val passwordRecoveryRequired by cloud.passwordRecoveryRequired.collectAsStateWithLifecycle()
     val accountSetupState by cloud.accountSetupState.collectAsStateWithLifecycle()
     val trustedDeviceAccess by cloud.trustedDeviceAccess.collectAsStateWithLifecycle()
-    val pendingTrustedDeviceRequests by cloud.pendingTrustedDeviceRequests.collectAsStateWithLifecycle()
-    val trustedDeviceScope = androidx.compose.runtime.rememberCoroutineScope()
-    var trustedDeviceDecisionBusy by rememberSaveable { mutableStateOf(false) }
     var startupWatchdogElapsed by rememberSaveable { mutableStateOf(false) }
     // Poll while the account is open so a newly approved phone takes effect promptly and
     // the old phone transitions to local-only mode without waiting for a manual sign-out.
@@ -478,7 +475,7 @@ fun BeeKeepApp(
         passwordRecoveryRequired -> BeeKeepAuthScreen(cloud)
         account.userId != null && trustedDeviceAccess.status in setOf(
             TrustedDeviceAccessStatus.NOT_TRUSTED,
-            TrustedDeviceAccessStatus.PENDING_APPROVAL,
+            TrustedDeviceAccessStatus.PENDING_EMAIL_CODE,
             TrustedDeviceAccessStatus.PENDING_FINALIZATION,
             TrustedDeviceAccessStatus.EXPIRED,
             TrustedDeviceAccessStatus.DENIED,
@@ -566,59 +563,7 @@ fun BeeKeepApp(
         else -> BeeKeepAuthLoadingScreen()
     }
 
-    val pendingRequest = pendingTrustedDeviceRequests.firstOrNull()
-    if (account.signedIn && pendingRequest != null) {
-        androidx.compose.material3.AlertDialog(
-            onDismissRequest = { /* A security decision must be explicit. */ },
-            title = {
-                Text("New phone requests access")
-            },
-            text = {
-                Text(
-                    (pendingRequest.deviceLabel?.takeIf { it.isNotBlank() } ?: "A new Android phone") +
-                        " is requesting access to this BeeKeep account. Approving it will replace this phone for cloud access. This phone's local records will remain available."
-                )
-            },
-            confirmButton = {
-                Button(
-                    enabled = !trustedDeviceDecisionBusy,
-                    onClick = {
-                        if (!trustedDeviceDecisionBusy) {
-                            trustedDeviceDecisionBusy = true
-                            trustedDeviceScope.launch {
-                                cloud.decideTrustedDeviceRequest(
-                                    requestId = pendingRequest.requestId.orEmpty(),
-                                    approve = true
-                                )
-                                trustedDeviceDecisionBusy = false
-                            }
-                        }
-                    }
-                ) {
-                    Text(if (trustedDeviceDecisionBusy) "Working…" else "Approve phone")
-                }
-            },
-            dismissButton = {
-                Button(
-                    enabled = !trustedDeviceDecisionBusy,
-                    onClick = {
-                        if (!trustedDeviceDecisionBusy) {
-                            trustedDeviceDecisionBusy = true
-                            trustedDeviceScope.launch {
-                                cloud.decideTrustedDeviceRequest(
-                                    requestId = pendingRequest.requestId.orEmpty(),
-                                    approve = false
-                                )
-                                trustedDeviceDecisionBusy = false
-                            }
-                        }
-                    }
-                ) {
-                    Text("Deny")
-                }
-            }
-        )
-    }
+
 }
 
 @Composable
