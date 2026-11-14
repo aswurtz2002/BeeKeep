@@ -52,7 +52,7 @@ begin
                 else '[]'::jsonb
             end
         ) as amr(value)
-        where amr.value ->> 'method' in ('password', 'oauth', 'sso')
+        where amr.value ->> 'method' in ('password', 'oauth', 'sso/saml')
     ) then
         raise exception 'Sign in with your password or Google before requesting a phone security code.'
             using errcode = '42501';
