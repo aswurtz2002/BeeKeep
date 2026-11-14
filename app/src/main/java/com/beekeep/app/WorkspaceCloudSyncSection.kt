@@ -40,12 +40,12 @@ fun WorkspaceCloudSyncSection(cloud: SupabaseGateway) {
 
     Card(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(24.dp),
+        shape = RoundedCornerShape(20.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
     ) {
         Column(
-            modifier = Modifier.fillMaxWidth().padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
+            modifier = Modifier.fillMaxWidth().padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(
@@ -53,22 +53,12 @@ fun WorkspaceCloudSyncSection(cloud: SupabaseGateway) {
                     contentDescription = null,
                     tint = MaterialTheme.colorScheme.primary
                 )
-                Column(
-                    modifier = Modifier.weight(1f).padding(start = 10.dp),
-                    verticalArrangement = Arrangement.spacedBy(2.dp)
-                ) {
-                    Text("Cloud sync", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.ExtraBold)
-                    Text(
-                        when {
-                            !account.configured -> "Cloud sync is not configured on this build."
-                            !account.signedIn -> "Sign in from More to sync this device."
-                            account.syncing -> "Syncing the active workspace…"
-                            else -> "Changes sync for the active dataset."
-                        },
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
+                Text(
+                    "Cloud sync",
+                    modifier = Modifier.weight(1f),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.ExtraBold
+                )
                 Text(
                     when {
                         !account.configured -> "OFF"
@@ -79,6 +69,18 @@ fun WorkspaceCloudSyncSection(cloud: SupabaseGateway) {
                     style = MaterialTheme.typography.labelMedium,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.primary
+                )
+            }
+
+            if (!account.configured || !account.signedIn) {
+                Text(
+                    if (!account.configured) {
+                        "Cloud sync isn't configured on this build."
+                    } else {
+                        "Sign in from More to sync this device."
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
 

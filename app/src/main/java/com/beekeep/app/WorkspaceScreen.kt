@@ -245,7 +245,7 @@ fun WorkspaceScreen(
                     .fillMaxSize()
                     .verticalScroll(rememberScrollState())
                     .padding(horizontal = 16.dp, vertical = 16.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp)
+                verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 if (workspaceAccessLocked || workspaceAccessCouldNotBeVerified) {
             Card(
@@ -388,16 +388,6 @@ fun WorkspaceScreen(
                                 fontWeight = FontWeight.ExtraBold,
                                 color = MaterialTheme.colorScheme.onPrimaryContainer
                             )
-                            Text(
-                                if (hasActiveTeam) {
-                                    "Shared apiary records are active on this device. Changes sync with your team."
-                                } else {
-                                    "Create a shared workspace, invite your crew, and keep every member working from the same records."
-                                },
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.82f),
-                                maxLines = 2
-                            )
                         }
                         Surface(
                             shape = RoundedCornerShape(22.dp),
@@ -406,7 +396,7 @@ fun WorkspaceScreen(
                         ) {
                             Icon(
                                 imageVector = Icons.Rounded.Groups,
-                                contentDescription = null,
+                                contentDescription = "Team workspace",
                                 modifier = Modifier.padding(9.dp).size(32.dp)
                             )
                         }
@@ -458,11 +448,7 @@ fun WorkspaceScreen(
                         }
                     } else {
                         Text(
-                            if (hasCommercialAccess) {
-                                "Commercial includes team creation. You can also join another beekeeper’s workspace with an invitation code."
-                            } else {
-                                "Joining a team does not require Commercial. Commercial is required only to create a new team workspace."
-                            },
+                            "Commercial is required to create a team. Joining is free.",
                             color = MaterialTheme.colorScheme.onPrimaryContainer,
                             style = MaterialTheme.typography.bodySmall,
                             fontWeight = FontWeight.Medium
@@ -538,13 +524,13 @@ fun WorkspaceJoinEntry(
 
     Card(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(24.dp),
+        shape = RoundedCornerShape(20.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
     ) {
         Column(
-            modifier = Modifier.fillMaxWidth().padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
+            modifier = Modifier.fillMaxWidth().padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -563,11 +549,6 @@ fun WorkspaceJoinEntry(
                     verticalArrangement = Arrangement.spacedBy(3.dp)
                 ) {
                     Text("Join a workspace", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.ExtraBold)
-                    Text(
-                        "An invitation code is all you need. Commercial is not required to join.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
                 }
             }
 
