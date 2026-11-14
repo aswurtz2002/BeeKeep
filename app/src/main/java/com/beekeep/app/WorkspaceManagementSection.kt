@@ -49,6 +49,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.Role
@@ -622,13 +623,16 @@ fun WorkspaceManagementSection(
                         Button(
                             enabled = !loading,
                             onClick = {
+                                val timingTrace = cloud.beginWorkspaceSwitchTiming()
                                 scope.launch {
                                     loading = true
-                                    val result = cloud.activateWorkspace(workspace.id)
+                                    timingTrace.mark("ui_loading_state_set")
+                                    val result = cloud.activateWorkspace(workspace.id, timingTrace)
                                     activeWorkspaceId = activity.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
                                         .getString("active_team_workspace_id", "").orEmpty()
                                     message = result.error ?: "Now using ${workspace.name}. Team data synced."
                                     loading = false
+                                    withFrameNanos { timingTrace.mark("ui_frame_ready") }
                                 }
                             },
                             modifier = Modifier.fillMaxWidth()
@@ -641,13 +645,16 @@ fun WorkspaceManagementSection(
                         OutlinedButton(
                             enabled = !loading,
                             onClick = {
+                                val timingTrace = cloud.beginWorkspaceSwitchTiming()
                                 scope.launch {
                                     loading = true
-                                    val result = cloud.activateWorkspace(null)
+                                    timingTrace.mark("ui_loading_state_set")
+                                    val result = cloud.activateWorkspace(null, timingTrace)
                                     activeWorkspaceId = activity.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
                                         .getString("active_team_workspace_id", "").orEmpty()
                                     message = result.error ?: "Switched back to your personal workspace."
                                     loading = false
+                                    withFrameNanos { timingTrace.mark("ui_frame_ready") }
                                 }
                             },
                             modifier = Modifier.fillMaxWidth()
