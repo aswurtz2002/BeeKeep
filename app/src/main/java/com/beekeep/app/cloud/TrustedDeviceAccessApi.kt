@@ -32,15 +32,14 @@ internal data class TrustedDeviceFunctionResponse(
     val success: Boolean = false,
     val error: String? = null,
     val request: List<TrustedDeviceRequestRow>? = null,
-    val requests: List<TrustedDeviceRequestRow>? = null,
     val status: String? = null,
     val trusted: Boolean? = null
 )
 
 /**
- * Small authenticated API for the one-session handover.
- * The Supabase JWT session_id identifies the phone session; no client-created
- * device key or client-side cryptographic approval protocol is involved.
+ * Small authenticated API for the email-code one-session handover.
+ * The initial request is tied to a password/Google session; the server rebinds it
+ * to the fresh email-OTP session only after Supabase verifies the code.
  */
 internal class TrustedDeviceAccessApi(
     private val supabase: SupabaseClient
@@ -60,24 +59,6 @@ internal class TrustedDeviceAccessApi(
 
     suspend fun requestStatus(): TrustedDeviceApiResult<TrustedDeviceRequestRow?> = call {
         invoke("status").request?.singleOrNull()
-    }
-
-    suspend fun pendingRequests(): TrustedDeviceApiResult<List<TrustedDeviceRequestRow>> = call {
-        invoke("list").requests.orEmpty()
-    }
-
-    suspend fun approve(requestId: String): TrustedDeviceApiResult<String> = call {
-        invoke(
-            action = "approve",
-            args = buildJsonObject { put("request_id", requestId) }
-        ).status.orEmpty()
-    }
-
-    suspend fun deny(requestId: String): TrustedDeviceApiResult<String> = call {
-        invoke(
-            action = "deny",
-            args = buildJsonObject { put("request_id", requestId) }
-        ).status.orEmpty()
     }
 
     suspend fun finalize(requestId: String): TrustedDeviceApiResult<String> = call {
