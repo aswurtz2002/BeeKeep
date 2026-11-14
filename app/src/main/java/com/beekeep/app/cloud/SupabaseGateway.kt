@@ -113,6 +113,7 @@ private const val PENDING_SIGNUP_VERIFICATION_EMAIL_PREF = "pending_signup_verif
 private const val PENDING_TRUSTED_DEVICE_EMAIL_REQUEST_ID_PREF = "pending_trusted_device_email_request_id"
 private const val PENDING_TRUSTED_DEVICE_EMAIL_USER_ID_PREF = "pending_trusted_device_email_user_id"
 private const val PENDING_TRUSTED_DEVICE_EMAIL_VERIFIED_PREF = "pending_trusted_device_email_verified"
+private const val PENDING_TRUSTED_DEVICE_EMAIL_SENT_PREF = "pending_trusted_device_email_sent"
 private const val PENDING_PASSWORD_RESET_REQUEST_AT_PREF = "pending_password_reset_request_at"
 private const val PASSWORD_RESET_REQUEST_MAX_AGE_MS = 60L * 60L * 1000L
 private const val PASSWORD_RECOVERY_SESSION_PREF = "password_recovery_session_active"
@@ -169,6 +170,10 @@ class SupabaseGateway(
     /** Local request ID retained across the Auth email-OTP session rotation. */
     val pendingTrustedDeviceEmailRequestId: StateFlow<String?> =
         _pendingTrustedDeviceEmailRequestId.asStateFlow()
+    private val _pendingTrustedDeviceEmailCodeSent = MutableStateFlow(false)
+    /** True only after Supabase accepted the request to send the current verification code. */
+    val pendingTrustedDeviceEmailCodeSent: StateFlow<Boolean> =
+        _pendingTrustedDeviceEmailCodeSent.asStateFlow()
     /** Emits after any configured sync attempt completes, including WorkManager syncs. */
     val workspaceActionLogRefreshVersion: StateFlow<Long> = WorkspaceActionLogRefreshSignal.version
     private val _accountInitialized = MutableStateFlow(false)
@@ -431,7 +436,11 @@ class SupabaseGateway(
     }
 
     private fun restorePendingTrustedDeviceEmailRequest(userId: String) {
-        _pendingTrustedDeviceEmailRequestId.value = pendingTrustedDeviceEmailRequestId(userId)
+        val requestId = pendingTrustedDeviceEmailRequestId(userId)
+        _pendingTrustedDeviceEmailRequestId.value = requestId
+        val prefs = appContext.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
+        _pendingTrustedDeviceEmailCodeSent.value = requestId != null &&
+            prefs.getBoolean(PENDING_TRUSTED_DEVICE_EMAIL_SENT_PREF, false)
     }
 
     private fun savePendingTrustedDeviceEmailRequest(userId: String, requestId: String) {
@@ -439,8 +448,17 @@ class SupabaseGateway(
             .putString(PENDING_TRUSTED_DEVICE_EMAIL_REQUEST_ID_PREF, requestId)
             .putString(PENDING_TRUSTED_DEVICE_EMAIL_USER_ID_PREF, userId)
             .putBoolean(PENDING_TRUSTED_DEVICE_EMAIL_VERIFIED_PREF, false)
+            .putBoolean(PENDING_TRUSTED_DEVICE_EMAIL_SENT_PREF, false)
             .apply()
         _pendingTrustedDeviceEmailRequestId.value = requestId
+        _pendingTrustedDeviceEmailCodeSent.value = false
+    }
+
+    private fun markPendingTrustedDeviceEmailCodeSent() {
+        appContext.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE).edit()
+            .putBoolean(PENDING_TRUSTED_DEVICE_EMAIL_SENT_PREF, true)
+            .apply()
+        _pendingTrustedDeviceEmailCodeSent.value = true
     }
 
     private fun markPendingTrustedDeviceEmailRequestVerified() {
@@ -460,8 +478,10 @@ class SupabaseGateway(
             .remove(PENDING_TRUSTED_DEVICE_EMAIL_REQUEST_ID_PREF)
             .remove(PENDING_TRUSTED_DEVICE_EMAIL_USER_ID_PREF)
             .remove(PENDING_TRUSTED_DEVICE_EMAIL_VERIFIED_PREF)
+            .remove(PENDING_TRUSTED_DEVICE_EMAIL_SENT_PREF)
             .apply()
         _pendingTrustedDeviceEmailRequestId.value = null
+        _pendingTrustedDeviceEmailCodeSent.value = false
         lastEmailHandoverRecoveryAttemptAtMillis = 0L
     }
 
@@ -630,6 +650,7 @@ class SupabaseGateway(
                     this.email = email
                     createUser = false
                 }
+                markPendingTrustedDeviceEmailCodeSent()
 
                 _trustedDeviceAccess.value = TrustedDeviceAccessState(
                     status = TrustedDeviceAccessStatus.PENDING_EMAIL_CODE,
@@ -1923,12 +1944,14 @@ class SupabaseGateway(
             .remove(PENDING_TRUSTED_DEVICE_EMAIL_REQUEST_ID_PREF)
             .remove(PENDING_TRUSTED_DEVICE_EMAIL_USER_ID_PREF)
             .remove(PENDING_TRUSTED_DEVICE_EMAIL_VERIFIED_PREF)
+            .remove(PENDING_TRUSTED_DEVICE_EMAIL_SENT_PREF)
             .remove(CLOUD_DATA_ATTACHMENT_REVIEWED_USER_PREF)
             .apply()
         _passwordRecoveryRequired.value = false
         _pendingSignupVerificationEmail.value = null
         _trustedDeviceAccess.value = TrustedDeviceAccessState()
         _pendingTrustedDeviceEmailRequestId.value = null
+        _pendingTrustedDeviceEmailCodeSent.value = false
         lastEmailHandoverRecoveryAttemptAtMillis = 0L
         _pendingPasswordResetEmail.value = null
         TrustedDeviceLocalSessionState.clear(appContext)
