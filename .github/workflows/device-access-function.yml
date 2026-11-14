@@ -3,6 +3,7 @@ on:
   push:
     paths:
       - 'supabase/functions/beekeep-device-access/**'
+      - 'supabase/config.toml'
       - '.github/workflows/device-access-function.yml'
   pull_request:
     paths:
@@ -22,3 +23,6 @@ jobs:
           deno-version: v2.x
       - name: Type-check simplified session handover Edge Function
         run: deno check supabase/functions/beekeep-device-access/index.ts
+      - name: Require function-level JWT verification to stay disabled
+        run: |
+          grep -A1 '^\[functions\.beekeep-device-access\] supabase/config.toml | grep -qx 'verify_jwt = false'
