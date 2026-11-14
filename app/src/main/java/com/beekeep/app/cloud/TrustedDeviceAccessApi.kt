@@ -121,10 +121,9 @@ internal class TrustedDeviceAccessApi(
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (error: Throwable) {
-            val message = error.message?.trim()?.takeIf { it.isNotBlank() }
-                ?.take(MAX_ERROR_LENGTH)
-                ?: "BeeKeep couldn't reach the phone approval service. Check your connection and try again."
-            TrustedDeviceApiResult.Failure(message)
+            TrustedDeviceApiResult.Failure(
+                TrustedDeviceErrorMessages.from(error).take(MAX_ERROR_LENGTH)
+            )
         }
 
     private companion object {
