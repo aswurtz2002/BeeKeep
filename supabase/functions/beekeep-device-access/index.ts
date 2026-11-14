@@ -73,7 +73,7 @@ function requiredString(value: unknown, name: string, maxLength = 4096): string 
   return value.trim();
 }
 
-type RpcResult = { data: unknown; error: { code?: string } | null };
+type RpcResult = { data: unknown; error: { code?: string; message?: string } | null };
 type RpcClient = {
   rpc: (functionName: string, args: Record<string, unknown>) => PromiseLike<RpcResult>;
 };
@@ -87,7 +87,13 @@ async function rpcData<T>(
   const { data, error } = await rpcClient.rpc(functionName, args);
   if (error) {
     console.error("Device access RPC failed:", functionName, error.code ?? "unknown");
-    throw new Error("The phone approval request could not be completed.");
+    if (error.message?.includes("password or Google before requesting a phone security code")) {
+      throw new Error("Sign in with your password or Google before replacing another phone.");
+    }
+    if (error.message?.includes("expired") || error.message?.includes("no longer pending")) {
+      throw new Error("This phone verification request has expired. Request a new code.");
+    }
+    throw new Error("The phone verification request could not be completed.");
   }
   return data as T;
 }
@@ -162,6 +168,12 @@ Deno.serve(async (req: Request) => {
       }
 
       case "begin": {
+        if (!userData.user.email_confirmed_at) {
+          return respond(403, {
+            success: false,
+            error: "Confirm your account email before verifying a new phone.",
+          });
+        }
         const label = requiredString(body.device_label, "device label", 80);
         const request = await rpcData<unknown>(
           userClient,
@@ -178,36 +190,6 @@ Deno.serve(async (req: Request) => {
           {},
         );
         return respond(200, { success: true, request });
-      }
-
-      case "list": {
-        const requests = await rpcData<unknown>(
-          userClient,
-          "beekeep_device_list_pending_requests",
-          {},
-        );
-        return respond(200, { success: true, requests });
-      }
-
-      case "approve":
-      case "deny": {
-        if (!isUuid(requestId)) {
-          return respond(400, { success: false, error: "Invalid phone request." });
-        }
-        if (action === "approve") {
-          const status = await rpcData<string>(
-            userClient,
-            "beekeep_device_simple_approve_request",
-            { p_request_id: requestId },
-          );
-          return respond(200, { success: true, status });
-        }
-        const denied = await rpcData<boolean>(
-          userClient,
-          "beekeep_device_simple_deny_request",
-          { p_request_id: requestId },
-        );
-        return respond(200, { success: true, status: denied ? "denied" : "expired" });
       }
 
       case "finalize": {
@@ -319,6 +301,17 @@ Deno.serve(async (req: Request) => {
             error: "Confirm your BeeKeep account email before recovering a phone.",
           });
         }
+        // The email OTP created a fresh Auth session. Bind the pending request,
+        // originally created from password/Google sign-in, to this verified session.
+        await rpcData<boolean>(
+          adminClient,
+          "beekeep_internal_device_simple_bind_email_session",
+          {
+            p_request_id: requestId,
+            p_user_id: userId,
+            p_verified_session_id: sessionId,
+          },
+        );
         await rpcData<boolean>(
           adminClient,
           "beekeep_internal_device_simple_recover_request",
