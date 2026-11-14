@@ -212,6 +212,7 @@ internal fun BeeKeepTrustedDeviceGateScreen(
                                     busy = true
                                     val result = cloud.requestTrustedDeviceEmailCode()
                                     showResult(result, "A new six-digit security code was sent.")
+                                    if (result == CloudResult.Success) code = ""
                                     busy = false
                                 }
                             }
@@ -230,6 +231,7 @@ internal fun BeeKeepTrustedDeviceGateScreen(
                                         result,
                                         "A six-digit security code was sent to your verified email."
                                     )
+                                    if (result == CloudResult.Success) code = ""
                                     busy = false
                                 }
                             }
