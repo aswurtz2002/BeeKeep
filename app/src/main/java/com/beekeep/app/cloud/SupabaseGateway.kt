@@ -78,7 +78,7 @@ enum class TrustedDeviceAccessStatus {
     CHECKING,
     TRUSTED,
     NOT_TRUSTED,
-    PENDING_APPROVAL,
+    PENDING_EMAIL_CODE,
     PENDING_FINALIZATION,
     EXPIRED,
     DENIED,
@@ -110,6 +110,9 @@ private const val CLOUD_DATA_ATTACHMENT_PENDING_USER_PREF = "cloud_data_attachme
 private const val CLOUD_DATA_ATTACHMENT_REVIEWED_USER_PREF = "cloud_data_attachment_reviewed_user_id"
 private const val PENDING_PASSWORD_RESET_REQUEST_EMAIL_PREF = "pending_password_reset_request_email"
 private const val PENDING_SIGNUP_VERIFICATION_EMAIL_PREF = "pending_signup_verification_email"
+private const val PENDING_TRUSTED_DEVICE_EMAIL_REQUEST_ID_PREF = "pending_trusted_device_email_request_id"
+private const val PENDING_TRUSTED_DEVICE_EMAIL_USER_ID_PREF = "pending_trusted_device_email_user_id"
+private const val PENDING_TRUSTED_DEVICE_EMAIL_VERIFIED_PREF = "pending_trusted_device_email_verified"
 private const val PENDING_PASSWORD_RESET_REQUEST_AT_PREF = "pending_password_reset_request_at"
 private const val PASSWORD_RESET_REQUEST_MAX_AGE_MS = 60L * 60L * 1000L
 private const val PASSWORD_RECOVERY_SESSION_PREF = "password_recovery_session_active"
@@ -152,6 +155,8 @@ class SupabaseGateway(
     private val realtimeLock = Any()
     private val syncMutex = BeeKeepSupabaseRuntime.syncMutex
     private val trustedDeviceFinalizationMutex = kotlinx.coroutines.sync.Mutex()
+    @Volatile
+    private var lastEmailHandoverRecoveryAttemptAtMillis = 0L
 
     private val _account = MutableStateFlow(
         CloudAccountState(configured = configured, signedIn = false)
@@ -160,10 +165,10 @@ class SupabaseGateway(
     private val _trustedDeviceAccess = MutableStateFlow(TrustedDeviceAccessState())
     /** Server-confirmed authorization for this Android installation. */
     val trustedDeviceAccess: StateFlow<TrustedDeviceAccessState> = _trustedDeviceAccess.asStateFlow()
-    private val _pendingTrustedDeviceRequests = MutableStateFlow<List<TrustedDeviceRequestRow>>(emptyList())
-    /** Verified new-phone requests visible only to the currently trusted installation. */
-    internal val pendingTrustedDeviceRequests: StateFlow<List<TrustedDeviceRequestRow>> =
-        _pendingTrustedDeviceRequests.asStateFlow()
+    private val _pendingTrustedDeviceEmailRequestId = MutableStateFlow<String?>(null)
+    /** Local request ID retained across the Auth email-OTP session rotation. */
+    val pendingTrustedDeviceEmailRequestId: StateFlow<String?> =
+        _pendingTrustedDeviceEmailRequestId.asStateFlow()
     /** Emits after any configured sync attempt completes, including WorkManager syncs. */
     val workspaceActionLogRefreshVersion: StateFlow<Long> = WorkspaceActionLogRefreshSignal.version
     private val _accountInitialized = MutableStateFlow(false)
