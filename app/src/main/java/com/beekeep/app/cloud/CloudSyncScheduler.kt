@@ -13,6 +13,7 @@ import java.util.concurrent.TimeUnit
 object CloudSyncScheduler {
     private const val PERIODIC_NAME = "beekeep-cloud-sync"
     private const val NOW_NAME = "beekeep-cloud-sync-now"
+    private const val SYNC_WORK_TAG = "beekeep-cloud-sync-all"
 
     fun schedule(context: Context) {
         if (TrustedDeviceLocalSessionState.isReplaced(context)) return
@@ -24,6 +25,7 @@ object CloudSyncScheduler {
             ExistingPeriodicWorkPolicy.KEEP,
             PeriodicWorkRequestBuilder<CloudSyncWorker>(15, TimeUnit.MINUTES)
                 .setConstraints(constraints)
+                .addTag(SYNC_WORK_TAG)
                 .build()
         )
     }
@@ -32,6 +34,7 @@ object CloudSyncScheduler {
         val workManager = WorkManager.getInstance(context)
         workManager.cancelUniqueWork(NOW_NAME)
         workManager.cancelUniqueWork(PERIODIC_NAME)
+        workManager.cancelAllWorkByTag(SYNC_WORK_TAG)
     }
 
     fun runNow(context: Context) {
@@ -44,6 +47,7 @@ object CloudSyncScheduler {
             ExistingWorkPolicy.REPLACE,
             OneTimeWorkRequestBuilder<CloudSyncWorker>()
                 .setConstraints(constraints)
+                .addTag(SYNC_WORK_TAG)
                 .build()
         )
     }

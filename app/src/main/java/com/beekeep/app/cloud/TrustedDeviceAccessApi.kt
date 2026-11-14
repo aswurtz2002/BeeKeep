@@ -10,9 +10,18 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 
+internal enum class TrustedDeviceApiFailureKind {
+    AUTH_REJECTED,
+    NETWORK,
+    OTHER
+}
+
 internal sealed interface TrustedDeviceApiResult<out T> {
     data class Success<T>(val value: T) : TrustedDeviceApiResult<T>
-    data class Failure(val message: String) : TrustedDeviceApiResult<Nothing>
+    data class Failure(
+        val message: String,
+        val kind: TrustedDeviceApiFailureKind = TrustedDeviceApiFailureKind.OTHER
+    ) : TrustedDeviceApiResult<Nothing>
 }
 
 @Serializable
@@ -103,7 +112,8 @@ internal class TrustedDeviceAccessApi(
             throw cancelled
         } catch (error: Throwable) {
             TrustedDeviceApiResult.Failure(
-                TrustedDeviceErrorMessages.from(error).take(MAX_ERROR_LENGTH)
+                message = TrustedDeviceErrorMessages.from(error).take(MAX_ERROR_LENGTH),
+                kind = TrustedDeviceErrorMessages.failureKind(error)
             )
         }
 

@@ -1,7 +1,6 @@
 package com.beekeep.app
 
 import androidx.activity.compose.BackHandler
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -9,7 +8,10 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -19,258 +21,440 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import android.provider.Settings
 import com.beekeep.app.cloud.CloudResult
 import com.beekeep.app.cloud.SupabaseGateway
 import com.beekeep.app.cloud.TrustedDeviceAccessState
 import com.beekeep.app.cloud.TrustedDeviceAccessStatus
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
+private enum class VerifyAccountErrorReason {
+    WRONG_CODE,
+    EXPIRED_CODE,
+    TOO_MANY_ATTEMPTS,
+    NO_NETWORK,
+    UNKNOWN
+}
+
+private sealed interface VerifyAccountUiState {
+    data object Idle : VerifyAccountUiState
+    data object Submitting : VerifyAccountUiState
+    data object WaitingForApproval : VerifyAccountUiState
+    data object Success : VerifyAccountUiState
+    data class Error(val reason: VerifyAccountErrorReason) : VerifyAccountUiState
+    data object Expired : VerifyAccountUiState
+}
+
+private val verifyAccountUiStateSaver = Saver<VerifyAccountUiState, String>(
+    save = { state ->
+        when (state) {
+            VerifyAccountUiState.Idle -> "idle"
+            VerifyAccountUiState.Submitting -> "idle"
+            VerifyAccountUiState.WaitingForApproval -> "waiting"
+            VerifyAccountUiState.Success -> "success"
+            VerifyAccountUiState.Expired -> "expired"
+            is VerifyAccountUiState.Error -> "error:${state.reason.name}"
+        }
+    },
+    restore = { saved ->
+        when {
+            saved == "waiting" -> VerifyAccountUiState.WaitingForApproval
+            saved == "success" -> VerifyAccountUiState.Success
+            saved == "expired" -> VerifyAccountUiState.Expired
+            saved.startsWith("error:") -> runCatching {
+                VerifyAccountUiState.Error(
+                    VerifyAccountErrorReason.valueOf(saved.removePrefix("error:"))
+                )
+            }.getOrDefault(VerifyAccountUiState.Idle)
+            else -> VerifyAccountUiState.Idle
+        }
+    }
+)
+
+private fun verifyAccountErrorReason(message: String): VerifyAccountErrorReason {
+    val lower = message.lowercase()
+    return when {
+        listOf("too many", "rate limit", "rate_limit", "429", "53300")
+            .any(lower::contains) -> VerifyAccountErrorReason.TOO_MANY_ATTEMPTS
+        listOf("expired", "otp_expired", "token has expired")
+            .any(lower::contains) -> VerifyAccountErrorReason.EXPIRED_CODE
+        listOf("invalid otp", "invalid code", "code isn't right", "token is invalid")
+            .any(lower::contains) -> VerifyAccountErrorReason.WRONG_CODE
+        listOf("no connection", "network", "unable to resolve", "timed out", "connection")
+            .any(lower::contains) -> VerifyAccountErrorReason.NO_NETWORK
+        else -> VerifyAccountErrorReason.UNKNOWN
+    }
+}
+
+private fun VerifyAccountErrorReason.message(): String = when (this) {
+    VerifyAccountErrorReason.WRONG_CODE -> "That code isn't right. Try again."
+    VerifyAccountErrorReason.EXPIRED_CODE -> "That code has expired. We can send a new one."
+    VerifyAccountErrorReason.TOO_MANY_ATTEMPTS -> "Too many tries. Please wait a minute."
+    VerifyAccountErrorReason.NO_NETWORK -> "No connection. Check your internet and try again."
+    VerifyAccountErrorReason.UNKNOWN -> "Something went wrong. Please try again."
+}
+
 /**
- * New-device verification.
- * A password/Google-authenticated session first requests a code at the account's confirmed
- * email. The code creates a fresh Auth session which replaces the previous phone only after
- * the server validates it and finalizes the one-session handover.
+ * Email-code verification for a new phone. A single saved UI state owns progress and feedback;
+ * the server-side request and OTP recovery markers remain the source of truth across restarts.
  */
 @Composable
 internal fun BeeKeepTrustedDeviceGateScreen(
     cloud: SupabaseGateway,
     access: TrustedDeviceAccessState
 ) {
-    BackHandler(enabled = true) { /* Cloud access requires completed email verification. */ }
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+    val reduceMotion = remember(context) {
+        runCatching {
+            Settings.Global.getFloat(
+                context.contentResolver,
+                Settings.Global.ANIMATOR_DURATION_SCALE,
+                1f
+            ) <= 0f
+        }.getOrDefault(false)
+    }
     val account by cloud.account.collectAsStateWithLifecycle()
     val liveAccess by cloud.trustedDeviceAccess.collectAsStateWithLifecycle()
     val pendingRequestId by cloud.pendingTrustedDeviceEmailRequestId.collectAsStateWithLifecycle()
     val emailCodeSent by cloud.pendingTrustedDeviceEmailCodeSent.collectAsStateWithLifecycle()
     var code by rememberSaveable { mutableStateOf("") }
-    var busy by rememberSaveable { mutableStateOf(false) }
-    var message by rememberSaveable { mutableStateOf("") }
-    var messageIsError by rememberSaveable { mutableStateOf(false) }
+    var uiState by rememberSaveable(stateSaver = verifyAccountUiStateSaver) {
+        mutableStateOf(VerifyAccountUiState.Idle)
+    }
+    var cooldownUntilMillis by rememberSaveable { mutableStateOf(0L) }
+    var cooldownSeconds by rememberSaveable { mutableIntStateOf(0) }
+    var requestSecondsRemaining by rememberSaveable { mutableIntStateOf(0) }
+
     val currentAccess = liveAccess.takeIf {
         it.status != TrustedDeviceAccessStatus.CHECKING
     } ?: access
-    val finalizing = currentAccess.status == TrustedDeviceAccessStatus.PENDING_FINALIZATION
     val codeSent = emailCodeSent && !pendingRequestId.isNullOrBlank() &&
         currentAccess.status != TrustedDeviceAccessStatus.EXPIRED &&
         currentAccess.status != TrustedDeviceAccessStatus.DENIED
+    val finalizing = currentAccess.status == TrustedDeviceAccessStatus.PENDING_FINALIZATION
+    val submitting = uiState == VerifyAccountUiState.Submitting
+    val canSendCode = !submitting && cooldownSeconds == 0
 
-    fun showResult(result: CloudResult, successMessage: String) {
-        when (result) {
+    LaunchedEffect(currentAccess.status) {
+        when (currentAccess.status) {
+            TrustedDeviceAccessStatus.PENDING_FINALIZATION ->
+                uiState = VerifyAccountUiState.WaitingForApproval
+            TrustedDeviceAccessStatus.EXPIRED ->
+                uiState = VerifyAccountUiState.Expired
+            TrustedDeviceAccessStatus.DENIED ->
+                uiState = VerifyAccountUiState.Error(VerifyAccountErrorReason.UNKNOWN)
+            else -> Unit
+        }
+    }
+
+    LaunchedEffect(cooldownUntilMillis) {
+        while (cooldownUntilMillis > 0L) {
+            val remaining = ((cooldownUntilMillis - System.currentTimeMillis()).coerceAtLeast(0L) + 999L) / 1000L
+            cooldownSeconds = remaining.toInt()
+            if (remaining <= 0L) break
+            delay(1_000L)
+        }
+        cooldownSeconds = 0
+    }
+
+    LaunchedEffect(currentAccess.expiresAt) {
+        val expiryMillis = currentAccess.expiresAt?.let {
+            runCatching { java.time.Instant.parse(it).toEpochMilli() }.getOrNull()
+        } ?: 0L
+        requestSecondsRemaining = 0
+        while (expiryMillis > 0L) {
+            val remaining = ((expiryMillis - System.currentTimeMillis()).coerceAtLeast(0L) + 999L) / 1000L
+            requestSecondsRemaining = remaining.toInt()
+            if (remaining <= 0L) {
+                uiState = VerifyAccountUiState.Expired
+                break
+            }
+            delay(1_000L)
+        }
+    }
+
+    fun showResult(result: CloudResult, successful: Boolean) {
+        uiState = when (result) {
             CloudResult.Success -> {
-                message = successMessage
-                messageIsError = false
+                if (successful) VerifyAccountUiState.Success else VerifyAccountUiState.Idle
             }
-            CloudResult.NotConfigured -> {
-                message = "BeeKeep Cloud isn't configured for this build."
-                messageIsError = true
-            }
-            CloudResult.NotSignedIn -> {
-                message = "Your BeeKeep sign-in session has ended. Sign in again."
-                messageIsError = true
-            }
-            is CloudResult.Failure -> {
-                message = result.message
-                messageIsError = true
+            CloudResult.NotConfigured ->
+                VerifyAccountUiState.Error(VerifyAccountErrorReason.UNKNOWN)
+            CloudResult.NotSignedIn ->
+                VerifyAccountUiState.Error(VerifyAccountErrorReason.UNKNOWN)
+            is CloudResult.Failure ->
+                VerifyAccountUiState.Error(verifyAccountErrorReason(result.message))
+        }
+    }
+
+    fun sendCode() {
+        if (uiState == VerifyAccountUiState.Submitting || cooldownSeconds > 0) return
+        uiState = VerifyAccountUiState.Submitting
+        scope.launch {
+            val result = cloud.requestTrustedDeviceEmailCode()
+            showResult(result, successful = true)
+            if (result == CloudResult.Success) {
+                code = ""
+                cooldownUntilMillis = System.currentTimeMillis() + 60_000L
             }
         }
     }
 
+    fun submitCode(value: String = code) {
+        if (uiState == VerifyAccountUiState.Submitting || value.length != 6) return
+        val submittedCode = value
+        uiState = VerifyAccountUiState.Submitting
+        scope.launch {
+            val result = cloud.verifyTrustedDeviceEmailCode(submittedCode)
+            showResult(result, successful = false)
+            if (result == CloudResult.Success) code = ""
+        }
+    }
+
+    fun returnToSignIn() {
+        if (uiState == VerifyAccountUiState.Submitting) return
+        uiState = VerifyAccountUiState.Submitting
+        scope.launch {
+            val result = cloud.signOut()
+            if (result != CloudResult.Success) {
+                showResult(result, successful = false)
+            }
+        }
+    }
+
+    BackHandler(enabled = true) { returnToSignIn() }
+
     Surface(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background),
+        modifier = Modifier.fillMaxSize(),
         color = MaterialTheme.colorScheme.background
     ) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(horizontal = 24.dp, vertical = 32.dp),
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 24.dp, vertical = 28.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center
         ) {
-            Surface(
-                shape = RoundedCornerShape(26.dp),
-                color = MaterialTheme.colorScheme.surface,
-                tonalElevation = 3.dp,
-                shadowElevation = 8.dp,
-                modifier = Modifier.fillMaxWidth()
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .widthIn(max = 460.dp)
+                    .padding(8.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
-                Column(
-                    modifier = Modifier.padding(24.dp),
-                    verticalArrangement = Arrangement.spacedBy(16.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    Text(
-                        if (finalizing) "Finishing sign-in" else "Verify this phone",
-                        style = MaterialTheme.typography.headlineSmall,
-                        fontWeight = FontWeight.ExtraBold,
-                        textAlign = TextAlign.Center
-                    )
+                Text(
+                    "BeeKeep",
+                    color = MaterialTheme.colorScheme.primary,
+                    fontWeight = FontWeight.ExtraBold,
+                    fontSize = 20.sp
+                )
+                Text(
+                    if (finalizing) "Securing this phone" else "Verify your account",
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.ExtraBold,
+                    textAlign = TextAlign.Center
+                )
+                Text(
+                    when {
+                        finalizing -> "Your email is verified. BeeKeep is finishing the phone handover."
+                        codeSent -> "Enter the six-digit code sent to your verified email address."
+                        else -> "Confirm your email to securely use BeeKeep on this phone."
+                    },
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center
+                )
 
-                    Text(
-                        account.email.takeIf { it.isNotBlank() } ?: "BeeKeep account",
-                        color = MaterialTheme.colorScheme.primary,
-                        fontWeight = FontWeight.SemiBold,
-                        textAlign = TextAlign.Center
-                    )
+                Text(
+                    account.email.takeIf { it.isNotBlank() } ?: "BeeKeep account",
+                    color = MaterialTheme.colorScheme.primary,
+                    fontWeight = FontWeight.SemiBold,
+                    textAlign = TextAlign.Center
+                )
 
+                currentAccess.deviceLabel?.takeIf { it.isNotBlank() }?.let { label ->
                     Text(
-                        when {
-                            finalizing ->
-                                "Your email code was verified. BeeKeep is signing out the previous phone and activating this one. Keep the app open."
-                            currentAccess.status == TrustedDeviceAccessStatus.UNAVAILABLE ->
-                                "BeeKeep can't currently reach the security service. Check your connection and try again. Cloud access stays locked."
-                            currentAccess.status == TrustedDeviceAccessStatus.EXPIRED ->
-                                "That verification request expired. Send a new code to continue."
-                            currentAccess.status == TrustedDeviceAccessStatus.DENIED ->
-                                "That request is no longer active. Send a new code to start again."
-                            codeSent ->
-                                "Enter the six-digit security code sent to your verified account email. The previous phone stays active until this code is accepted."
-                            else ->
-                                "To use BeeKeep Cloud on this phone, verify the account's existing email address. Once the code is accepted, other phones are signed out automatically."
-                        },
+                        "Device: $label",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                if (requestSecondsRemaining > 0) {
+                    Text(
+                        "Request expires in ${requestSecondsRemaining / 60}:${(requestSecondsRemaining % 60).toString().padStart(2, '0')}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+
+                if (finalizing || uiState == VerifyAccountUiState.WaitingForApproval) {
+                    if (reduceMotion) {
+                        Text(
+                            "Finishing securely…",
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    } else {
+                        CircularProgressIndicator()
+                    }
+                    Text(
+                        "Finishing sign-in on this phone…",
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         textAlign = TextAlign.Center
                     )
-
-                    if (!currentAccess.message.isNullOrBlank() &&
-                        currentAccess.status != TrustedDeviceAccessStatus.PENDING_EMAIL_CODE
-                    ) {
-                        Text(
-                            currentAccess.message.orEmpty(),
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            style = MaterialTheme.typography.bodySmall,
-                            textAlign = TextAlign.Center
-                        )
-                    }
-
-                    if (finalizing) {
-                        CircularProgressIndicator()
-                        Button(
-                            enabled = !busy,
-                            modifier = Modifier.fillMaxWidth(),
-                            onClick = {
-                                scope.launch {
-                                    busy = true
-                                    cloud.refreshTrustedDeviceAccess()
-                                    val latest = cloud.trustedDeviceAccess.value
-                                    message = latest.message ?: "BeeKeep checked the handover."
-                                    messageIsError = latest.status != TrustedDeviceAccessStatus.TRUSTED
-                                    busy = false
+                    Button(
+                        enabled = !submitting,
+                        modifier = Modifier.fillMaxWidth(),
+                        onClick = {
+                            uiState = VerifyAccountUiState.Submitting
+                            scope.launch {
+                                cloud.refreshTrustedDeviceAccess()
+                                val latest = cloud.trustedDeviceAccess.value
+                                uiState = when (latest.status) {
+                                    TrustedDeviceAccessStatus.EXPIRED ->
+                                        VerifyAccountUiState.Expired
+                                    TrustedDeviceAccessStatus.TRUSTED ->
+                                        VerifyAccountUiState.Success
+                                    TrustedDeviceAccessStatus.PENDING_FINALIZATION ->
+                                        VerifyAccountUiState.WaitingForApproval
+                                    TrustedDeviceAccessStatus.OFFLINE_LOCAL ->
+                                        VerifyAccountUiState.Error(VerifyAccountErrorReason.NO_NETWORK)
+                                    TrustedDeviceAccessStatus.UNAVAILABLE -> {
+                                        val message = latest.message.orEmpty().lowercase()
+                                        VerifyAccountUiState.Error(
+                                            if (message.contains("no connection") ||
+                                                message.contains("internet") ||
+                                                message.contains("couldn't reach")
+                                            ) VerifyAccountErrorReason.NO_NETWORK
+                                            else VerifyAccountErrorReason.UNKNOWN
+                                        )
+                                    }
+                                    else -> VerifyAccountUiState.Error(VerifyAccountErrorReason.UNKNOWN)
                                 }
                             }
-                        ) {
-                            Text(if (busy) "Checking…" else "Finish sign-in")
                         }
-                    } else if (codeSent) {
+                    ) {
+                        Text(if (submitting) "Checking…" else "Try again")
+                    }
+                    TextButton(
+                        enabled = !submitting,
+                        onClick = { returnToSignIn() }
+                    ) { Text("Cancel") }
+                } else {
+                    if (codeSent) {
                         OutlinedTextField(
                             value = code,
                             onValueChange = { value ->
-                                code = value.filter(Char::isDigit).take(6)
-                                message = ""
+                                val updatedCode = value.filter(Char::isDigit).take(6)
+                                code = updatedCode
+                                if (uiState is VerifyAccountUiState.Error ||
+                                    uiState == VerifyAccountUiState.Expired ||
+                                    uiState == VerifyAccountUiState.Success
+                                ) {
+                                    uiState = VerifyAccountUiState.Idle
+                                }
+                                if (updatedCode.length == 6) submitCode(updatedCode)
                             },
-                            modifier = Modifier.fillMaxWidth(),
-                            label = { Text("Six-digit security code") },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .semantics {
+                                    contentDescription = "Six digit BeeKeep security code"
+                                },
+                            label = { Text("Security code") },
+                            placeholder = { Text("000000") },
                             singleLine = true,
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                            enabled = !busy
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                            enabled = !submitting
                         )
                         Button(
-                            enabled = !busy && code.length == 6,
+                            enabled = !submitting && code.length == 6,
                             modifier = Modifier.fillMaxWidth(),
-                            onClick = {
-                                scope.launch {
-                                    busy = true
-                                    val result = cloud.verifyTrustedDeviceEmailCode(code)
-                                    showResult(
-                                        result,
-                                        "Email verified. BeeKeep is activating this phone."
-                                    )
-                                    if (result == CloudResult.Success) code = ""
-                                    busy = false
-                                }
-                            }
+                            onClick = { submitCode() }
                         ) {
-                            Text(if (busy) "Verifying…" else "Verify and continue")
+                            Text(if (submitting) "Verifying…" else "Verify and continue")
                         }
                         TextButton(
-                            enabled = !busy,
-                            onClick = {
-                                scope.launch {
-                                    busy = true
-                                    val result = cloud.requestTrustedDeviceEmailCode()
-                                    showResult(result, "A new six-digit security code was sent.")
-                                    if (result == CloudResult.Success) code = ""
-                                    busy = false
-                                }
-                            }
+                            enabled = canSendCode,
+                            onClick = { uiState = VerifyAccountUiState.Idle; sendCode() }
                         ) {
-                            Text("Resend code")
+                            Text(
+                                if (cooldownSeconds > 0) {
+                                    "Resend code in ${cooldownSeconds / 60}:${(cooldownSeconds % 60).toString().padStart(2, '0')}"
+                                } else {
+                                    "Resend code"
+                                }
+                            )
                         }
                     } else {
                         Button(
-                            enabled = !busy,
+                            enabled = canSendCode,
                             modifier = Modifier.fillMaxWidth(),
-                            onClick = {
-                                scope.launch {
-                                    busy = true
-                                    val result = cloud.requestTrustedDeviceEmailCode()
-                                    showResult(
-                                        result,
-                                        "A six-digit security code was sent to your verified email."
-                                    )
-                                    if (result == CloudResult.Success) code = ""
-                                    busy = false
-                                }
-                            }
+                            onClick = { sendCode() }
                         ) {
-                            Text(if (busy) "Sending…" else "Send verification code")
+                            Text(if (submitting) "Sending…" else "Send verification code")
                         }
                     }
+                }
 
-                    TextButton(
-                        enabled = !busy,
-                        onClick = {
-                            scope.launch {
-                                busy = true
-                                val result = cloud.signOut()
-                                if (result != CloudResult.Success) showResult(result, "")
-                                busy = false
-                            }
-                        }
-                    ) {
-                        Text("Sign out and use another account")
-                    }
-
-                    if (message.isNotBlank()) {
-                        Text(
-                            message,
-                            color = if (messageIsError) MaterialTheme.colorScheme.error
-                                else MaterialTheme.colorScheme.primary,
-                            textAlign = TextAlign.Center,
-                            style = MaterialTheme.typography.bodySmall
-                        )
-                    }
-
-                    Spacer(Modifier.height(2.dp))
-                    Text(
-                        "Your local hive records stay on this phone. The previous phone is signed out only after this code is verified.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                when (val state = uiState) {
+                    is VerifyAccountUiState.Error -> Text(
+                        state.reason.message(),
+                        modifier = Modifier.semantics {
+                            liveRegion = LiveRegionMode.Polite
+                        },
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodyMedium,
                         textAlign = TextAlign.Center
                     )
+                    VerifyAccountUiState.Expired -> Text(
+                        VerifyAccountErrorReason.EXPIRED_CODE.message(),
+                        modifier = Modifier.semantics {
+                            liveRegion = LiveRegionMode.Polite
+                        },
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodyMedium,
+                        textAlign = TextAlign.Center
+                    )
+                    VerifyAccountUiState.Success -> Text(
+                        "Code sent. Check your email.",
+                        color = MaterialTheme.colorScheme.primary,
+                        style = MaterialTheme.typography.bodySmall,
+                        textAlign = TextAlign.Center
+                    )
+                    else -> Unit
+                }
+
+                Spacer(Modifier.height(4.dp))
+                if (!finalizing && uiState != VerifyAccountUiState.WaitingForApproval) {
+                    TextButton(
+                        enabled = !submitting,
+                        onClick = { returnToSignIn() }
+                    ) { Text("Wrong email? Back to sign in") }
                 }
             }
         }
