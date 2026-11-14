@@ -26,7 +26,7 @@ If B loses connectivity or the app closes after OTP verification, the saved requ
 1. A does not receive or approve a replacement prompt.
 2. Until B verifies the email code and finalizes, A remains the active trusted phone.
 3. After B finalizes, Supabase revokes A's Auth session. The server's trusted-session checks immediately deny A's cloud access, even while an already-issued JWT has not yet expired.
-4. When A next checks authorization, BeeKeep stops Realtime, cancels WorkManager sync, clears A's local Auth session, and enters local-only mode.
+4. When A next checks authorization, BeeKeep stops Realtime, cancels WorkManager sync, clears A's local Auth session, and automatically opens the normal sign-in screen. It does not keep the old authenticated app screen open.
 
 This is not a guaranteed push sign-out when A's app is closed or offline. The server denies A immediately; the local app screen changes when it next checks authorization.
 
@@ -44,9 +44,9 @@ This is not a guaranteed push sign-out when A's app is closed or offline. The se
 ## Local data safety
 
 - Replacing a phone does not delete, migrate, or switch its Room database.
-- The old phone stores a local-only marker, clears only its local Supabase Auth session, stops Realtime, and cancels background sync.
-- Its personal records, apiaries, hive inspections, drafts, and pending local data remain on that phone.
-- The old phone cannot upload unsynced changes after replacement. A later deliberate sign-in starts a new email-code verification and the existing personal local-data review gate still controls attachment/upload.
+- The old phone stores a replacement marker, clears only its local Supabase Auth session, stops Realtime, cancels background sync, and automatically returns to the normal sign-in screen.
+- Its Room database is not cleared, migrated, or overwritten. Personal records, apiaries, hive inspections, drafts, and pending local data remain on that phone.
+- The old phone cannot upload unsynced changes after replacement. A later deliberate sign-in clears the replaced-session marker and starts a fresh device-verification attempt; the existing personal local-data review gate still controls attachment/upload.
 - A phone that cannot reach the security service may keep using its local database, but cloud operations remain fail-closed.
 - Workspace membership and cloud records are not deleted or modified by a device handover.
 
@@ -79,4 +79,4 @@ This is not a guaranteed push sign-out when A's app is closed or offline. The se
 
 ## Remaining physical verification
 
-After installing the staging debug APK, test successful OTP replacement, incorrect/expired code, passwordless OTP-only attempt while another phone is trusted, first-device setup, resend window, interrupted finalization retry, old-phone local sign-out, offline local access, and confirmation that neither phone silently uploads the other's local data.
+After installing the staging debug APK, test successful OTP replacement, incorrect/expired code, passwordless OTP-only attempt while another phone is trusted, first-device setup, resend window, interrupted finalization retry, old-phone automatic redirect to the normal sign-in screen, preservation of the old phone's Room records, fresh sign-in and re-verification on the old phone, offline local access, and confirmation that neither phone silently uploads the other's local data.

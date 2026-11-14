@@ -446,16 +446,23 @@ fun BeeKeepApp(
     val accountSetupState by cloud.accountSetupState.collectAsStateWithLifecycle()
     val trustedDeviceAccess by cloud.trustedDeviceAccess.collectAsStateWithLifecycle()
     var startupWatchdogElapsed by rememberSaveable { mutableStateOf(false) }
-    // Poll while the account is open so an email-verified replacement takes effect promptly
-    // and the old phone transitions to local-only mode without a manual sign-out.
+    // Poll while the account is open so an email-verified replacement takes effect promptly.
     androidx.compose.runtime.LaunchedEffect(account.userId) {
         while (account.userId != null) {
-            // Do not key this effect to trustedDeviceAccess.status: publishing REPLACED_LOCAL
-            // happens inside refreshTrustedDeviceAccess, and cancelling that call here could
-            // interrupt the local sign-out before its Auth session and workers are cleared.
+            // Keep this effect keyed to the account only: changing the access status while
+            // refreshTrustedDeviceAccess is clearing the revoked session must not cancel it.
             cloud.refreshTrustedDeviceAccess()
             if (cloud.trustedDeviceAccess.value.status == TrustedDeviceAccessStatus.REPLACED_LOCAL) break
             kotlinx.coroutines.delay(15_000L)
+        }
+    }
+
+    // A replaced phone goes straight to the normal sign-in screen after its local Auth
+    // session is cleared. This only resets in-memory account/navigation state; Room data
+    // and the local-data review safeguards are left untouched.
+    androidx.compose.runtime.LaunchedEffect(trustedDeviceAccess.status) {
+        if (trustedDeviceAccess.status == TrustedDeviceAccessStatus.REPLACED_LOCAL) {
+            cloud.openSignInAfterReplacement()
         }
     }
 
@@ -481,49 +488,6 @@ fun BeeKeepApp(
             TrustedDeviceAccessStatus.DENIED,
             TrustedDeviceAccessStatus.UNAVAILABLE
         ) -> BeeKeepTrustedDeviceGateScreen(cloud, trustedDeviceAccess)
-        account.userId != null &&
-            trustedDeviceAccess.status == TrustedDeviceAccessStatus.REPLACED_LOCAL -> {
-            Column(modifier = Modifier.fillMaxSize()) {
-                Surface(
-                    color = MaterialTheme.colorScheme.surfaceVariant,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            "Signed out on this phone. Local records remain available; cloud sync is off.",
-                            modifier = Modifier.weight(1f),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        TextButton(onClick = { cloud.openSignInAfterReplacement() }) {
-                            Text("Sign in")
-                        }
-                    }
-                }
-                Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
-                    BeeKeepAuthenticatedApp(
-                        vm = vm,
-                        nfc = nfc,
-                        activity = activity,
-                        locationController = locationController,
-                        cloud = cloud,
-                        darkMode = darkMode,
-                        incomingNfc = incomingNfc,
-                        repository = repository,
-                        onSpeakHiveNumber = onSpeakHiveNumber,
-                        largeFieldText = largeFieldText,
-                        onLargeFieldTextChange = onLargeFieldTextChange,
-                        compactHiveRows = compactHiveRows,
-                        onCompactHiveRowsChange = onCompactHiveRowsChange,
-                        onDarkModeChange = onDarkModeChange
-                    )
-                }
-            }
-        }
         !account.signedIn -> BeeKeepAuthScreen(cloud)
         accountSetupState is BeeKeepAccountSetupState.UsernameRequired -> {
             BeeKeepAccountSetupScreen(
