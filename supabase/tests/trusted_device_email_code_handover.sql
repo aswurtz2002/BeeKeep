@@ -39,6 +39,7 @@ create temporary table email_handover_test_ids (
 grant select, insert, update on email_handover_test_ids to authenticated;
 
 create temporary table email_request_initial_expiry (expires_at timestamptz not null);
+grant select, insert on email_request_initial_expiry to authenticated;
 
 -- New phone begins only after normal password sign-in. It has no trusted cloud access.
 set role authenticated;
