@@ -750,21 +750,60 @@ class SupabaseGateway(
             val previouslyLocalOnly = isLocalOnlyTrustedDeviceState()
             val trusted = verifyTrustedDeviceSession(supabase)
             if (trusted) {
-                when (val requests = TrustedDeviceAccessApi(supabase).pendingRequests()) {
-                    is TrustedDeviceApiResult.Success -> _pendingTrustedDeviceRequests.value = requests.value
-                    is TrustedDeviceApiResult.Failure -> Unit
-                }
+                clearPendingTrustedDeviceEmailRequest()
                 if (previouslyLocalOnly || !_account.value.signedIn) refreshAccount()
             } else {
-                _pendingTrustedDeviceRequests.value = emptyList()
                 when (_trustedDeviceAccess.value.status) {
                     TrustedDeviceAccessStatus.PENDING_FINALIZATION -> {
                         val requestId = _trustedDeviceAccess.value.requestId
+                            ?: supabase.auth.currentSessionOrNull()?.user?.id?.trim()
+                                ?.takeIf { it.isNotEmpty() }
+                                ?.let(::pendingTrustedDeviceEmailRequestId)
                         if (!requestId.isNullOrBlank()) {
-                            val result = finalizeApprovedTrustedDevice(supabase, requestId)
+                            // If OTP was verified just before process death, recover() binds
+                            // this fresh Auth session to the already-created request.
+                            val result = if (isPendingTrustedDeviceEmailRequestVerified(
+                                    supabase.auth.currentSessionOrNull()?.user?.id.orEmpty()
+                                )
+                            ) {
+                                if (retryVerifiedEmailHandover(supabase, supabase.auth.currentSessionOrNull()?.user?.id.orEmpty())) {
+                                    return
+                                }
+                                CloudResult.Failure(_trustedDeviceAccess.value.message.orEmpty())
+                            } else {
+                                finalizeApprovedTrustedDevice(supabase, requestId)
+                            }
                             if (result == CloudResult.Success) return
                         }
                         stopRealtime()
+                    }
+                    TrustedDeviceAccessStatus.NOT_TRUSTED -> {
+                        val userId = supabase.auth.currentSessionOrNull()?.user?.id?.trim().orEmpty()
+                        if (userId.isNotBlank() && isPendingTrustedDeviceEmailRequestVerified(userId)) {
+                            if (retryVerifiedEmailHandover(supabase, userId)) return
+                        }
+                        stopRealtime()
+                        if (previouslySignedIn) {
+                            accountVerificationJob?.cancel()
+                            _accountSetupState.value = BeeKeepAccountSetupState.SignedOut
+                            _account.value = _account.value.copy(
+                                signedIn = false,
+                                syncing = false,
+                                error = _trustedDeviceAccess.value.message
+                            )
+                        }
+                    }
+                    TrustedDeviceAccessStatus.PENDING_EMAIL_CODE -> {
+                        stopRealtime()
+                        if (previouslySignedIn) {
+                            accountVerificationJob?.cancel()
+                            _accountSetupState.value = BeeKeepAccountSetupState.SignedOut
+                            _account.value = _account.value.copy(
+                                signedIn = false,
+                                syncing = false,
+                                error = _trustedDeviceAccess.value.message
+                            )
+                        }
                     }
                     TrustedDeviceAccessStatus.REPLACED_LOCAL -> {
                         val userId = supabase.auth.currentSessionOrNull()?.user?.id
@@ -845,7 +884,6 @@ class SupabaseGateway(
 
         // The server has already revoked this session; clear only the local credential.
         runCatching { supabase.auth.clearSession() }
-        _pendingTrustedDeviceRequests.value = emptyList()
         _accountSetupState.value = BeeKeepAccountSetupState.Offline
         _account.value = CloudAccountState(
             configured = true,
@@ -853,7 +891,7 @@ class SupabaseGateway(
             email = email,
             userId = userId,
             error = if (localMarkerSaved) {
-                "You were signed out because another phone was approved. Your local records have been kept; cloud sync is off."
+                "Another phone completed email verification and took over this account. Your local records have been kept; cloud sync is off."
             } else {
                 "Your old cloud session has been cleared. Local records remain on this phone; restart BeeKeep to restore its offline-only screen."
             }
@@ -875,36 +913,6 @@ class SupabaseGateway(
         _trustedDeviceAccess.value = TrustedDeviceAccessState(
             status = TrustedDeviceAccessStatus.CHECKING
         )
-    }
-
-    /** Approve or deny a waiting phone using the current trusted Supabase session. */
-    suspend fun decideTrustedDeviceRequest(requestId: String, approve: Boolean): CloudResult {
-        val supabase = client ?: return CloudResult.NotConfigured
-        return try {
-            ensureAuthStorageInitialized(supabase)
-            if (!verifyTrustedDeviceSession(supabase)) {
-                return CloudResult.Failure(
-                    _trustedDeviceAccess.value.message ?: "Only the trusted phone can review this request."
-                )
-            }
-            val api = TrustedDeviceAccessApi(supabase)
-            val decision = if (approve) api.approve(requestId) else api.deny(requestId)
-            when (decision) {
-                is TrustedDeviceApiResult.Success -> {
-                    refreshTrustedDeviceAccess()
-                    CloudResult.Success
-                }
-                is TrustedDeviceApiResult.Failure -> CloudResult.Failure(decision.message)
-            }
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (error: Throwable) {
-            CloudResult.Failure(
-                TeamWorkspaceSyncError.userFacing(
-                    error.message ?: "BeeKeep couldn't submit the phone decision."
-                )
-            )
-        }
     }
 
     private suspend fun refreshAccountUnlocked() {
@@ -1912,12 +1920,16 @@ class SupabaseGateway(
             .remove(PENDING_PASSWORD_RESET_REQUEST_AT_PREF)
             .remove(PASSWORD_RECOVERY_SESSION_PREF)
             .remove(PENDING_SIGNUP_VERIFICATION_EMAIL_PREF)
+            .remove(PENDING_TRUSTED_DEVICE_EMAIL_REQUEST_ID_PREF)
+            .remove(PENDING_TRUSTED_DEVICE_EMAIL_USER_ID_PREF)
+            .remove(PENDING_TRUSTED_DEVICE_EMAIL_VERIFIED_PREF)
             .remove(CLOUD_DATA_ATTACHMENT_REVIEWED_USER_PREF)
             .apply()
         _passwordRecoveryRequired.value = false
         _pendingSignupVerificationEmail.value = null
         _trustedDeviceAccess.value = TrustedDeviceAccessState()
-        _pendingTrustedDeviceRequests.value = emptyList()
+        _pendingTrustedDeviceEmailRequestId.value = null
+        lastEmailHandoverRecoveryAttemptAtMillis = 0L
         _pendingPasswordResetEmail.value = null
         TrustedDeviceLocalSessionState.clear(appContext)
         CloudSyncScheduler.cancel(appContext)
@@ -4416,8 +4428,7 @@ class SupabaseGateway(
                 // Re-evaluate authorization for the identity being authenticated rather than
                 // carrying the previous account's in-memory trusted status across sign-in.
                 _trustedDeviceAccess.value = TrustedDeviceAccessState()
-                _pendingTrustedDeviceRequests.value = emptyList()
-                // Authentication can replace the signed-in account. Return to private/local data
+                        // Authentication can replace the signed-in account. Return to private/local data
                 // before that transition so a cached team dataset is not displayed to the next account.
                 // Serialize account transitions with sync so a background worker cannot
                 // keep applying documents while the active database is being changed.
