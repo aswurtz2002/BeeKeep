@@ -108,6 +108,15 @@ begin
     if public.beekeep_device_session_is_trusted() then
         raise exception 'The replaced phone still has trusted cloud access';
     end if;
+    if not exists (
+        select 1
+        from public.beekeep_device_session_events e
+        where e.user_id = '00000000-0000-0000-0000-000000000101'
+          and e.revoked_session_id = '10000000-0000-0000-0000-000000000101'
+          and e.event_type = 'session_replaced'
+    ) then
+        raise exception 'The replaced phone did not receive a durable Realtime revocation event';
+    end if;
 end;
 $old_phone_loses_access$;
 

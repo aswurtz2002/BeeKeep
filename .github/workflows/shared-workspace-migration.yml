@@ -211,6 +211,8 @@ jobs:
 
       - name: Apply simplified single-session device handover
         run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261114163346_beekeep_simple_trusted_session_handover.sql
+      - name: Apply trusted-device Realtime revocation events
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261114190000_beekeep_trusted_session_revocation_events.sql
       - name: Verify simplified approval, denial, recovery and old-session revocation
         run: psql -v ON_ERROR_STOP=1 -f supabase/tests/trusted_device_simple_session_handover.sql
       - name: Apply email-code device handover and primary-auth requirement

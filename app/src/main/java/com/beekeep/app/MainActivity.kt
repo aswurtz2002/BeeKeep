@@ -445,7 +445,20 @@ fun BeeKeepApp(
     val accountSetupState by cloud.accountSetupState.collectAsStateWithLifecycle()
     val trustedDeviceAccess by cloud.trustedDeviceAccess.collectAsStateWithLifecycle()
     var startupWatchdogElapsed by rememberSaveable { mutableStateOf(false) }
-    // Poll while the account is open so an email-verified replacement takes effect promptly.
+    // Check the server's active-device record whenever the app returns to the foreground.
+    DisposableEffect(activity, account.userId) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_START) {
+                activity.lifecycleScope.launch {
+                    cloud.refreshTrustedDeviceAccess()
+                }
+            }
+        }
+        activity.lifecycle.addObserver(observer)
+        onDispose { activity.lifecycle.removeObserver(observer) }
+    }
+
+    // Poll while the account is open as a fallback for missed Realtime events and reconnects.
     androidx.compose.runtime.LaunchedEffect(account.userId) {
         while (account.userId != null) {
             // Keep this effect keyed to the account only: changing the access status while
