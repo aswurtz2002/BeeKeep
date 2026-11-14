@@ -80,11 +80,6 @@ fun WorkspaceActionsPanel(
 
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         WorkspacePanel(title = "Workspace actions") {
-            Text(
-                "Recent changes made by members of this team.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(
                     enabled = !saving && retention != "keep",
@@ -136,13 +131,8 @@ fun WorkspaceActionsPanel(
         }
 
         when {
-            loading -> Text("Loading workspace activity…", style = MaterialTheme.typography.bodyMedium)
-            entries.isEmpty() -> WorkspacePanel(title = "No activity yet") {
-                Text(
-                    "Changes made by your team will appear here.",
-                    style = MaterialTheme.typography.bodySmall
-                )
-            }
+            loading -> Text("Loading activity…", style = MaterialTheme.typography.bodyMedium)
+            entries.isEmpty() -> WorkspacePanel(title = "No activity yet") { }
             else -> entries.forEach { entry ->
                 WorkspaceActionEntryCard(
                     entry = entry,

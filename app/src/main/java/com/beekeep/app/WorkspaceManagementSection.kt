@@ -16,6 +16,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.size
@@ -50,6 +51,11 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.beekeep.app.cloud.BeeKeepWorkspace
@@ -363,21 +369,6 @@ fun WorkspaceManagementSection(
                     modifier = Modifier.fillMaxWidth(),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    Column(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalArrangement = Arrangement.spacedBy(3.dp)
-                    ) {
-                        Text(
-                            if (sharedWorkspaces.size == 1) "1 team workspace" else "${sharedWorkspaces.size} team workspaces",
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold
-                        )
-                        Text(
-                            "Choose a team to open its shared records and settings.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
@@ -421,27 +412,11 @@ fun WorkspaceManagementSection(
                 }
 
                 if (sharedWorkspaces.isEmpty()) {
-                    Surface(
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(16.dp),
-                        color = MaterialTheme.colorScheme.surfaceVariant
-                    ) {
-                        Column(
-                            modifier = Modifier.padding(14.dp),
-                            verticalArrangement = Arrangement.spacedBy(4.dp)
-                        ) {
-                            Text(
-                                "No team workspaces yet",
-                                style = MaterialTheme.typography.titleSmall,
-                                fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold
-                            )
-                            Text(
-                                "Create one for your crew, or join an existing team with an invitation code below. Your personal apiaries stay private.",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
+                    Text(
+                        "No team workspaces yet",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 } else {
                     Box(modifier = Modifier.fillMaxWidth()) {
                         OutlinedButton(
@@ -534,7 +509,7 @@ fun WorkspaceManagementSection(
                     Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         Text("Workspace read-only", fontWeight = FontWeight.Bold)
                         Text(
-                            "Commercial is inactive for this workspace owner. Existing team records remain available to view and export; invitations, member changes, copying and deletion are paused until Commercial is active again.",
+                            "The owner’s Commercial access is inactive. You can view and export team records; management actions are paused.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -577,11 +552,6 @@ fun WorkspaceManagementSection(
             if (selectedWorkspace == null || selectedWorkspaceSection == "overview") {
             WorkspacePanel(
                 title = if (sharedWorkspaces.isEmpty()) "Join a team" else "Join another team",
-                description = if (sharedWorkspaces.isEmpty()) {
-                    "Enter the invitation code you received."
-                } else {
-                    "Have an invitation code for another team?"
-                },
                 collapsible = sharedWorkspaces.isNotEmpty(),
                 expanded = showJoinAnotherTeam || sharedWorkspaces.isEmpty(),
                 onToggle = { showJoinAnotherTeam = !showJoinAnotherTeam }
@@ -635,59 +605,18 @@ fun WorkspaceManagementSection(
             selectedWorkspace?.let { workspace ->
                 if (selectedWorkspaceSection == "overview") {
                     val isActiveWorkspace = activeWorkspaceId == workspace.id
-                    WorkspacePanel(
-                    title = "Team status",
-                    description = "${workspace.name} · ${workspace.member_role.replaceFirstChar { it.uppercase() }}"
-                ) {
-                    Surface(
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(16.dp),
-                        color = if (isActiveWorkspace) {
-                            MaterialTheme.colorScheme.primaryContainer
-                        } else {
-                            MaterialTheme.colorScheme.surfaceVariant
-                        }
-                    ) {
+                    WorkspacePanel(title = "Team status") {
                         Row(
-                            modifier = Modifier.fillMaxWidth().padding(14.dp),
+                            modifier = Modifier.fillMaxWidth(),
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                            horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End)
                         ) {
-                            Column(
-                                modifier = Modifier.weight(1f),
-                                verticalArrangement = Arrangement.spacedBy(4.dp)
-                            ) {
-                                Text(
-                                    if (isActiveWorkspace) "This team is active" else "This team is not active",
-                                    style = MaterialTheme.typography.titleSmall,
-                                    fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
-                                    color = if (isActiveWorkspace) {
-                                        MaterialTheme.colorScheme.onPrimaryContainer
-                                    } else {
-                                        MaterialTheme.colorScheme.onSurface
-                                    }
-                                )
-                                Text(
-                                    if (isActiveWorkspace) {
-                                        if (workspace.member_role == "viewer") {
-                                            "You're viewing shared records in read-only mode."
-                                        } else {
-                                            "Apiary and hive changes sync with members of this team."
-                                        }
-                                    } else {
-                                        "Activate this workspace to load the team's apiaries and hives on this device."
-                                    },
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = if (isActiveWorkspace) {
-                                        MaterialTheme.colorScheme.onPrimaryContainer
-                                    } else {
-                                        MaterialTheme.colorScheme.onSurfaceVariant
-                                    }
-                                )
-                            }
-                            WorkspaceTag(if (isActiveWorkspace) "ACTIVE" else "INACTIVE", active = isActiveWorkspace)
+                            if (workspace.member_role == "viewer") WorkspaceTag("VIEW ONLY")
+                            WorkspaceTag(
+                                if (isActiveWorkspace) "ACTIVE" else "INACTIVE",
+                                active = isActiveWorkspace
+                            )
                         }
-                    }
 
                     if (!isActiveWorkspace) {
                         Button(
@@ -706,14 +635,6 @@ fun WorkspaceManagementSection(
                         ) {
                             Text(if (workspace.member_role == "viewer") "OPEN TEAM" else "SWITCH TO THIS TEAM")
                         }
-                    }
-
-                    if (workspace.member_role == "viewer") {
-                        Text(
-                            "View-only access",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
                     }
 
                     if (activeWorkspaceId.isNotBlank()) {
@@ -739,7 +660,6 @@ fun WorkspaceManagementSection(
                 if (!selectedWorkspaceReadOnly && selectedWorkspaceSection == "settings" && workspace.member_role in setOf("owner", "admin")) {
                     WorkspacePanel(
                         title = "Copy personal data",
-                        description = "Optional · Import your private apiaries and hives",
                         collapsible = true,
                         expanded = showCopyPersonalData,
                         onToggle = { showCopyPersonalData = !showCopyPersonalData }
@@ -754,11 +674,6 @@ fun WorkspaceManagementSection(
                             onClick = { copyPersonalTarget = workspace },
                             modifier = Modifier.fillMaxWidth()
                         ) { Text("COPY PERSONAL DATA INTO TEAM") }
-                        Text(
-                            "After copying, this device switches to the team workspace.",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
                     }
                 }
 
@@ -772,17 +687,23 @@ fun WorkspaceManagementSection(
 
                 if (selectedWorkspaceSection == "people") {
                     WorkspacePanel(
-                        title = "Team members",
-                        description = when {
-                            membersLoadedWorkspaceId != workspace.id && memberLoadError != null -> "Couldn't load people"
-                            membersLoadedWorkspaceId != workspace.id -> "Loading people…"
-                            else -> "${members.size} ${if (members.size == 1) "person" else "people"} in this workspace"
-                        }
+                        title = "Team members"
                     ) {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.End
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
+                            Text(
+                                when {
+                                    memberLoadError != null && membersLoadedWorkspaceId != workspace.id -> "Unavailable"
+                                    membersLoadedWorkspaceId != workspace.id -> "Loading…"
+                                    members.size == 1 -> "1 member"
+                                    else -> "${members.size} members"
+                                },
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Spacer(Modifier.weight(1f))
                             TextButton(
                                 enabled = !refreshingPeople && !loading,
                                 onClick = {
@@ -817,16 +738,9 @@ fun WorkspaceManagementSection(
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
-                        } else if (membersLoadedWorkspaceId != workspace.id && memberLoadError != null) {
-                            Text(
-                                "Use REFRESH to try loading the member list again.",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.error
-                            )
                         } else if (members.isEmpty()) {
                             Text(
-                                if (memberLoadError != null) "The member list is empty, but the latest refresh failed."
-                                else "No member details are available yet.",
+                                "No members to show.",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -862,7 +776,6 @@ fun WorkspaceManagementSection(
                 if (!selectedWorkspaceReadOnly && selectedWorkspaceSection == "settings" && workspace.member_role == "owner") {
                     WorkspacePanel(
                         title = "Delete team workspace",
-                        description = "Permanent action · Owner only",
                         collapsible = true,
                         expanded = showDangerZone,
                         onToggle = { showDangerZone = !showDangerZone }
@@ -1035,7 +948,6 @@ fun WorkspaceManagementSection(
 
                     if (invitations.isNotEmpty()) WorkspacePanel(
                         title = "Pending invitations (${invitations.size})",
-                        description = "Review or cancel outstanding invitations.",
                         collapsible = true,
                         expanded = showPendingInvitations,
                         onToggle = { showPendingInvitations = !showPendingInvitations }
@@ -1346,20 +1258,26 @@ private fun WorkspaceSectionTab(
     onClick: () -> Unit
 ) {
     Surface(
-        modifier = modifier.clickable(onClick = onClick),
+        modifier = modifier
+            .heightIn(min = 48.dp)
+            .semantics {
+                this.role = Role.Tab
+                this.selected = selected
+            }
+            .clickable(onClick = onClick),
         shape = RoundedCornerShape(14.dp),
         color = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
         contentColor = if (selected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
     ) {
         Box(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 12.dp),
+            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).padding(horizontal = 8.dp, vertical = 8.dp),
             contentAlignment = Alignment.Center
         ) {
             Text(
                 label,
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
                 style = MaterialTheme.typography.labelLarge,
-                fontWeight = if (selected) androidx.compose.ui.text.font.FontWeight.ExtraBold else androidx.compose.ui.text.font.FontWeight.SemiBold,
-                maxLines = 1
+                fontWeight = if (selected) androidx.compose.ui.text.font.FontWeight.ExtraBold else androidx.compose.ui.text.font.FontWeight.SemiBold
             )
         }
     }
@@ -1491,12 +1409,12 @@ fun WorkspacePanel(
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(22.dp),
+        shape = RoundedCornerShape(18.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
     ) {
         Column(
-            modifier = Modifier.fillMaxWidth().padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(if (!collapsible || expanded) 12.dp else 0.dp)
+            modifier = Modifier.fillMaxWidth().padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(if (!collapsible || expanded) 10.dp else 0.dp)
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -1509,6 +1427,7 @@ fun WorkspacePanel(
                 ) {
                     Text(
                         title,
+                        modifier = Modifier.semantics { heading() },
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
                     )
