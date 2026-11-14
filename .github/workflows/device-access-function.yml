@@ -8,6 +8,7 @@ on:
   pull_request:
     paths:
       - 'supabase/functions/beekeep-device-access/**'
+      - 'supabase/config.toml'
       - '.github/workflows/device-access-function.yml'
   workflow_dispatch:
 
@@ -25,4 +26,5 @@ jobs:
         run: deno check supabase/functions/beekeep-device-access/index.ts
       - name: Require function-level JWT verification to stay disabled
         run: |
-          grep -A1 '^\[functions\.beekeep-device-access\] supabase/config.toml | grep -qx 'verify_jwt = false'
+          grep -Fqx '[functions.beekeep-device-access]' supabase/config.toml
+          grep -Fqx 'verify_jwt = false' supabase/config.toml
