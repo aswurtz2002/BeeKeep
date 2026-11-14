@@ -446,8 +446,8 @@ fun BeeKeepApp(
     val accountSetupState by cloud.accountSetupState.collectAsStateWithLifecycle()
     val trustedDeviceAccess by cloud.trustedDeviceAccess.collectAsStateWithLifecycle()
     var startupWatchdogElapsed by rememberSaveable { mutableStateOf(false) }
-    // Poll while the account is open so a newly approved phone takes effect promptly and
-    // the old phone transitions to local-only mode without waiting for a manual sign-out.
+    // Poll while the account is open so an email-verified replacement takes effect promptly
+    // and the old phone transitions to local-only mode without a manual sign-out.
     androidx.compose.runtime.LaunchedEffect(account.userId) {
         while (account.userId != null) {
             // Do not key this effect to trustedDeviceAccess.status: publishing REPLACED_LOCAL
