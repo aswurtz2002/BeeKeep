@@ -904,35 +904,26 @@ class SupabaseGateway(
 
         // The server has already revoked this session; clear only the local credential.
         runCatching { supabase.auth.clearSession() }
-        _accountSetupState.value = BeeKeepAccountSetupState.Offline
+
+        // Publish the signed-out account state directly from the gateway. Do not rely on a
+        // short-lived Compose status transition to navigate away from the authenticated UI.
+        // The replacement marker stays in preferences until a deliberate new sign-in, while
+        // Room records and the local-data attachment checkpoint remain untouched.
+        _accountSetupState.value = BeeKeepAccountSetupState.SignedOut
         _account.value = CloudAccountState(
             configured = true,
             signedIn = false,
             email = email,
-            userId = userId,
             error = if (localMarkerSaved) {
-                "Another phone completed email verification and took over this account. Your local records have been kept; cloud sync is off."
+                "Another phone completed email verification and took over this account. Your local records have been kept; sign in again to continue."
             } else {
-                "Your old cloud session has been cleared. Local records remain on this phone; restart BeeKeep to restore its offline-only screen."
+                "Your old cloud session has been cleared. Your local records remain on this phone; sign in again to continue."
             }
-        )
-        _trustedDeviceAccess.value = TrustedDeviceAccessState(
-            status = TrustedDeviceAccessStatus.REPLACED_LOCAL,
-            message = "Signed out on this phone. Local records remain available; cloud sync is off."
-        )
-        _accountInitialized.value = true
-    }
-
-    /** Return to sign-in without deleting this phone's local data. */
-    fun openSignInAfterReplacement() {
-        _accountSetupState.value = BeeKeepAccountSetupState.SignedOut
-        _account.value = CloudAccountState(
-            configured = configured,
-            signedIn = false
         )
         _trustedDeviceAccess.value = TrustedDeviceAccessState(
             status = TrustedDeviceAccessStatus.CHECKING
         )
+        _accountInitialized.value = true
     }
 
     private suspend fun refreshAccountUnlocked() {
@@ -1033,17 +1024,15 @@ class SupabaseGateway(
                 } else if (repository.activeWorkspaceId.value != null) {
                     repository.switchWorkspace(null)
                 }
-                _accountSetupState.value = BeeKeepAccountSetupState.Offline
+                _accountSetupState.value = BeeKeepAccountSetupState.SignedOut
                 _trustedDeviceAccess.value = TrustedDeviceAccessState(
-                    status = TrustedDeviceAccessStatus.REPLACED_LOCAL,
-                    message = "Signed out on this phone. Local records remain available; cloud sync is off."
+                    status = TrustedDeviceAccessStatus.CHECKING
                 )
                 _account.value = CloudAccountState(
                     configured = true,
                     signedIn = false,
                     email = replacedEmail,
-                    userId = replacedUserId,
-                    error = "Your BeeKeep session ended after another phone was approved. Local records have been kept."
+                    error = "Your BeeKeep session ended after another phone was approved. Local records have been kept; sign in again to continue."
                 )
                 repository.completeStartupWorkspaceAccessResolution()
                 _accountInitialized.value = true
