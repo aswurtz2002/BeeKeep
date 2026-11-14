@@ -2,52 +2,51 @@
 
 ## Goal
 
-Allow exactly one active BeeKeep Cloud session per account. A new phone may sign in with the account credentials, but it cannot read or change BeeKeep cloud data until the existing trusted phone approves the replacement. When the new phone finishes the handover, the old phone is signed out and keeps its local records.
+Allow exactly one active BeeKeep Cloud session per account. A new phone signs in with the account's normal password or Google provider, then verifies a six-digit code sent to the account's existing confirmed email address. Only after that code is verified does BeeKeep revoke the other Auth sessions and activate the new phone.
 
 Each workspace member still uses their own BeeKeep account and their own active session. Guest mode remains local-only.
 
-## The simple phone handover
+## Email-code phone replacement
 
 ### New phone (B)
 
-1. The user signs in with email/password or Google.
-2. BeeKeep creates a five-minute request using the Supabase JWT `session_id`. This is the server-issued identity for the current Auth session; the client does not invent an installation ID or send a device key.
-3. B shows one "Waiting for approval" screen. It has no cloud data access while pending.
-4. When approved, B automatically completes the handover. The Edge Function revokes every other Supabase Auth session while preserving B's session, then activates B in the private trusted-session registry.
-5. BeeKeep verifies that B is now the active session and resumes normal account, workspace, and sync startup.
+1. The user signs in with the account's password or Google.
+2. BeeKeep calls the authenticated device-access function. The database checks the current Supabase JWT `amr` claim and refuses to start a replacement from an email-OTP-only session when another trusted phone is active.
+3. The request is bound to that initial Supabase Auth `session_id` and expires after five minutes. The app saves the request ID locally so it can recover from an interrupted handover.
+4. BeeKeep sends a six-digit OTP using the account's already-confirmed email address. It does not allow creating a new account through this OTP request.
+5. The user enters the code. Supabase Auth verifies it and creates a fresh Auth session.
+6. The Edge Function verifies the current user, confirmed email, and recent OTP authentication method. A service-only database function rebinds the original password/Google request to this newly verified session.
+7. The Edge Function begins finalization, revokes every other Supabase Auth session while preserving B's session, then activates B in the private trusted-session registry.
+8. BeeKeep confirms B is the active trusted session and resumes normal account, workspace, and sync startup.
+
+If B loses connectivity or the app closes after OTP verification, the saved request ID and verified state let BeeKeep retry the server-side bind/recovery/finalization safely. The server recovery operation is idempotent.
 
 ### Existing trusted phone (A)
 
-1. When BeeKeep is open and online, A sees an in-app approval dialog containing the requesting phone's model name.
-2. The user chooses Approve or Deny.
-3. Approve authorizes B's request but does not sign A out prematurely. A remains the only active trusted phone until B actually completes finalization.
-4. Once B finalizes, Supabase revokes A's Auth session. The server's existing trusted-session checks immediately deny A's cloud access, even while an already-issued access token has not yet expired.
-5. When A next checks authorization, BeeKeep stops Realtime, cancels WorkManager sync, clears A's local Auth session, and enters local-only mode.
+1. A does not receive or approve a replacement prompt.
+2. Until B verifies the email code and finalizes, A remains the active trusted phone.
+3. After B finalizes, Supabase revokes A's Auth session. The server's trusted-session checks immediately deny A's cloud access, even while an already-issued JWT has not yet expired.
+4. When A next checks authorization, BeeKeep stops Realtime, cancels WorkManager sync, clears A's local Auth session, and enters local-only mode.
 
-The request alert is an in-app foreground check. BeeKeep does not currently have Firebase Cloud Messaging configured, so this is not a guaranteed push notification when the old app is closed.
+This is not a guaranteed push sign-out when A's app is closed or offline. The server denies A immediately; the local app screen changes when it next checks authorization.
 
-## Recovery
+## Security boundaries
 
-If the old phone is lost or unavailable, the signed-in user can verify a fresh six-digit code sent to the account's confirmed email address. The Edge Function checks the recent email-OTP authentication method and uses the same finalization process. First-phone enrollment uses this same email verification path.
-
-Email recovery is intentionally a fallback: access to the account email can replace a lost phone, so the email account should be protected.
-
-## Server authorization
-
-- The JWT `session_id` is the sole identity used to authorize the current Auth session.
-- `public.beekeep_device_session_is_trusted()` checks that the current JWT session ID matches a live row in `auth.sessions` and the account's one active row in `beekeep_private.trusted_devices`.
-- Existing restrictive RLS policies, inspection-photo Storage policy, and guarded account/workspace SECURITY DEFINER RPCs continue to call the same predicate.
-- A replacement request is bound to the user's account and the requesting session ID. Only the current trusted session can approve or deny it.
-- The replacement becomes trusted only after the Edge Function revokes other sessions and finalizes the database request.
-- Unknown, pending, denied, expired, replaced, and revoked sessions remain denied cloud access.
-- No client-supplied username, user metadata, device label, or preference is used as authorization proof.
+- The code is sent only to the signed-in account's existing confirmed email address.
+- The initial request must come from a password, Google OAuth, or other accepted primary authentication method. An email OTP alone cannot start replacement when a trusted phone exists.
+- The six-digit code is verified by Supabase Auth, is single-use, and is governed by the project's Auth OTP expiry and email rate limits.
+- The request is bound to the original authenticated session before the code is sent. After successful OTP verification, a service-only RPC binds it to the new OTP session.
+- The Edge Function validates the bearer through Supabase Auth `getUser()`, checks the current JWT claims, and checks the recent OTP AMR entry before it can bind or recover a request.
+- Only after verification does the Edge Function revoke other Auth sessions and activate the verified session. Wrong or expired codes do not alter the trusted device.
+- `public.beekeep_device_session_is_trusted()` remains the server-side authorization predicate. Existing restrictive RLS policies, inspection-photo Storage policy, and guarded account/workspace SECURITY DEFINER RPCs continue to use it.
+- The six-digit code is an email possession check, not phishing-resistant MFA. Protecting the account's email inbox remains important.
 
 ## Local data safety
 
 - Replacing a phone does not delete, migrate, or switch its Room database.
 - The old phone stores a local-only marker, clears only its local Supabase Auth session, stops Realtime, and cancels background sync.
 - Its personal records, apiaries, hive inspections, drafts, and pending local data remain on that phone.
-- The old phone cannot upload unsynced changes after replacement. A later deliberate sign-in starts a new verification and the existing personal local-data review gate still controls attachment/upload.
+- The old phone cannot upload unsynced changes after replacement. A later deliberate sign-in starts a new email-code verification and the existing personal local-data review gate still controls attachment/upload.
 - A phone that cannot reach the security service may keep using its local database, but cloud operations remain fail-closed.
 - Workspace membership and cloud records are not deleted or modified by a device handover.
 
@@ -60,19 +59,20 @@ Email recovery is intentionally a fallback: access to the account email can repl
 - Trusted-session checks on user-callable SECURITY DEFINER account/workspace RPCs and protected Edge Functions.
 - Existing local-data review gate for personal records.
 
-### Simplified handover (merged in main and deployed to BeeKeep staging)
+### Email-code handover (this branch / PR)
 
-- Add a small session-bound request/approve/deny/finalize API.
-- Remove Android Keystore device registration keys and ECDSA challenge signatures.
-- Remove separate approval and finalization challenges.
-- Use the same email-OTP recovery finalization for first setup and lost-phone recovery.
-- Reduce the Android UI to one waiting screen and one approve/deny dialog.
-- Keep the local Room database untouched when a phone is replaced.
+- Remove phone-to-phone approval UI and endpoints from the Android client.
+- Require password/Google authentication before the replacement request is created.
+- Send and verify the existing six-digit Supabase Auth email OTP.
+- Rebind the request to the fresh verified OTP session with a service-only RPC.
+- Revoke other Auth sessions only after email OTP verification.
+- Make recovery/finalization safe to retry after an interrupted app or network transition.
+- Preserve the old phone's local database and disable its cloud access after replacement.
 
 ## Rollout constraints
 
-- The simple handover migration is applied to the connected BeeKeep staging project, and `beekeep-device-access` is deployed at version 4 with `verify_jwt = false`.
-- The Edge Function validates the caller's bearer through Supabase Auth `getUser()` before processing session-bound operations.
-- BeeKeep Production remains untouched.
-- Do not remove historical registry/request rows or data from the previous protocol during this remake.
-- Physical two-phone verification is still required after installing the staging build: first setup, replacement approval, denial, recovery, retry after interruption, old-phone sign-out, offline local access, and confirmation that neither phone silently uploads the other's local data.
+- Develop and test against the BeeKeep staging Supabase project only.
+- Keep BeeKeep Production untouched.
+- Apply the new additive handover migration only after CI verifies the SQL regression suite.
+- The existing trusted-session registry, RLS policies, and local-data safeguards remain in place; no hive, apiary, workspace, or account records are deleted by this change.
+- Physical two-phone verification is required after installing the staging build: successful OTP replacement, incorrect/expired code, passwordless OTP-only attempt while another phone is trusted, first-device setup, interrupted finalization retry, old-phone local sign-out, offline local access, and confirmation that neither phone silently uploads the other's local data.
