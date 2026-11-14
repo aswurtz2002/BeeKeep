@@ -69,10 +69,14 @@ This is not a guaranteed push sign-out when A's app is closed or offline. The se
 - Make recovery/finalization safe to retry after an interrupted app or network transition.
 - Preserve the old phone's local database and disable its cloud access after replacement.
 
-## Rollout constraints
+## Staging rollout
 
-- Develop and test against the BeeKeep staging Supabase project only.
-- Keep BeeKeep Production untouched.
-- Apply the new additive handover migration only after CI verifies the SQL regression suite.
+- Applied `20261114171221_beekeep_email_code_device_handover` to the Supabase project named BeeKeep.
+- Deployed `beekeep-device-access` at version 5 with `verify_jwt = false`; the function validates the current user through Auth `getUser()`, requires a recent email OTP for recovery, binds the request to that verified session, then revokes other sessions.
+- Verified authenticated users can begin requests, anonymous users cannot, and only `service_role` can bind the verified session. The old phone approve/deny RPCs are no longer executable by authenticated users.
+- BeeKeep Production remains untouched.
 - The existing trusted-session registry, RLS policies, and local-data safeguards remain in place; no hive, apiary, workspace, or account records are deleted by this change.
-- Physical two-phone verification is required after installing the staging build: successful OTP replacement, incorrect/expired code, passwordless OTP-only attempt while another phone is trusted, first-device setup, interrupted finalization retry, old-phone local sign-out, offline local access, and confirmation that neither phone silently uploads the other's local data.
+
+## Remaining physical verification
+
+After installing the staging debug APK, test successful OTP replacement, incorrect/expired code, passwordless OTP-only attempt while another phone is trusted, first-device setup, resend window, interrupted finalization retry, old-phone local sign-out, offline local access, and confirmation that neither phone silently uploads the other's local data.
