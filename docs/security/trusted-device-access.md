@@ -60,7 +60,7 @@ Email recovery is intentionally a fallback: access to the account email can repl
 - Trusted-session checks on user-callable SECURITY DEFINER account/workspace RPCs and protected Edge Functions.
 - Existing local-data review gate for personal records.
 
-### Simplified handover (this branch / PR #145)
+### Simplified handover (merged in main and deployed to BeeKeep staging)
 
 - Add a small session-bound request/approve/deny/finalize API.
 - Remove Android Keystore device registration keys and ECDSA challenge signatures.
@@ -71,7 +71,8 @@ Email recovery is intentionally a fallback: access to the account email can repl
 
 ## Rollout constraints
 
-- Keep BeeKeep Production untouched. This branch is for review and automated testing; it has not been deployed to Supabase.
-- Apply the additive handover migration to BeeKeep staging only after the matching Android client and CI are ready.
+- The simple handover migration is applied to the connected BeeKeep staging project, and `beekeep-device-access` is deployed at version 4 with `verify_jwt = false`.
+- The Edge Function validates the caller's bearer through Supabase Auth `getUser()` before processing session-bound operations.
+- BeeKeep Production remains untouched.
 - Do not remove historical registry/request rows or data from the previous protocol during this remake.
 - Physical two-phone verification is still required after installing the staging build: first setup, replacement approval, denial, recovery, retry after interruption, old-phone sign-out, offline local access, and confirmation that neither phone silently uploads the other's local data.
