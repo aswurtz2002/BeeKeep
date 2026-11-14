@@ -38,6 +38,8 @@ create temporary table email_handover_test_ids (
 );
 grant select, insert, update on email_handover_test_ids to authenticated;
 
+create temporary table email_request_initial_expiry (expires_at timestamptz not null);
+
 -- New phone begins only after normal password sign-in. It has no trusted cloud access.
 set role authenticated;
 select set_config(
@@ -62,6 +64,28 @@ begin
     end if;
 end;
 $password_session_starts_pending_request$;
+
+insert into email_request_initial_expiry
+select r.expires_at
+from public.beekeep_device_get_request_status() r;
+
+-- Resending on the same initial login session reuses the request ID and renews its expiry.
+select request_id
+from public.beekeep_device_simple_begin_request('Pixel email replacement');
+
+do $resend_extends_request_expiry$
+declare
+    current_expiry timestamptz;
+    initial_expiry timestamptz;
+begin
+    select r.expires_at into current_expiry
+    from public.beekeep_device_get_request_status() r;
+    select expires_at into initial_expiry from email_request_initial_expiry;
+    if current_expiry <= initial_expiry then
+        raise exception 'Resending a code did not renew the five-minute request window';
+    end if;
+end;
+$resend_extends_request_expiry$;
 reset role;
 
 -- Supabase Auth has verified the six-digit OTP and created a fresh session.
