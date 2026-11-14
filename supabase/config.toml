@@ -1,0 +1,5 @@
+# Edge Functions that validate the caller's session inside their handler.
+# Supabase's platform gateway only verifies legacy HS256 JWTs for Edge Functions.
+# This endpoint validates the user bearer with Auth getUser() before any action.
+[functions.beekeep-device-access]
+verify_jwt = false
