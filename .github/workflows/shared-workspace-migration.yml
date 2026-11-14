@@ -214,6 +214,6 @@ jobs:
       - name: Verify simplified approval, denial, recovery and old-session revocation
         run: psql -v ON_ERROR_STOP=1 -f supabase/tests/trusted_device_simple_session_handover.sql
       - name: Apply email-code device handover and primary-auth requirement
-        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261114170000_beekeep_email_code_device_handover.sql
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261114171221_beekeep_email_code_device_handover.sql
       - name: Verify email-code replacement, passwordless takeover prevention and old-session revocation
         run: psql -v ON_ERROR_STOP=1 -f supabase/tests/trusted_device_email_code_handover.sql
