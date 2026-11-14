@@ -44,9 +44,10 @@ This is not a guaranteed push sign-out when A's app is closed or offline. The se
 ## Local data safety
 
 - Replacing a phone does not delete, migrate, or switch its Room database.
-- The old phone stores a replacement marker, clears only its local Supabase Auth session, stops Realtime, cancels background sync, and automatically returns to the normal sign-in screen.
+- The old phone stores a replacement marker, clears only its local Supabase Auth session, stops Realtime, cancels background sync, and returns directly to the normal sign-in screen from the gateway's signed-out state.
 - Its Room database is not cleared, migrated, or overwritten. Personal records, apiaries, hive inspections, drafts, and pending local data remain on that phone.
-- The old phone cannot upload unsynced changes after replacement. A later deliberate sign-in clears the replaced-session marker and starts a fresh device-verification attempt; the existing personal local-data review gate still controls attachment/upload.
+- The old phone cannot upload unsynced changes after replacement. A later deliberate sign-in clears the replaced-session marker and starts a fresh device-verification attempt.
+- The manual "Review local data" shortcut and screen have been removed from More. The underlying attachment safety hold remains: unreviewed records stay local and personal cloud sync remains paused rather than uploading them automatically.
 - A phone that cannot reach the security service may keep using its local database, but cloud operations remain fail-closed.
 - Workspace membership and cloud records are not deleted or modified by a device handover.
 
