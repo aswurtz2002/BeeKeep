@@ -53,6 +53,7 @@ internal fun BeeKeepTrustedDeviceGateScreen(
     val account by cloud.account.collectAsStateWithLifecycle()
     val liveAccess by cloud.trustedDeviceAccess.collectAsStateWithLifecycle()
     val pendingRequestId by cloud.pendingTrustedDeviceEmailRequestId.collectAsStateWithLifecycle()
+    val emailCodeSent by cloud.pendingTrustedDeviceEmailCodeSent.collectAsStateWithLifecycle()
     var code by rememberSaveable { mutableStateOf("") }
     var busy by rememberSaveable { mutableStateOf(false) }
     var message by rememberSaveable { mutableStateOf("") }
@@ -61,7 +62,7 @@ internal fun BeeKeepTrustedDeviceGateScreen(
         it.status != TrustedDeviceAccessStatus.CHECKING
     } ?: access
     val finalizing = currentAccess.status == TrustedDeviceAccessStatus.PENDING_FINALIZATION
-    val codeSent = !pendingRequestId.isNullOrBlank() &&
+    val codeSent = emailCodeSent && !pendingRequestId.isNullOrBlank() &&
         currentAccess.status != TrustedDeviceAccessStatus.EXPIRED &&
         currentAccess.status != TrustedDeviceAccessStatus.DENIED
 
