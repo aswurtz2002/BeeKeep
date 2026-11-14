@@ -422,12 +422,65 @@ class SupabaseGateway(
             TrustedDeviceAccessStatus.REPLACED_LOCAL
         )
 
+    private fun pendingTrustedDeviceEmailRequestId(userId: String): String? {
+        val prefs = appContext.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
+        val savedUserId = prefs.getString(PENDING_TRUSTED_DEVICE_EMAIL_USER_ID_PREF, null)
+        if (savedUserId != userId) return null
+        return prefs.getString(PENDING_TRUSTED_DEVICE_EMAIL_REQUEST_ID_PREF, null)
+            ?.trim()?.takeIf { it.isNotEmpty() }
+    }
+
+    private fun restorePendingTrustedDeviceEmailRequest(userId: String) {
+        _pendingTrustedDeviceEmailRequestId.value = pendingTrustedDeviceEmailRequestId(userId)
+    }
+
+    private fun savePendingTrustedDeviceEmailRequest(userId: String, requestId: String) {
+        appContext.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE).edit()
+            .putString(PENDING_TRUSTED_DEVICE_EMAIL_REQUEST_ID_PREF, requestId)
+            .putString(PENDING_TRUSTED_DEVICE_EMAIL_USER_ID_PREF, userId)
+            .putBoolean(PENDING_TRUSTED_DEVICE_EMAIL_VERIFIED_PREF, false)
+            .apply()
+        _pendingTrustedDeviceEmailRequestId.value = requestId
+    }
+
+    private fun markPendingTrustedDeviceEmailRequestVerified() {
+        appContext.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE).edit()
+            .putBoolean(PENDING_TRUSTED_DEVICE_EMAIL_VERIFIED_PREF, true)
+            .apply()
+    }
+
+    private fun isPendingTrustedDeviceEmailRequestVerified(userId: String): Boolean {
+        val prefs = appContext.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
+        return prefs.getString(PENDING_TRUSTED_DEVICE_EMAIL_USER_ID_PREF, null) == userId &&
+            prefs.getBoolean(PENDING_TRUSTED_DEVICE_EMAIL_VERIFIED_PREF, false)
+    }
+
+    private fun clearPendingTrustedDeviceEmailRequest() {
+        appContext.getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE).edit()
+            .remove(PENDING_TRUSTED_DEVICE_EMAIL_REQUEST_ID_PREF)
+            .remove(PENDING_TRUSTED_DEVICE_EMAIL_USER_ID_PREF)
+            .remove(PENDING_TRUSTED_DEVICE_EMAIL_VERIFIED_PREF)
+            .apply()
+        _pendingTrustedDeviceEmailRequestId.value = null
+        lastEmailHandoverRecoveryAttemptAtMillis = 0L
+    }
+
+    private fun currentDeviceLabel(): String =
+        listOf(android.os.Build.MANUFACTURER.trim(), android.os.Build.MODEL.trim())
+            .filter { it.isNotBlank() }
+            .distinct()
+            .joinToString(" ")
+            .take(80)
+            .ifBlank { "Android phone" }
+
     /**
      * The server's session_id check is the only source of cloud authorization.
      * A local remembered user ID is used only to recognize this phone's own
      * revoked session so its Room database can remain available offline.
      */
     private suspend fun verifyTrustedDeviceSession(supabase: SupabaseClient): Boolean {
+        supabase.auth.currentSessionOrNull()?.user?.id?.trim()
+            ?.takeIf { it.isNotEmpty() }?.let(::restorePendingTrustedDeviceEmailRequest)
         val api = TrustedDeviceAccessApi(supabase)
         return when (val access = api.currentSessionTrusted()) {
             is TrustedDeviceApiResult.Success -> {
@@ -452,10 +505,8 @@ class SupabaseGateway(
                     val nextStatus = when (request?.requestStatus?.lowercase()) {
                         "pending" -> if (expired) {
                             TrustedDeviceAccessStatus.EXPIRED
-                        } else if (request.requestMode == "replacement") {
-                            TrustedDeviceAccessStatus.PENDING_APPROVAL
                         } else {
-                            TrustedDeviceAccessStatus.NOT_TRUSTED
+                            TrustedDeviceAccessStatus.PENDING_EMAIL_CODE
                         }
                         "approved_pending_finalize", "finalizing" ->
                             TrustedDeviceAccessStatus.PENDING_FINALIZATION
@@ -471,10 +522,10 @@ class SupabaseGateway(
                         requestId = request?.requestId,
                         requestMode = request?.requestMode,
                         message = when (nextStatus) {
-                            TrustedDeviceAccessStatus.PENDING_APPROVAL ->
-                                "Waiting for approval from your currently trusted BeeKeep phone."
+                            TrustedDeviceAccessStatus.PENDING_EMAIL_CODE ->
+                                "Enter the six-digit code sent to your verified account email."
                             TrustedDeviceAccessStatus.PENDING_FINALIZATION ->
-                                "Approved. BeeKeep is finishing the phone handover automatically."
+                                "Your email is verified. BeeKeep is finishing the phone handover automatically."
                             TrustedDeviceAccessStatus.EXPIRED ->
                                 "This phone request expired. Start again or verify your email."
                             TrustedDeviceAccessStatus.DENIED ->
