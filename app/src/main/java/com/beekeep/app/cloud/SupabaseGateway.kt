@@ -717,14 +717,6 @@ class SupabaseGateway(
         }
     }
 
-    private fun currentDeviceLabel(): String =
-        listOf(android.os.Build.MANUFACTURER.trim(), android.os.Build.MODEL.trim())
-            .filter { it.isNotBlank() }
-            .distinct()
-            .joinToString(" ")
-            .take(80)
-            .ifBlank { "Android phone" }
-
     /** Retries a verified email handover after an interrupted app/network transition. */
     private suspend fun retryVerifiedEmailHandover(supabase: SupabaseClient, userId: String): Boolean {
         val requestId = pendingTrustedDeviceEmailRequestId(userId) ?: return false
