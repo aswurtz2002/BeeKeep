@@ -682,14 +682,13 @@ class SupabaseGateway(
             try {
                 ensureAuthStorageInitialized(supabase)
                 val beforeVerification = supabase.auth.currentSessionOrNull()
-                    ?: return@run CloudResult.NotSignedIn
-                val expectedUserId = beforeVerification.user?.id?.trim()
+                val expectedUserId = beforeVerification?.user?.id?.trim()
                     ?.takeIf { it.isNotEmpty() }
                     ?: _account.value.userId?.trim()?.takeIf { it.isNotEmpty() }
                     ?: return@run CloudResult.Failure("Sign in to BeeKeep before verifying this phone.")
                 val requestId = pendingTrustedDeviceEmailRequestId(expectedUserId)
                     ?: return@run CloudResult.Failure("Request a new security code before continuing.")
-                val email = beforeVerification.user?.email?.trim()?.takeIf { it.isNotEmpty() }
+                val email = beforeVerification?.user?.email?.trim()?.takeIf { it.isNotEmpty() }
                     ?: _account.value.email.trim().takeIf { it.isNotEmpty() }
                     ?: return@run CloudResult.Failure("This BeeKeep account doesn't have a verified email address.")
 
