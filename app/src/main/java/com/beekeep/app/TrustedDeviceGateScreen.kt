@@ -38,27 +38,33 @@ import com.beekeep.app.cloud.TrustedDeviceAccessStatus
 import kotlinx.coroutines.launch
 
 /**
- * One small gate for a newly signed-in phone.
- * Replacement phones wait for the trusted phone; after approval, finalization is automatic.
- * Email verification is the fallback when no trusted phone is available.
+ * New-device verification.
+ * A password/Google-authenticated session first requests a code at the account's confirmed
+ * email. The code creates a fresh Auth session which replaces the previous phone only after
+ * the server validates it and finalizes the one-session handover.
  */
 @Composable
 internal fun BeeKeepTrustedDeviceGateScreen(
     cloud: SupabaseGateway,
     access: TrustedDeviceAccessState
 ) {
-    BackHandler(enabled = true) { /* Cloud access requires an approved session. */ }
+    BackHandler(enabled = true) { /* Cloud access requires completed email verification. */ }
     val scope = rememberCoroutineScope()
     val account by cloud.account.collectAsStateWithLifecycle()
     val liveAccess by cloud.trustedDeviceAccess.collectAsStateWithLifecycle()
+    val pendingRequestId by cloud.pendingTrustedDeviceEmailRequestId.collectAsStateWithLifecycle()
+    val emailCodeSent by cloud.pendingTrustedDeviceEmailCodeSent.collectAsStateWithLifecycle()
     var code by rememberSaveable { mutableStateOf("") }
-    var codeRequested by rememberSaveable { mutableStateOf(false) }
     var busy by rememberSaveable { mutableStateOf(false) }
     var message by rememberSaveable { mutableStateOf("") }
     var messageIsError by rememberSaveable { mutableStateOf(false) }
     val currentAccess = liveAccess.takeIf {
         it.status != TrustedDeviceAccessStatus.CHECKING
     } ?: access
+    val finalizing = currentAccess.status == TrustedDeviceAccessStatus.PENDING_FINALIZATION
+    val codeSent = emailCodeSent && !pendingRequestId.isNullOrBlank() &&
+        currentAccess.status != TrustedDeviceAccessStatus.EXPIRED &&
+        currentAccess.status != TrustedDeviceAccessStatus.DENIED
 
     fun showResult(result: CloudResult, successMessage: String) {
         when (result) {
@@ -71,7 +77,7 @@ internal fun BeeKeepTrustedDeviceGateScreen(
                 messageIsError = true
             }
             CloudResult.NotSignedIn -> {
-                message = "Your BeeKeep session has ended. Sign in again."
+                message = "Your BeeKeep sign-in session has ended. Sign in again."
                 messageIsError = true
             }
             is CloudResult.Failure -> {
@@ -80,9 +86,6 @@ internal fun BeeKeepTrustedDeviceGateScreen(
             }
         }
     }
-
-    val waiting = currentAccess.status == TrustedDeviceAccessStatus.PENDING_APPROVAL
-    val finalizing = currentAccess.status == TrustedDeviceAccessStatus.PENDING_FINALIZATION
 
     Surface(
         modifier = Modifier
@@ -110,11 +113,7 @@ internal fun BeeKeepTrustedDeviceGateScreen(
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     Text(
-                        when {
-                            waiting -> "Waiting for approval"
-                            finalizing -> "Finishing sign-in"
-                            else -> "Verify this phone"
-                        },
+                        if (finalizing) "Finishing sign-in" else "Verify this phone",
                         style = MaterialTheme.typography.headlineSmall,
                         fontWeight = FontWeight.ExtraBold,
                         textAlign = TextAlign.Center
@@ -129,24 +128,26 @@ internal fun BeeKeepTrustedDeviceGateScreen(
 
                     Text(
                         when {
-                            waiting ->
-                                "Open BeeKeep on your currently trusted phone and approve this request. This phone will finish signing in automatically."
                             finalizing ->
-                                "Your request was approved. BeeKeep is securely handing the account over to this phone. Keep the app open."
-                            currentAccess.status == TrustedDeviceAccessStatus.DENIED ->
-                                "The request was denied. You can submit another request or verify your account email."
-                            currentAccess.status == TrustedDeviceAccessStatus.EXPIRED ->
-                                "The request expired. Submit another request or verify your account email."
+                                "Your email code was verified. BeeKeep is signing out the previous phone and activating this one. Keep the app open."
                             currentAccess.status == TrustedDeviceAccessStatus.UNAVAILABLE ->
-                                "BeeKeep can't currently reach the security service. Check your connection and retry. Cloud access stays locked."
+                                "BeeKeep can't currently reach the security service. Check your connection and try again. Cloud access stays locked."
+                            currentAccess.status == TrustedDeviceAccessStatus.EXPIRED ->
+                                "That verification request expired. Send a new code to continue."
+                            currentAccess.status == TrustedDeviceAccessStatus.DENIED ->
+                                "That request is no longer active. Send a new code to start again."
+                            codeSent ->
+                                "Enter the six-digit security code sent to your verified account email. The previous phone stays active until this code is accepted."
                             else ->
-                                "Only one phone can access BeeKeep Cloud for this account at a time. Request approval from your current phone, or verify your email if that phone is unavailable."
+                                "To use BeeKeep Cloud on this phone, verify the account's existing email address. Once the code is accepted, other phones are signed out automatically."
                         },
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         textAlign = TextAlign.Center
                     )
 
-                    if (!currentAccess.message.isNullOrBlank() && !waiting) {
+                    if (!currentAccess.message.isNullOrBlank() &&
+                        currentAccess.status != TrustedDeviceAccessStatus.PENDING_EMAIL_CODE
+                    ) {
                         Text(
                             currentAccess.message.orEmpty(),
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -155,11 +156,8 @@ internal fun BeeKeepTrustedDeviceGateScreen(
                         )
                     }
 
-                    if (waiting || finalizing) {
+                    if (finalizing) {
                         CircularProgressIndicator()
-                    }
-
-                    if (waiting) {
                         Button(
                             enabled = !busy,
                             modifier = Modifier.fillMaxWidth(),
@@ -168,77 +166,15 @@ internal fun BeeKeepTrustedDeviceGateScreen(
                                     busy = true
                                     cloud.refreshTrustedDeviceAccess()
                                     val latest = cloud.trustedDeviceAccess.value
-                                    message = latest.message
-                                        ?: "BeeKeep checked the request. It is still waiting for approval."
-                                    messageIsError = false
-                                    busy = false
-                                }
-                            }
-                        ) {
-                            Text(if (busy) "Checking…" else "Check approval")
-                        }
-                    } else if (finalizing) {
-                        Button(
-                            enabled = !busy,
-                            modifier = Modifier.fillMaxWidth(),
-                            onClick = {
-                                scope.launch {
-                                    busy = true
-                                    cloud.refreshTrustedDeviceAccess()
-                                    val latest = cloud.trustedDeviceAccess.value
-                                    message = latest.message
-                                        ?: "BeeKeep checked the handover."
+                                    message = latest.message ?: "BeeKeep checked the handover."
                                     messageIsError = latest.status != TrustedDeviceAccessStatus.TRUSTED
                                     busy = false
                                 }
                             }
                         ) {
-                            Text(if (busy) "Checking…" else "Retry handover")
+                            Text(if (busy) "Checking…" else "Finish sign-in")
                         }
-                    } else {
-                        Button(
-                            enabled = !busy,
-                            modifier = Modifier.fillMaxWidth(),
-                            onClick = {
-                                scope.launch {
-                                    busy = true
-                                    val result = cloud.requestTrustedDeviceApproval()
-                                    val latest = cloud.trustedDeviceAccess.value
-                                    val successMessage = if (
-                                        latest.status == TrustedDeviceAccessStatus.PENDING_APPROVAL
-                                    ) {
-                                        "Request sent. Approve this phone from your trusted BeeKeep phone."
-                                    } else {
-                                        latest.message ?: "This phone needs email verification."
-                                    }
-                                    showResult(result, successMessage)
-                                    busy = false
-                                }
-                            }
-                        ) {
-                            Text(if (busy) "Sending…" else "Request phone approval")
-                        }
-                    }
-
-                    if (!finalizing && !codeRequested) {
-                        TextButton(
-                            enabled = !busy,
-                            onClick = {
-                                scope.launch {
-                                    busy = true
-                                    val result = cloud.requestTrustedDeviceEmailCode()
-                                    showResult(
-                                        result,
-                                        "A six-digit security code was sent to your account email."
-                                    )
-                                    if (result == CloudResult.Success) codeRequested = true
-                                    busy = false
-                                }
-                            }
-                        ) {
-                            Text("Verify with email instead")
-                        }
-                    } else if (!finalizing) {
+                    } else if (codeSent) {
                         OutlinedTextField(
                             value = code,
                             onValueChange = { value ->
@@ -267,7 +203,7 @@ internal fun BeeKeepTrustedDeviceGateScreen(
                                 }
                             }
                         ) {
-                            Text(if (busy) "Verifying…" else "Verify and activate")
+                            Text(if (busy) "Verifying…" else "Verify and continue")
                         }
                         TextButton(
                             enabled = !busy,
@@ -275,15 +211,32 @@ internal fun BeeKeepTrustedDeviceGateScreen(
                                 scope.launch {
                                     busy = true
                                     val result = cloud.requestTrustedDeviceEmailCode()
-                                    showResult(
-                                        result,
-                                        "A new security code was sent to your account email."
-                                    )
+                                    showResult(result, "A new six-digit security code was sent.")
+                                    if (result == CloudResult.Success) code = ""
                                     busy = false
                                 }
                             }
                         ) {
                             Text("Resend code")
+                        }
+                    } else {
+                        Button(
+                            enabled = !busy,
+                            modifier = Modifier.fillMaxWidth(),
+                            onClick = {
+                                scope.launch {
+                                    busy = true
+                                    val result = cloud.requestTrustedDeviceEmailCode()
+                                    showResult(
+                                        result,
+                                        "A six-digit security code was sent to your verified email."
+                                    )
+                                    if (result == CloudResult.Success) code = ""
+                                    busy = false
+                                }
+                            }
+                        ) {
+                            Text(if (busy) "Sending…" else "Send verification code")
                         }
                     }
 
@@ -313,7 +266,7 @@ internal fun BeeKeepTrustedDeviceGateScreen(
 
                     Spacer(Modifier.height(2.dp))
                     Text(
-                        "Your local hive records stay on this phone. Unapproved phones cannot access or sync cloud data.",
+                        "Your local hive records stay on this phone. The previous phone is signed out only after this code is verified.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         textAlign = TextAlign.Center
