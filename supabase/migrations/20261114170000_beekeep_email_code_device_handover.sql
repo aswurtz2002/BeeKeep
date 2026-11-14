@@ -245,6 +245,90 @@ revoke all on function public.beekeep_internal_device_simple_bind_email_session(
 grant execute on function public.beekeep_internal_device_simple_bind_email_session(uuid, uuid, uuid)
     to service_role;
 
+-- Make the email-verified recovery step safe to retry after the OTP session is rebound.
+create or replace function public.beekeep_internal_device_simple_recover_request(
+    p_request_id uuid,
+    p_user_id uuid,
+    p_session_id uuid
+)
+returns boolean
+language plpgsql
+security definer
+set search_path = ''
+as $function$
+declare
+    request_row beekeep_private.device_access_requests%rowtype;
+begin
+    perform 1 from auth.users u where u.id = p_user_id for update;
+
+    select r.* into request_row
+    from beekeep_private.device_access_requests r
+    where r.id = p_request_id
+      and r.user_id = p_user_id
+      and r.session_id = p_session_id
+    for update;
+
+    if request_row.id is null then
+        raise exception 'This phone recovery request could not be found.'
+            using errcode = 'P0002';
+    end if;
+
+    -- A lost Edge Function response can safely retry recovery/finalization.
+    if request_row.request_status in ('approved_pending_finalize', 'finalizing', 'approved')
+       and request_row.request_mode in ('first_device_setup', 'replacement') then
+        return true;
+    end if;
+
+    if request_row.request_status <> 'pending'
+       or request_row.request_mode not in ('first_device_setup', 'replacement')
+       or request_row.challenge_verified_at is null
+       or request_row.expires_at <= pg_catalog.statement_timestamp() then
+        raise exception 'This phone verification request has expired. Request a new code.'
+            using errcode = 'P0002';
+    end if;
+
+    if not exists (
+        select 1 from auth.sessions s
+        where s.id = p_session_id
+          and s.user_id = p_user_id
+          and (s.not_after is null or s.not_after > pg_catalog.statement_timestamp())
+    ) then
+        raise exception 'The verified email session has expired. Request a new code.'
+            using errcode = '42501';
+    end if;
+
+    update beekeep_private.device_access_requests r
+    set request_status = 'replaced',
+        decided_at = coalesce(r.decided_at, pg_catalog.clock_timestamp()),
+        finalization_challenge_hash = null,
+        finalization_challenge_expires_at = null,
+        finalization_started_at = null
+    where r.user_id = p_user_id
+      and r.id <> request_row.id
+      and r.request_status in ('pending', 'approved_pending_finalize', 'finalizing');
+
+    update beekeep_private.device_access_requests r
+    set request_status = 'approved_pending_finalize',
+        approval_method = case
+            when request_row.request_mode = 'first_device_setup' then 'first_device_setup'
+            else 'email_recovery'
+        end,
+        decided_at = pg_catalog.clock_timestamp(),
+        decided_by_device_id = null,
+        finalization_challenge_hash = null,
+        finalization_challenge_expires_at = null,
+        finalization_started_at = null
+    where r.id = request_row.id;
+
+    return true;
+end;
+$function$;
+
+revoke all on function public.beekeep_internal_device_simple_recover_request(uuid, uuid, uuid)
+    from public, anon, authenticated;
+grant execute on function public.beekeep_internal_device_simple_recover_request(uuid, uuid, uuid)
+    to service_role;
+
 -- The app no longer accepts phone-to-phone approval decisions.
 revoke all on function public.beekeep_device_simple_approve_request(uuid)
     from public, anon, authenticated;
