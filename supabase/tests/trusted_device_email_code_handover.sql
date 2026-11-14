@@ -76,6 +76,12 @@ select public.beekeep_internal_device_simple_recover_request(
     '00000000-0000-0000-0000-000000000201',
     '20000000-0000-0000-0000-000000000203'
 );
+-- A duplicate retry after a lost response must be harmless.
+select public.beekeep_internal_device_simple_recover_request(
+    (select request_id from email_handover_test_ids where scenario = 'replacement'),
+    '00000000-0000-0000-0000-000000000201',
+    '20000000-0000-0000-0000-000000000203'
+);
 select public.beekeep_internal_device_simple_begin_finalization(
     (select request_id from email_handover_test_ids where scenario = 'replacement'),
     '00000000-0000-0000-0000-000000000201',
