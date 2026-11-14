@@ -102,11 +102,26 @@ begin
     for update;
 
     if existing_request.id is not null
-       and existing_request.request_status in ('pending', 'approved_pending_finalize', 'finalizing')
-       and (
-           existing_request.request_status <> 'pending'
-           or existing_request.expires_at > pg_catalog.statement_timestamp()
-       ) then
+       and existing_request.request_status = 'pending'
+       and existing_request.expires_at > pg_catalog.statement_timestamp() then
+        -- A resend reuses the same session-bound request but refreshes its five-minute
+        -- server window so the new email code has a full verification period.
+        update beekeep_private.device_access_requests r
+        set device_label = cleaned_label,
+            created_at = pg_catalog.clock_timestamp(),
+            expires_at = request_expires_at,
+            challenge_verified_at = pg_catalog.clock_timestamp()
+        where r.id = existing_request.id
+        returning r.* into existing_request;
+
+        return query
+        select existing_request.id, existing_request.request_mode,
+               existing_request.request_status, existing_request.expires_at;
+        return;
+    end if;
+
+    if existing_request.id is not null
+       and existing_request.request_status in ('approved_pending_finalize', 'finalizing') then
         return query
         select existing_request.id, existing_request.request_mode,
                existing_request.request_status, existing_request.expires_at;
