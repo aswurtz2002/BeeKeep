@@ -210,6 +210,6 @@ jobs:
         run: psql -v ON_ERROR_STOP=1 -f supabase/tests/trusted_device_cutover_finalization.sql
 
       - name: Apply simplified single-session device handover
-        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261108030000_beekeep_simple_trusted_session_handover.sql
+        run: psql -v ON_ERROR_STOP=1 -f supabase/migrations/20261114163346_beekeep_simple_trusted_session_handover.sql
       - name: Verify simplified approval, denial, recovery and old-session revocation
         run: psql -v ON_ERROR_STOP=1 -f supabase/tests/trusted_device_simple_session_handover.sql
