@@ -407,7 +407,6 @@ enum class Screen {
     WORKSPACE,
     SCAN,
     MORE,
-    LOCAL_DATA_REVIEW,
     SUPPORT_ADMIN,
     SETTINGS,
     TAG_MANAGER,
@@ -454,15 +453,6 @@ fun BeeKeepApp(
             cloud.refreshTrustedDeviceAccess()
             if (cloud.trustedDeviceAccess.value.status == TrustedDeviceAccessStatus.REPLACED_LOCAL) break
             kotlinx.coroutines.delay(15_000L)
-        }
-    }
-
-    // A replaced phone goes straight to the normal sign-in screen after its local Auth
-    // session is cleared. This only resets in-memory account/navigation state; Room data
-    // and the local-data review safeguards are left untouched.
-    androidx.compose.runtime.LaunchedEffect(trustedDeviceAccess.status) {
-        if (trustedDeviceAccess.status == TrustedDeviceAccessStatus.REPLACED_LOCAL) {
-            cloud.openSignInAfterReplacement()
         }
     }
 
@@ -3164,8 +3154,6 @@ vm.saveHarvestToApiary(
             )
             Screen.MORE -> MoreScreen(
                 padding = padding,
-                canReviewLocalData = activeWorkspaceId.isNullOrBlank(),
-                onOpenLocalDataReview = { screen = Screen.LOCAL_DATA_REVIEW },
                 onBack = { screen = Screen.SETTINGS },
                 onWorkspaceJoined = { joinedMessage ->
                     hasJoinedTeamWorkspace = true
@@ -3206,9 +3194,6 @@ vm.saveHarvestToApiary(
                 activity = activity,
                 cloud = cloud
             )
-            Screen.LOCAL_DATA_REVIEW -> BeeKeepLocalDataAttachmentReviewScreen(cloud = cloud) {
-                screen = Screen.MORE
-            }
             Screen.SUPPORT_ADMIN -> AdminHiveLimitScreen(
                 padding = padding,
                 cloud = cloud,
@@ -4172,8 +4157,6 @@ private fun TagManagementScreen(
 @Composable
 private fun MoreScreen(
     padding: PaddingValues,
-    canReviewLocalData: Boolean,
-    onOpenLocalDataReview: () -> Unit,
     onBack: () -> Unit,
     onWorkspaceJoined: (String) -> Unit,
     onTagManager: () -> Unit,
@@ -4189,7 +4172,6 @@ private fun MoreScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val account by cloud.account.collectAsStateWithLifecycle()
-    val localDataAttachmentPending by cloud.localDataAttachmentPending.collectAsStateWithLifecycle()
     var email by rememberSaveable { mutableStateOf("") }
     var password by rememberSaveable { mutableStateOf("") }
     var username by rememberSaveable { mutableStateOf("") }
@@ -4250,40 +4232,6 @@ private fun MoreScreen(
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text("More", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.ExtraBold)
                 Text("Additional tools and account controls", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
-            }
-        }
-
-        if (account.signedIn && localDataAttachmentPending && canReviewLocalData) {
-            Card(
-                onClick = onOpenLocalDataReview,
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(20.dp),
-                border = androidx.compose.foundation.BorderStroke(
-                    1.dp,
-                    MaterialTheme.colorScheme.outlineVariant
-                )
-            ) {
-                Row(
-                    Modifier.fillMaxWidth().padding(16.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(
-                        Modifier.weight(1f),
-                        verticalArrangement = Arrangement.spacedBy(3.dp)
-                    ) {
-                        Text("Review local data", fontWeight = FontWeight.Bold)
-                        Text(
-                            "Personal cloud sync is paused until local records are reviewed. Nothing is uploaded automatically.",
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            style = MaterialTheme.typography.bodySmall
-                        )
-                    }
-                    Text(
-                        "REVIEW",
-                        color = MaterialTheme.colorScheme.primary,
-                        fontWeight = FontWeight.Bold
-                    )
-                }
             }
         }
 
