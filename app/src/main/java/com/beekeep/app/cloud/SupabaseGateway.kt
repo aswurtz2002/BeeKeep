@@ -3484,6 +3484,7 @@ class SupabaseGateway(
                         supabase,
                         workspace.id,
                         workspace.member_role
+                    )
                 } else {
                     true
                 }
