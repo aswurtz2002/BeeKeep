@@ -3749,7 +3749,6 @@ class SupabaseGateway(
                 // The normal document outbox is drained first so cloud apiary/hive identity
                 // checks see the newest records before the atomic action transaction runs.
                 uploadPendingActionBatches(workspaceId)
-            } else {
             }
 
             // Prefer server-versioned incremental pages. Older or partially migrated
