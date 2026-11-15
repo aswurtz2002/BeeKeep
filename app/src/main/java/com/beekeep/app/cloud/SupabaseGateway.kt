@@ -135,7 +135,8 @@ class SupabaseGateway(
         "beekeep_cloud_sync_cursors_v1", Context.MODE_PRIVATE
     )
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private val authOperationRunner = GatewayOwnedOperationRunner(scope)
+    // State-changing gateway work must outlive a UI coroutine when it publishes a new dataset.
+    private val gatewayOperationRunner = GatewayOwnedOperationRunner(scope)
     @Volatile
     private var sessionRefreshJob: Job? = null
     @Volatile
@@ -644,7 +645,7 @@ class SupabaseGateway(
     /** Send the OTP only after the server accepts the current password/Google session. */
     suspend fun requestTrustedDeviceEmailCode(): CloudResult {
         val supabase = client ?: return CloudResult.NotConfigured
-        return authOperationRunner.run {
+        return gatewayOperationRunner.run {
             try {
                 ensureAuthStorageInitialized(supabase)
                 val session = supabase.auth.currentSessionOrNull()
@@ -695,7 +696,7 @@ class SupabaseGateway(
             return CloudResult.Failure("Enter the six-digit code from your BeeKeep security email.")
         }
         val supabase = client ?: return CloudResult.NotConfigured
-        return authOperationRunner.run {
+        return gatewayOperationRunner.run {
             try {
                 ensureAuthStorageInitialized(supabase)
                 val beforeVerification = supabase.auth.currentSessionOrNull()
@@ -3099,7 +3100,9 @@ class SupabaseGateway(
     }
 
     private suspend fun syncNowUnlocked(): CloudResult {
-        if (!configured || client == null) return CloudResult.NotConfigured
+        if (!configured || client == null) {
+            return CloudResult.NotConfigured
+        }
         try {
             ensureAuthStorageInitialized(client)
         } catch (cancelled: CancellationException) {
@@ -3156,7 +3159,12 @@ class SupabaseGateway(
         // syncSharedWorkspace confirms membership for this account.
         _account.value = _account.value.copy(syncing = true, error = null)
         if (activeTeamWorkspaceId.isNotEmpty()) {
-            return syncSharedWorkspace(activeTeamWorkspaceId, userId, session.user?.email.orEmpty())
+            val result = syncSharedWorkspace(
+                activeTeamWorkspaceId,
+                userId,
+                session.user?.email.orEmpty()
+            )
+            return result
         }
         // Normal sync no longer requires a separate local-record review. Pending local edits
         // stay in the durable outbox and continue through the existing conflict-aware sync path.
@@ -3271,7 +3279,8 @@ class SupabaseGateway(
                 if (!IncrementalSyncCompatibility.isMissingIncrementalSyncRpc(error)) throw error
                 // Keep cloud sync working while an environment is still on the pre-incremental
                 // schema. This is the same deterministic, paginated pull used before the RPCs.
-                loadAllPersonalDocuments().filter { it.user_id == userId }
+                loadAllPersonalDocuments().filter { it.user_id == userId }.also {
+                }
             }
             val knownNfcMutations = repository.nfcMutationSyncTimestamps()
             val legacyNfcHiveIds = legacyNfcOnlyPersonalHiveSnapshotIds(
@@ -3443,7 +3452,10 @@ class SupabaseGateway(
      * Switches the app's active dataset to a team workspace or back to the user's personal data.
      * The repository stores team data in a separate Room file before the first team pull.
      */
-    suspend fun activateWorkspace(workspaceId: String?): WorkspaceOperationResult<Unit> {
+
+    suspend fun activateWorkspace(
+        workspaceId: String?
+    ): WorkspaceOperationResult<Unit> = gatewayOperationRunner.run {
         val result = syncMutex.withLock {
             val supabase = client
             if (!configured || supabase == null) {
@@ -3459,10 +3471,12 @@ class SupabaseGateway(
                 val userId = session.user?.id?.trim()?.takeIf { it.isNotEmpty() }
                     ?: return@withLock WorkspaceOperationResult(error = "Your cloud session has no user ID. Sign in again.")
                 val cleanId = workspaceId?.trim()?.takeIf { it.isNotEmpty() }
-                val workspace = if (cleanId == null) null else {
-                    supabase.postgrest.rpc("beekeep_list_workspaces")
+                val workspace = if (cleanId == null) {
+                    null
+                } else {
+                    val listedWorkspaces = supabase.postgrest.rpc("beekeep_list_workspaces")
                         .decodeList<BeeKeepWorkspace>()
-                        .firstOrNull { it.id == cleanId && !it.is_personal }
+                    listedWorkspaces.firstOrNull { it.id == cleanId && !it.is_personal }
                         ?: error("You no longer have access to that team workspace.")
                 }
                 val ownerCommercialActive = if (workspace != null) {
@@ -3503,8 +3517,9 @@ class SupabaseGateway(
         // Rebind Realtime after the Room database and active-workspace preference switch.
         // Do this outside the sync lock so the previous listener can finish its own sync.
         if (enableRealtime && _account.value.signedIn) startRealtime()
-        return result
+        result
     }
+
 
     /**
      * Replays every locally recorded team mutation in insertion order. The database
@@ -3572,7 +3587,7 @@ class SupabaseGateway(
     private suspend fun syncSharedWorkspace(
         workspaceId: String,
         userId: String,
-        userEmail: String
+        userEmail: String,
     ): CloudResult {
         val supabase = client ?: return CloudResult.NotConfigured
         try {
@@ -4384,7 +4399,7 @@ class SupabaseGateway(
         // Keep auth transitions in the gateway-owned scope. Once the authenticated account is
         // published, Compose may dispose the login screen before workspace restoration and
         // realtime setup finish; disposing that caller must not cancel the session transition.
-        return authOperationRunner.run {
+        return gatewayOperationRunner.run {
             val supabase = client ?: return@run CloudResult.NotConfigured
             try {
                 ensureAuthStorageInitialized(supabase)

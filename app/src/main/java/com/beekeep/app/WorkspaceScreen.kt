@@ -173,6 +173,9 @@ fun WorkspaceScreen(
     androidx.compose.runtime.LaunchedEffect(account.signedIn, account.userId, currentPlan, activeWorkspaceId) {
         if (ownerAccessAccountId != account.userId) {
             // Do not carry a previous account's owner/entitlement decision across sign-in.
+            // The initial account check may show the loading gate, but a workspace selection
+            // must not remove WorkspaceManagementSection from composition: its screen-owned
+            // coroutine is performing activateWorkspace and would be cancelled mid-switch.
             ownerAccessAccountId = account.userId
             hasOwnedTeamWorkspace = false
             ownedWorkspaceIds = emptySet()
@@ -180,8 +183,8 @@ fun WorkspaceScreen(
             ownerCommercialEntitlementActive = null
             activeWorkspaceOwnerCommercialEntitlementActive = null
             ownerAccessCheckMessage = ""
+            ownerAccessCheckComplete = false
         }
-        ownerAccessCheckComplete = false
         refreshOwnerWorkspaceAccess()
     }
     androidx.compose.runtime.LaunchedEffect(account.signedIn, hasOwnedTeamWorkspace, activeWorkspaceId) {
