@@ -174,7 +174,8 @@ class SupabaseGateway(
         "beekeep_cloud_sync_cursors_v1", Context.MODE_PRIVATE
     )
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private val authOperationRunner = GatewayOwnedOperationRunner(scope)
+    // State-changing gateway work must outlive a UI coroutine when it publishes a new dataset.
+    private val gatewayOperationRunner = GatewayOwnedOperationRunner(scope)
     @Volatile
     private var sessionRefreshJob: Job? = null
     @Volatile
@@ -683,7 +684,7 @@ class SupabaseGateway(
     /** Send the OTP only after the server accepts the current password/Google session. */
     suspend fun requestTrustedDeviceEmailCode(): CloudResult {
         val supabase = client ?: return CloudResult.NotConfigured
-        return authOperationRunner.run {
+        return gatewayOperationRunner.run {
             try {
                 ensureAuthStorageInitialized(supabase)
                 val session = supabase.auth.currentSessionOrNull()
@@ -3523,7 +3524,7 @@ class SupabaseGateway(
     suspend fun activateWorkspace(
         workspaceId: String?,
         timingTrace: WorkspaceSwitchTimingTrace? = null
-    ): WorkspaceOperationResult<Unit> {
+    ): WorkspaceOperationResult<Unit> = gatewayOperationRunner.run {
         timingTrace?.mark("gateway_enter")
         val result = syncMutex.withLock {
             timingTrace?.mark("sync_mutex_acquired")
@@ -3598,8 +3599,9 @@ class SupabaseGateway(
         timingTrace?.mark("sync_mutex_released")
         if (enableRealtime && _account.value.signedIn) startRealtime()
         timingTrace?.mark("realtime_rebind_requested")
-        return result
+        result
     }
+
 
     /**
      * Replays every locally recorded team mutation in insertion order. The database
