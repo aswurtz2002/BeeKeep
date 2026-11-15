@@ -735,7 +735,7 @@ class SupabaseGateway(
             return CloudResult.Failure("Enter the six-digit code from your BeeKeep security email.")
         }
         val supabase = client ?: return CloudResult.NotConfigured
-        return authOperationRunner.run {
+        return gatewayOperationRunner.run {
             try {
                 ensureAuthStorageInitialized(supabase)
                 val beforeVerification = supabase.auth.currentSessionOrNull()
@@ -4500,7 +4500,7 @@ class SupabaseGateway(
         // Keep auth transitions in the gateway-owned scope. Once the authenticated account is
         // published, Compose may dispose the login screen before workspace restoration and
         // realtime setup finish; disposing that caller must not cancel the session transition.
-        return authOperationRunner.run {
+        return gatewayOperationRunner.run {
             val supabase = client ?: return@run CloudResult.NotConfigured
             try {
                 ensureAuthStorageInitialized(supabase)
