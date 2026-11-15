@@ -185,9 +185,6 @@ fun WorkspaceScreen(
             ownerAccessCheckMessage = ""
             ownerAccessCheckComplete = false
         }
-        // For a workspace change on the same signed-in account, keep the current page mounted
-        // while the new workspace's owner entitlement is checked. Gateway/database write
-        // authorization still independently verifies membership and the owner's plan.
         refreshOwnerWorkspaceAccess()
     }
     androidx.compose.runtime.LaunchedEffect(account.signedIn, hasOwnedTeamWorkspace, activeWorkspaceId) {
