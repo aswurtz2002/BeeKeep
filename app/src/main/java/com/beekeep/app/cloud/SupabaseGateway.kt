@@ -2,8 +2,6 @@ package com.beekeep.app.cloud
 
 import android.content.Context
 import android.content.Intent
-import android.os.SystemClock
-import android.util.Log
 import com.beekeep.app.BuildConfig
 import com.beekeep.app.BeeKeepPlan
 import com.beekeep.app.BeeKeepEntitlements
@@ -56,7 +54,6 @@ import kotlinx.coroutines.launch
 import io.ktor.client.call.body
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
-import java.util.concurrent.atomic.AtomicLong
 import java.io.IOException
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
@@ -106,42 +103,6 @@ private object WorkspaceActionLogRefreshSignal {
 
     fun publish() {
         mutableVersion.value = mutableVersion.value + 1L
-    }
-}
-
-/**
- * Temporary, privacy-safe timing trace for personal/team workspace switching.
- * Only a local trace counter, fixed stage names, and elapsed milliseconds are logged.
- * Remove this helper and its call sites after device measurements are complete.
- */
-class WorkspaceSwitchTimingTrace private constructor(
-    private val traceId: Long
-) {
-    private val startedAtMs = SystemClock.elapsedRealtime()
-    private var previousMarkAtMs = startedAtMs
-
-    @Synchronized
-    fun mark(stage: String, rows: Int? = null) {
-        val now = SystemClock.elapsedRealtime()
-        val stageMs = now - previousMarkAtMs
-        val totalMs = now - startedAtMs
-        previousMarkAtMs = now
-        val rowSuffix = rows?.let { " rows=$it" }.orEmpty()
-        Log.i(
-            TAG,
-            "BEEKEEP_SWITCH_TIMING trace=$traceId stage=$stage stage_ms=$stageMs total_ms=$totalMs$rowSuffix"
-        )
-    }
-
-    companion object {
-        private const val TAG = "BeeKeepSwitchTime"
-        private val nextTraceId = AtomicLong(0L)
-
-        internal fun begin(): WorkspaceSwitchTimingTrace {
-            val trace = WorkspaceSwitchTimingTrace(nextTraceId.incrementAndGet())
-            trace.mark("tap")
-            return trace
-        }
     }
 }
 
@@ -3138,17 +3099,12 @@ class SupabaseGateway(
         }
     }
 
-    private suspend fun syncNowUnlocked(
-        timingTrace: WorkspaceSwitchTimingTrace? = null
-    ): CloudResult {
-        timingTrace?.mark("sync_enter")
+    private suspend fun syncNowUnlocked(): CloudResult {
         if (!configured || client == null) {
-            timingTrace?.mark("sync_not_configured")
             return CloudResult.NotConfigured
         }
         try {
             ensureAuthStorageInitialized(client)
-            timingTrace?.mark("sync_auth_storage_ready")
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (error: Throwable) {
@@ -3158,17 +3114,14 @@ class SupabaseGateway(
         }
         val session = client.auth.currentSessionOrNull() ?: run {
             refreshAccountUnlocked()
-            timingTrace?.mark("sync_session_missing")
             return CloudResult.NotSignedIn
         }
-        timingTrace?.mark("sync_session_read")
         val userId = session.user?.id?.trim()?.takeIf { it.isNotEmpty() } ?: run {
             refreshAccountUnlocked()
             _account.value = _account.value.copy(syncing = false, signedIn = false, error = "Your cloud session has no user ID. Sign in again.")
             return CloudResult.NotSignedIn
         }
         if (!verifyTrustedDeviceSession(client)) {
-            timingTrace?.mark("trusted_device_check_rejected")
             if (_trustedDeviceAccess.value.status == TrustedDeviceAccessStatus.REPLACED_LOCAL) {
                 forceSignOut("The active-device check rejected this phone before sync")
                 return CloudResult.NotSignedIn
@@ -3184,11 +3137,8 @@ class SupabaseGateway(
                 _trustedDeviceAccess.value.message ?: "This phone isn't trusted for BeeKeep Cloud."
             )
         }
-        timingTrace?.mark("trusted_device_check_complete")
         refreshVerifiedPlanForUser(userId)
-        timingTrace?.mark("plan_entitlement_check_complete")
         refreshHiveLimitOverrideForUser(userId)
-        timingTrace?.mark("hive_limit_check_complete")
         var activeTeamWorkspaceId = appContext
             .getSharedPreferences("beekeep_prefs", Context.MODE_PRIVATE)
             .getString("active_team_workspace_id", "")
@@ -3208,16 +3158,12 @@ class SupabaseGateway(
         // A non-empty team selection is switched into the active Room database only after
         // syncSharedWorkspace confirms membership for this account.
         _account.value = _account.value.copy(syncing = true, error = null)
-        timingTrace?.mark("sync_preflight_complete")
         if (activeTeamWorkspaceId.isNotEmpty()) {
-            timingTrace?.mark("shared_sync_enter")
             val result = syncSharedWorkspace(
                 activeTeamWorkspaceId,
                 userId,
-                session.user?.email.orEmpty(),
-                timingTrace
+                session.user?.email.orEmpty()
             )
-            timingTrace?.mark("shared_sync_returned")
             return result
         }
         // Normal sync no longer requires a separate local-record review. Pending local edits
@@ -3229,7 +3175,6 @@ class SupabaseGateway(
             // Recover note edits saved locally before their debounce queued an outbox row.
             repository.queuePendingInspectionNoteDrafts()
             repository.queuePendingInspectionFormDrafts()
-            timingTrace?.mark("personal_local_repair_complete")
 
             // Pull first so an older offline edit cannot overwrite a newer cloud record.
             // Drain the entire outbox in bounded batches: the old single-batch sync could
@@ -3315,22 +3260,18 @@ class SupabaseGateway(
                 }
             }
 
-            timingTrace?.mark("personal_document_outbox_drained")
             // Apiary batches are deliberately uploaded after the apiary/hive documents they
             // depend on, and before the incremental pull on this same selected dataset.
             uploadPendingActionBatches(workspaceId = null)
-            timingTrace?.mark("personal_action_batches_drained")
 
             // A fixed high-water mark makes the pull resumable. Any write that commits after
             // this read receives a higher server version and is picked up on the next sync.
             var syncHeadToCommit: Long? = null
             val documents = try {
                 val headVersion = loadPersonalSyncHead()
-                timingTrace?.mark("personal_incremental_head_loaded")
                 val afterVersion = previousCursor?.takeIf { it <= headVersion } ?: 0L
                 loadPersonalChanges(afterVersion, headVersion).also {
                     syncHeadToCommit = headVersion
-                    timingTrace?.mark("personal_incremental_changes_loaded", it.size)
                 }
             } catch (cancelled: CancellationException) {
                 throw cancelled
@@ -3338,9 +3279,7 @@ class SupabaseGateway(
                 if (!IncrementalSyncCompatibility.isMissingIncrementalSyncRpc(error)) throw error
                 // Keep cloud sync working while an environment is still on the pre-incremental
                 // schema. This is the same deterministic, paginated pull used before the RPCs.
-                timingTrace?.mark("personal_full_pull_fallback")
                 loadAllPersonalDocuments().filter { it.user_id == userId }.also {
-                    timingTrace?.mark("personal_full_pull_loaded", it.size)
                 }
             }
             val knownNfcMutations = repository.nfcMutationSyncTimestamps()
@@ -3355,7 +3294,6 @@ class SupabaseGateway(
             // Only commit the incremental cursor after all downloaded changes were applied.
             // The legacy full-pull fallback intentionally leaves it untouched.
             syncHeadToCommit?.let { saveSyncCursor(cursorKey, it) }
-            timingTrace?.mark("personal_room_merge_complete", documents.size)
 
             val settingsWarning = syncWorkspaceActionSettings(
                 scopeKey = workspaceActionSettingsScopeKey(null, userId),
@@ -3363,7 +3301,6 @@ class SupabaseGateway(
                 userId = userId,
                 canWrite = true
             )
-            timingTrace?.mark("personal_action_settings_complete")
 
             repository.pruneSync()
             val now = System.currentTimeMillis()
@@ -3374,14 +3311,11 @@ class SupabaseGateway(
                 signedIn = true,
                 email = session.user?.email ?: ""
             )
-            timingTrace?.mark("personal_sync_complete")
             if (settingsWarning == null) CloudResult.Success else CloudResult.Failure(settingsWarning)
         } catch (t: CancellationException) {
-            timingTrace?.mark("sync_cancelled")
             _account.value = _account.value.copy(syncing = false)
             throw t
         } catch (t: Throwable) {
-            timingTrace?.mark("sync_failed")
             val supabase = client
             if (supabase != null && shouldForceSignOutForAuthFailure(supabase, t)) {
                 forceSignOut("An authenticated cloud request rejected this replaced phone")
@@ -3518,25 +3452,18 @@ class SupabaseGateway(
      * Switches the app's active dataset to a team workspace or back to the user's personal data.
      * The repository stores team data in a separate Room file before the first team pull.
      */
-    fun beginWorkspaceSwitchTiming(): WorkspaceSwitchTimingTrace =
-        WorkspaceSwitchTimingTrace.begin()
 
     suspend fun activateWorkspace(
-        workspaceId: String?,
-        timingTrace: WorkspaceSwitchTimingTrace? = null
+        workspaceId: String?
     ): WorkspaceOperationResult<Unit> = gatewayOperationRunner.run {
-        timingTrace?.mark("gateway_enter")
         val result = syncMutex.withLock {
-            timingTrace?.mark("sync_mutex_acquired")
             val supabase = client
             if (!configured || supabase == null) {
                 return@withLock WorkspaceOperationResult(error = "BeeKeep Cloud is not configured.")
             }
             try {
                 ensureAuthStorageInitialized(supabase)
-                timingTrace?.mark("auth_storage_ready")
                 val session = supabase.auth.currentSessionOrNull()
-                timingTrace?.mark("session_read")
                 if (session == null) {
                     refreshAccountUnlocked()
                     return@withLock WorkspaceOperationResult(error = "Sign in before switching workspaces.")
@@ -3545,12 +3472,10 @@ class SupabaseGateway(
                     ?: return@withLock WorkspaceOperationResult(error = "Your cloud session has no user ID. Sign in again.")
                 val cleanId = workspaceId?.trim()?.takeIf { it.isNotEmpty() }
                 val workspace = if (cleanId == null) {
-                    timingTrace?.mark("membership_check_skipped_personal")
                     null
                 } else {
                     val listedWorkspaces = supabase.postgrest.rpc("beekeep_list_workspaces")
                         .decodeList<BeeKeepWorkspace>()
-                    timingTrace?.mark("membership_rpc_complete")
                     listedWorkspaces.firstOrNull { it.id == cleanId && !it.is_personal }
                         ?: error("You no longer have access to that team workspace.")
                 }
@@ -3559,9 +3484,7 @@ class SupabaseGateway(
                         supabase,
                         workspace.id,
                         workspace.member_role
-                    ).also { timingTrace?.mark("owner_entitlement_complete") }
                 } else {
-                    timingTrace?.mark("owner_entitlement_skipped_personal")
                     true
                 }
                 repository.switchWorkspace(
@@ -3572,9 +3495,7 @@ class SupabaseGateway(
                     ),
                     ownerUserId = userId
                 )
-                timingTrace?.mark("room_workspace_switched")
-                val syncResult = syncNowUnlocked(timingTrace)
-                timingTrace?.mark("sync_result_returned")
+                val syncResult = syncNowUnlocked()
                 if (syncResult is CloudResult.Failure) {
                     WorkspaceOperationResult(
                         value = Unit,
@@ -3584,10 +3505,8 @@ class SupabaseGateway(
                     WorkspaceOperationResult(value = Unit)
                 }
             } catch (cancelled: CancellationException) {
-                timingTrace?.mark("activation_cancelled")
                 throw cancelled
             } catch (error: Throwable) {
-                timingTrace?.mark("activation_failed")
                 WorkspaceOperationResult(
                     error = TeamWorkspaceSyncError.userFacing(error.message ?: "Could not switch workspace.")
                 )
@@ -3596,9 +3515,7 @@ class SupabaseGateway(
 
         // Rebind Realtime after the Room database and active-workspace preference switch.
         // Do this outside the sync lock so the previous listener can finish its own sync.
-        timingTrace?.mark("sync_mutex_released")
         if (enableRealtime && _account.value.signedIn) startRealtime()
-        timingTrace?.mark("realtime_rebind_requested")
         result
     }
 
@@ -3670,15 +3587,12 @@ class SupabaseGateway(
         workspaceId: String,
         userId: String,
         userEmail: String,
-        timingTrace: WorkspaceSwitchTimingTrace? = null
     ): CloudResult {
         val supabase = client ?: return CloudResult.NotConfigured
-        timingTrace?.mark("shared_sync_begin")
         try {
             val workspace = supabase.postgrest.rpc("beekeep_list_workspaces")
                 .decodeList<BeeKeepWorkspace>()
                 .firstOrNull { it.id == workspaceId && !it.is_personal }
-            timingTrace?.mark("shared_membership_recheck_complete")
             if (workspace == null) {
                 // Do not silently change the selected dataset when the remote membership lookup
                 // cannot find the team. Keep an account-bound cache selected but read-only; it
@@ -3712,7 +3626,6 @@ class SupabaseGateway(
                 workspaceId,
                 workspace.member_role
             )
-            timingTrace?.mark("shared_owner_entitlement_recheck_complete")
             val readOnly = WorkspaceAccessPolicy.isReadOnly(
                 memberRole = workspace.member_role,
                 ownerCommercialEntitlementActive = ownerCommercialActive
@@ -3725,7 +3638,6 @@ class SupabaseGateway(
                 readOnly = readOnly,
                 ownerUserId = userId
             )
-            timingTrace?.mark("shared_room_access_mode_complete")
             if (isWritable) {
                 // Do not queue new local drafts or upload pending edits for a read-only team.
                 repository.discardLegacyNfcProfileSnapshots()
@@ -3739,7 +3651,6 @@ class SupabaseGateway(
                 // outbox. This preserves repeated offline edits to the same record; the
                 // ordinary outbox then reconciles to the final accepted cloud state.
                 uploadPendingWorkspaceActionChanges(workspaceId)
-                timingTrace?.mark("shared_offline_actions_replayed")
 
                 // Keep uploading bounded chunks until the selected workspace outbox drains.
                 // Conflict checks now read only the cloud records for this pending outbox batch.
@@ -3834,13 +3745,10 @@ class SupabaseGateway(
                         repository.markSyncDone(uploadableIds)
                     }
                 }
-                timingTrace?.mark("shared_document_outbox_drained")
                 // The normal document outbox is drained first so cloud apiary/hive identity
                 // checks see the newest records before the atomic action transaction runs.
                 uploadPendingActionBatches(workspaceId)
-                timingTrace?.mark("shared_action_batches_drained")
             } else {
-                timingTrace?.mark("shared_read_only_outbox_skipped")
             }
 
             // Prefer server-versioned incremental pages. Older or partially migrated
@@ -3848,20 +3756,16 @@ class SupabaseGateway(
             var syncHeadToCommit: Long? = null
             val workspaceDocuments = try {
                 val headVersion = loadWorkspaceSyncHead(workspaceId)
-                timingTrace?.mark("shared_incremental_head_loaded")
                 val afterVersion = previousCursor?.takeIf { it <= headVersion } ?: 0L
                 loadWorkspaceChanges(workspaceId, afterVersion, headVersion).also {
                     syncHeadToCommit = headVersion
-                    timingTrace?.mark("shared_incremental_changes_loaded", it.size)
                 }
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Throwable) {
                 if (!IncrementalSyncCompatibility.isMissingIncrementalSyncRpc(error)) throw error
-                timingTrace?.mark("shared_full_pull_fallback")
                 loadAllWorkspaceDocuments(workspaceId)
                     .filter { it.workspace_id == workspaceId }
-                    .also { timingTrace?.mark("shared_full_pull_loaded", it.size) }
             }
             val knownNfcMutations = repository.nfcMutationSyncTimestamps()
             val legacyNfcHiveIds = legacyNfcOnlyWorkspaceHiveSnapshotIds(
@@ -3883,7 +3787,6 @@ class SupabaseGateway(
                 documents = localDocuments,
                 ignoreLegacyNfcProfileSnapshotHiveIds = legacyNfcHiveIds
             )
-            timingTrace?.mark("shared_room_merge_complete", localDocuments.size)
             // The legacy fallback has no server cursor; do not advance an incremental cursor.
             syncHeadToCommit?.let { saveSyncCursor(cursorKey, it) }
 
@@ -3894,7 +3797,6 @@ class SupabaseGateway(
                 userId = userId,
                 canWrite = canWriteSettings
             )
-            timingTrace?.mark("shared_action_settings_complete")
 
             repository.pruneSync()
             val now = System.currentTimeMillis()
@@ -3913,14 +3815,11 @@ class SupabaseGateway(
                 signedIn = true,
                 email = userEmail
             )
-            timingTrace?.mark("shared_sync_complete")
             return if (warning == null) CloudResult.Success else CloudResult.Failure(warning)
         } catch (cancelled: CancellationException) {
-            timingTrace?.mark("shared_sync_cancelled")
             _account.value = _account.value.copy(syncing = false)
             throw cancelled
         } catch (error: Throwable) {
-            timingTrace?.mark("shared_sync_failed")
             val message = TeamWorkspaceSyncError.userFacing(error.message)
             _account.value = _account.value.copy(syncing = false, error = message)
             return CloudResult.Failure(message)
